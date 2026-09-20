@@ -96,6 +96,13 @@ hg_status_collect() {
     if command -v hg_dns_collect >/dev/null 2>&1; then
         hg_dns_collect
     fi
+
+    if ! command -v hg_torrent_collect >/dev/null 2>&1; then
+        hg_load_module torrent >/dev/null 2>&1 || true
+    fi
+    if command -v hg_torrent_collect >/dev/null 2>&1; then
+        hg_torrent_collect
+    fi
 }
 
 hg_status_format_uptime() {
@@ -244,6 +251,30 @@ hg_status_print() {
     printf '  MAIN egress:    %s (%s)\n' "$vpn_egress_label" "${HG_VPN_EGRESS_STATE:-UNKNOWN}"
     printf '  Active route:   %s\n' "${HG_VPN_ACTIVE_NODE_STATE:-UNKNOWN}"
 
+    case "${HG_TORRENT_AUTOSWITCH_ENABLED:-unknown}" in
+        true) torrent_autoswitch_label='enabled' ;;
+        false) torrent_autoswitch_label='disabled' ;;
+        *) torrent_autoswitch_label='unknown' ;;
+    esac
+
+    torrent_name_label="${HG_TORRENT_NAME:-n/a}"
+    torrent_egress_label="${HG_TORRENT_EGRESS_IPV4:-n/a}"
+    if [ -n "${HG_TORRENT_SOCKS_PORT:-}" ]; then
+        torrent_socks_label="${HG_TORRENT_SOCKS_HOST:-127.0.0.1}:${HG_TORRENT_SOCKS_PORT}"
+    else
+        torrent_socks_label='n/a'
+    fi
+
+    printf '\nTorrent\n'
+    printf '  State:       %s\n' "${HG_TORRENT_STATE:-UNKNOWN}"
+    printf '  Profile:     %s\n' "${HG_TORRENT_PROFILE:-n/a}"
+    printf '  Node:        %s\n' "${HG_TORRENT_NODE:-n/a}"
+    printf '  Name:        %s\n' "$torrent_name_label"
+    printf '  SOCKS:       %s\n' "$torrent_socks_label"
+    printf '  Xray:        %s\n' "${HG_TORRENT_XRAY_STATE:-UNKNOWN}"
+    printf '  Autoswitch:  %s\n' "$torrent_autoswitch_label"
+    printf '  Egress:      %s (%s)\n' "$torrent_egress_label" "${HG_TORRENT_EGRESS_STATE:-UNKNOWN}"
+
     case "${HG_DNS_ADBLOCK_CONFIGURED:-unknown}" in
         true) adblock_config_label='enabled' ;;
         false) adblock_config_label='disabled' ;;
@@ -361,6 +392,41 @@ hg_status_print_json() {
     printf '        "provider": %s,\n' "$(hg_json_string_or_null "${HG_VPN_EGRESS_PROVIDER:-}")"
     printf '        "checked_at": %s\n' "$(hg_json_number_or_null "${HG_VPN_EGRESS_CHECKED_AT:-}")"
     printf '      }\n'
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_TORRENT_PROFILE_ENABLED:-unknown}" in
+        true|false) torrent_profile_enabled_json="$HG_TORRENT_PROFILE_ENABLED" ;;
+        *) torrent_profile_enabled_json='null' ;;
+    esac
+    case "${HG_TORRENT_AUTOSWITCH_ENABLED:-unknown}" in
+        true|false) torrent_autoswitch_json="$HG_TORRENT_AUTOSWITCH_ENABLED" ;;
+        *) torrent_autoswitch_json='null' ;;
+    esac
+
+    printf '  "torrent": {\n'
+    printf '    "state": %s,\n' "$(hg_json_string "${HG_TORRENT_STATE:-UNKNOWN}")"
+    printf '    "config_state": %s,\n' "$(hg_json_string "${HG_TORRENT_CONFIG_STATE:-UNKNOWN}")"
+    printf '    "profile": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_PROFILE:-}")"
+    printf '    "profile_enabled": %s,\n' "$torrent_profile_enabled_json"
+    printf '    "configured_node": {\n'
+    printf '      "id": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_NODE:-}")"
+    printf '      "name": %s\n' "$(hg_json_string_or_null "${HG_TORRENT_NAME:-}")"
+    printf '    },\n'
+    printf '    "socks": {\n'
+    printf '      "host": %s,\n' "$(hg_json_string "${HG_TORRENT_SOCKS_HOST:-127.0.0.1}")"
+    printf '      "port": %s\n' "$(hg_json_number_or_null "${HG_TORRENT_SOCKS_PORT:-}")"
+    printf '    },\n'
+    printf '    "xray_process": %s,\n' "$(hg_json_string "${HG_TORRENT_XRAY_STATE:-UNKNOWN}")"
+    printf '    "autoswitch": {\n'
+    printf '      "enabled": %s\n' "$torrent_autoswitch_json"
+    printf '    },\n'
+    printf '    "egress": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_TORRENT_EGRESS_STATE:-UNKNOWN}")"
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_EGRESS_IPV4:-}")"
+    printf '      "source": %s,\n' "$(hg_json_string "${HG_TORRENT_EGRESS_SOURCE:-live_probe}")"
+    printf '      "provider": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_EGRESS_PROVIDER:-}")"
+    printf '      "checked_at": %s\n' "$(hg_json_number_or_null "${HG_TORRENT_EGRESS_CHECKED_AT:-}")"
     printf '    }\n'
     printf '  },\n'
 
