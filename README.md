@@ -26,19 +26,20 @@
 
 ## Технологический подход
 
-Системный слой проектируется для OpenWrt/BusyBox и использует штатные инструменты (`ash`, `uci`, `ubus`, `nft`, `curl`, `jsonfilter`, `procd`). Runtime Telegram-слоя будет окончательно выбран после read-only preflight роутера: предпочтение отдаётся `ucode`, если он уже присутствует и ресурсный профиль это позволяет.
+Системный слой проектируется для OpenWrt/BusyBox и использует штатные инструменты (`ash`, `uci`, `ubus`, `nft`, `curl`, `jsonfilter`, `procd`). Read-only preflight подтвердил наличие `ucode`, поэтому Telegram orchestration и state machine проектируются на `ucode`, а небольшие системные adapters остаются на BusyBox shell.
 
 ## Статус
 
-`0.1 — Foundation / preflight`
+`0.1 — Foundation / preflight completed`
 
-Сейчас проект не изменяет конфигурацию роутера. Первый этап — зафиксировать ресурсные ограничения и зависимости целевого CUDY перед реализацией сервисов.
+Read-only preflight завершён. Целевая платформа и runtime зафиксированы; data plane не изменялся. Следующий этап — `0.2 Gateway CLI`.
 
 ## Документация
 
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Инженерные решения](docs/DECISIONS.md)
 - [План релизов](docs/ROADMAP.md)
+- [Результаты preflight](docs/PREFLIGHT.md)
 
 ## Лицензия
 
