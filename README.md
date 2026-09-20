@@ -30,9 +30,9 @@
 
 ## Статус
 
-`0.1 — Foundation / preflight completed`
+`0.2 — Gateway CLI / completed`
 
-Read-only preflight завершён. Целевая платформа и runtime зафиксированы; data plane не изменялся. Следующий этап — `0.2 Gateway CLI`.
+Реализован read-only CLI `gateway` с командами `status`, `status --json`, `doctor` и `selftest`. Финальный regression-test на целевом CUDY прошёл без ошибок; data plane остался неизменным. Следующий этап — `0.3 Status & System`.
 
 ## Документация
 
