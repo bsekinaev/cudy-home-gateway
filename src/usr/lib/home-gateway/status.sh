@@ -82,6 +82,13 @@ hg_status_collect() {
     if command -v hg_network_collect >/dev/null 2>&1; then
         hg_network_collect
     fi
+
+    if ! command -v hg_vpn_collect >/dev/null 2>&1; then
+        hg_load_module vpn >/dev/null 2>&1 || true
+    fi
+    if command -v hg_vpn_collect >/dev/null 2>&1; then
+        hg_vpn_collect
+    fi
 }
 
 hg_status_format_uptime() {
@@ -135,6 +142,21 @@ hg_status_format_overlay() {
         }'
 }
 
+hg_status_json_words_array() {
+    words="${1:-}"
+    first=1
+
+    printf '['
+    for word in $words; do
+        if [ "$first" -eq 0 ]; then
+            printf ', '
+        fi
+        hg_json_string "$word"
+        first=0
+    done
+    printf ']'
+}
+
 hg_status_print() {
     hg_status_collect
 
@@ -181,6 +203,39 @@ hg_status_print() {
     printf '  Gateway:       %s\n' "${HG_NETWORK_WAN_GATEWAY:-n/a}"
     printf '  CGNAT:         %s\n' "$cgnat_label"
     printf '  Direct egress: %s (%s)\n' "$direct_ipv4_label" "${HG_NETWORK_DIRECT_STATE:-UNKNOWN}"
+
+    case "${HG_VPN_PASSWALL_ENABLED:-unknown}" in
+        true) passwall_label='enabled' ;;
+        false) passwall_label='disabled' ;;
+        *) passwall_label='unknown' ;;
+    esac
+    case "${HG_VPN_AUTOSWITCH_ENABLED:-unknown}" in
+        true) autoswitch_label='enabled' ;;
+        false) autoswitch_label='disabled' ;;
+        *) autoswitch_label='unknown' ;;
+    esac
+
+    vpn_name_label="${HG_VPN_MAIN_NAME:-n/a}"
+    vpn_backups_label="${HG_VPN_BACKUP_NODES:-none}"
+    vpn_egress_label="${HG_VPN_EGRESS_IPV4:-n/a}"
+    if [ -n "${HG_VPN_MAIN_SOCKS_PORT:-}" ]; then
+        vpn_socks_label="${HG_VPN_MAIN_SOCKS_HOST:-127.0.0.1}:${HG_VPN_MAIN_SOCKS_PORT}"
+    else
+        vpn_socks_label='n/a'
+    fi
+
+    printf '\nVPN\n'
+    printf '  PassWall2:      %s\n' "$passwall_label"
+    printf '  MAIN state:     %s\n' "${HG_VPN_MAIN_STATE:-UNKNOWN}"
+    printf '  Profile:        %s\n' "${HG_VPN_MAIN_PROFILE:-n/a}"
+    printf '  Node:           %s\n' "${HG_VPN_MAIN_NODE:-n/a}"
+    printf '  Name:           %s\n' "$vpn_name_label"
+    printf '  SOCKS:          %s\n' "$vpn_socks_label"
+    printf '  Xray:           %s\n' "${HG_VPN_MAIN_XRAY_STATE:-UNKNOWN}"
+    printf '  Autoswitch:     %s\n' "$autoswitch_label"
+    printf '  Backups:        %s\n' "$vpn_backups_label"
+    printf '  MAIN egress:    %s (%s)\n' "$vpn_egress_label" "${HG_VPN_EGRESS_STATE:-UNKNOWN}"
+    printf '  Active route:   %s\n' "${HG_VPN_ACTIVE_NODE_STATE:-UNKNOWN}"
 }
 
 hg_status_print_json() {
@@ -228,6 +283,53 @@ hg_status_print_json() {
     printf '      "source": %s,\n' "$(hg_json_string "${HG_NETWORK_DIRECT_SOURCE:-live_probe}")"
     printf '      "provider": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_DIRECT_PROVIDER:-}")"
     printf '      "checked_at": %s\n' "$(hg_json_number_or_null "${HG_NETWORK_DIRECT_CHECKED_AT:-}")"
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_VPN_PASSWALL_ENABLED:-unknown}" in
+        true|false) passwall_json="$HG_VPN_PASSWALL_ENABLED" ;;
+        *) passwall_json='null' ;;
+    esac
+    case "${HG_VPN_MAIN_PROFILE_ENABLED:-unknown}" in
+        true|false) profile_enabled_json="$HG_VPN_MAIN_PROFILE_ENABLED" ;;
+        *) profile_enabled_json='null' ;;
+    esac
+    case "${HG_VPN_AUTOSWITCH_ENABLED:-unknown}" in
+        true|false) autoswitch_json="$HG_VPN_AUTOSWITCH_ENABLED" ;;
+        *) autoswitch_json='null' ;;
+    esac
+
+    printf '  "vpn": {\n'
+    printf '    "passwall2": {\n'
+    printf '      "enabled": %s\n' "$passwall_json"
+    printf '    },\n'
+    printf '    "main": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_VPN_MAIN_STATE:-UNKNOWN}")"
+    printf '      "config_state": %s,\n' "$(hg_json_string "${HG_VPN_MAIN_CONFIG_STATE:-UNKNOWN}")"
+    printf '      "profile": %s,\n' "$(hg_json_string_or_null "${HG_VPN_MAIN_PROFILE:-}")"
+    printf '      "profile_enabled": %s,\n' "$profile_enabled_json"
+    printf '      "configured_node": {\n'
+    printf '        "id": %s,\n' "$(hg_json_string_or_null "${HG_VPN_MAIN_NODE:-}")"
+    printf '        "name": %s\n' "$(hg_json_string_or_null "${HG_VPN_MAIN_NAME:-}")"
+    printf '      },\n'
+    printf '      "socks": {\n'
+    printf '        "host": %s,\n' "$(hg_json_string "${HG_VPN_MAIN_SOCKS_HOST:-127.0.0.1}")"
+    printf '        "port": %s\n' "$(hg_json_number_or_null "${HG_VPN_MAIN_SOCKS_PORT:-}")"
+    printf '      },\n'
+    printf '      "xray_process": %s,\n' "$(hg_json_string "${HG_VPN_MAIN_XRAY_STATE:-UNKNOWN}")"
+    printf '      "autoswitch": {\n'
+    printf '        "enabled": %s,\n' "$autoswitch_json"
+    printf '        "backup_nodes": %s,\n' "$(hg_status_json_words_array "${HG_VPN_BACKUP_NODES:-}")"
+    printf '        "active_node": %s,\n' "$(hg_json_string_or_null "${HG_VPN_ACTIVE_NODE:-}")"
+    printf '        "active_node_state": %s\n' "$(hg_json_string "${HG_VPN_ACTIVE_NODE_STATE:-UNKNOWN}")"
+    printf '      },\n'
+    printf '      "egress": {\n'
+    printf '        "state": %s,\n' "$(hg_json_string "${HG_VPN_EGRESS_STATE:-UNKNOWN}")"
+    printf '        "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_VPN_EGRESS_IPV4:-}")"
+    printf '        "source": %s,\n' "$(hg_json_string "${HG_VPN_EGRESS_SOURCE:-live_probe}")"
+    printf '        "provider": %s,\n' "$(hg_json_string_or_null "${HG_VPN_EGRESS_PROVIDER:-}")"
+    printf '        "checked_at": %s\n' "$(hg_json_number_or_null "${HG_VPN_EGRESS_CHECKED_AT:-}")"
+    printf '      }\n'
     printf '    }\n'
     printf '  },\n'
     printf '  "resources": {\n'
