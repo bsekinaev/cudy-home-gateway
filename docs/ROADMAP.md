@@ -9,14 +9,16 @@
 
 **Статус:** завершён 21.09.2026. Data plane не изменялся.
 
-## 0.2 — Gateway CLI ← текущий этап
+## 0.2 — Gateway CLI ✅
 
 - `gateway status`;
 - `gateway status --json`;
 - `gateway doctor`;
 - `gateway selftest`.
 
-## 0.3 — Status & System
+**Статус:** завершён 21.09.2026. Regression-test: `version`, `status`, `status --json`, `doctor`, `selftest` — успешно; data plane не изменялся.
+
+## 0.3 — Status & System ← текущий этап
 
 - WAN, DNS, MAIN, egress;
 - Torrent, Redmi, ASATA, Tailscale;

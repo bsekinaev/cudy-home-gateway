@@ -1,0 +1,83 @@
+#!/bin/sh
+# Единая точка входа CUDY Home Gateway.
+
+set -eu
+
+HG_LIBDIR="${HG_LIBDIR:-/usr/lib/home-gateway}"
+COMMON_MODULE="${HG_LIBDIR}/common.sh"
+
+if [ ! -r "$COMMON_MODULE" ]; then
+    printf 'gateway: не найден системный модуль: %s\n' "$COMMON_MODULE" >&2
+    exit 70
+fi
+
+# shellcheck source=/dev/null
+. "$COMMON_MODULE"
+
+print_help() {
+    cat <<'EOF_HELP'
+CUDY Home Gateway
+
+Использование:
+  gateway help             Показать эту справку
+  gateway version          Показать версию CLI
+  gateway status           Показать системный статус роутера
+  gateway status --json    Вывести системный статус в JSON
+  gateway doctor           Проверить окружение и зависимости
+  gateway selftest         Проверить установку Gateway CLI
+
+На этапе 0.2 команды управления сетью ещё не реализованы.
+CLI работает только в read-only режиме.
+EOF_HELP
+}
+
+main() {
+    command="${1:-help}"
+
+    case "$command" in
+        help|-h|--help)
+            print_help
+            ;;
+        version|-V|--version)
+            hg_print_version
+            ;;
+        status)
+            hg_load_module status
+
+            if [ "$#" -eq 1 ]; then
+                hg_status_print
+            elif [ "$#" -eq 2 ] && [ "$2" = '--json' ]; then
+                hg_status_print_json
+            else
+                hg_error 'использование: gateway status [--json]'
+                return "$HG_EXIT_USAGE"
+            fi
+            ;;
+        doctor)
+            if [ "$#" -ne 1 ]; then
+                hg_error 'использование: gateway doctor'
+                return "$HG_EXIT_USAGE"
+            fi
+
+            hg_load_module doctor
+            hg_doctor_run
+            ;;
+        selftest)
+            if [ "$#" -ne 1 ]; then
+                hg_error 'использование: gateway selftest'
+                return "$HG_EXIT_USAGE"
+            fi
+
+            hg_load_module selftest
+            hg_selftest_run "$0"
+            ;;
+        *)
+            hg_error "неизвестная команда: $command"
+            printf '\n' >&2
+            print_help >&2
+            return "$HG_EXIT_USAGE"
+            ;;
+    esac
+}
+
+main "$@"
