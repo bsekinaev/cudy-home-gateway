@@ -19,9 +19,10 @@ print_help() {
 CUDY Home Gateway
 
 Использование:
-  gateway help       Показать эту справку
-  gateway version    Показать версию CLI
-  gateway status     Показать системный статус роутера
+  gateway help             Показать эту справку
+  gateway version          Показать версию CLI
+  gateway status           Показать системный статус роутера
+  gateway status --json    Вывести системный статус в JSON
 
 На этапе 0.2 команды управления сетью ещё не реализованы.
 CLI работает только в read-only режиме.
@@ -40,7 +41,15 @@ main() {
             ;;
         status)
             hg_load_module status
-            hg_status_print
+
+            if [ "$#" -eq 1 ]; then
+                hg_status_print
+            elif [ "$#" -eq 2 ] && [ "$2" = '--json' ]; then
+                hg_status_print_json
+            else
+                hg_error 'использование: gateway status [--json]'
+                return "$HG_EXIT_USAGE"
+            fi
             ;;
         *)
             hg_error "неизвестная команда: $command"
