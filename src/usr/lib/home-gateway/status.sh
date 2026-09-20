@@ -89,6 +89,13 @@ hg_status_collect() {
     if command -v hg_vpn_collect >/dev/null 2>&1; then
         hg_vpn_collect
     fi
+
+    if ! command -v hg_dns_collect >/dev/null 2>&1; then
+        hg_load_module dns >/dev/null 2>&1 || true
+    fi
+    if command -v hg_dns_collect >/dev/null 2>&1; then
+        hg_dns_collect
+    fi
 }
 
 hg_status_format_uptime() {
@@ -236,6 +243,30 @@ hg_status_print() {
     printf '  Backups:        %s\n' "$vpn_backups_label"
     printf '  MAIN egress:    %s (%s)\n' "$vpn_egress_label" "${HG_VPN_EGRESS_STATE:-UNKNOWN}"
     printf '  Active route:   %s\n' "${HG_VPN_ACTIVE_NODE_STATE:-UNKNOWN}"
+
+    case "${HG_DNS_ADBLOCK_CONFIGURED:-unknown}" in
+        true) adblock_config_label='enabled' ;;
+        false) adblock_config_label='disabled' ;;
+        *) adblock_config_label='unknown' ;;
+    esac
+
+    dns_upstream_label="${HG_DNS_UPSTREAM_SERVERS:-none}"
+    if [ -n "${HG_DNS_ADBLOCK_RUNTIME_LINES:-}" ]; then
+        adblock_rules_label="${HG_DNS_ADBLOCK_RUNTIME_LINES} lines / ${HG_DNS_ADBLOCK_RUNTIME_BYTES:-0} bytes"
+    else
+        adblock_rules_label='n/a'
+    fi
+
+    printf '\nDNS\n'
+    printf '  State:          %s\n' "${HG_DNS_STATE:-UNKNOWN}"
+    printf '  dnsmasq:        %s\n' "${HG_DNS_DNSMASQ_STATE:-UNKNOWN}"
+    printf '  Port:           %s\n' "${HG_DNS_PORT:-n/a}"
+    printf '  Resolution:     %s (%s)\n' "${HG_DNS_RESOLUTION_STATE:-UNKNOWN}" "${HG_DNS_PROBE_DOMAIN:-n/a}"
+    printf '  Upstream DNS:   %s\n' "$dns_upstream_label"
+    printf '  Resolv file:    %s\n' "${HG_DNS_RESOLV_FILE:-n/a}"
+    printf '  AdBlock-Fast:   %s\n' "${HG_DNS_ADBLOCK_STATE:-UNKNOWN}"
+    printf '  AdBlock config: %s\n' "$adblock_config_label"
+    printf '  AdBlock rules:  %s\n' "$adblock_rules_label"
 }
 
 hg_status_print_json() {
@@ -330,6 +361,47 @@ hg_status_print_json() {
     printf '        "provider": %s,\n' "$(hg_json_string_or_null "${HG_VPN_EGRESS_PROVIDER:-}")"
     printf '        "checked_at": %s\n' "$(hg_json_number_or_null "${HG_VPN_EGRESS_CHECKED_AT:-}")"
     printf '      }\n'
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_DNS_ADBLOCK_CONFIGURED:-unknown}" in
+        true|false) adblock_configured_json="$HG_DNS_ADBLOCK_CONFIGURED" ;;
+        *) adblock_configured_json='null' ;;
+    esac
+    case "${HG_DNS_ADBLOCK_AUTOSTART:-unknown}" in
+        true|false) adblock_autostart_json="$HG_DNS_ADBLOCK_AUTOSTART" ;;
+        *) adblock_autostart_json='null' ;;
+    esac
+    case "${HG_DNS_ADBLOCK_ATTACHED:-unknown}" in
+        true|false) adblock_attached_json="$HG_DNS_ADBLOCK_ATTACHED" ;;
+        *) adblock_attached_json='null' ;;
+    esac
+
+    printf '  "dns": {\n'
+    printf '    "state": %s,\n' "$(hg_json_string "${HG_DNS_STATE:-UNKNOWN}")"
+    printf '    "dnsmasq": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_DNS_DNSMASQ_STATE:-UNKNOWN}")"
+    printf '      "port": %s\n' "$(hg_json_number_or_null "${HG_DNS_PORT:-}")"
+    printf '    },\n'
+    printf '    "resolution": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_DNS_RESOLUTION_STATE:-UNKNOWN}")"
+    printf '      "probe": %s\n' "$(hg_json_string_or_null "${HG_DNS_PROBE_DOMAIN:-}")"
+    printf '    },\n'
+    printf '    "upstream": {\n'
+    printf '      "resolv_file": %s,\n' "$(hg_json_string_or_null "${HG_DNS_RESOLV_FILE:-}")"
+    printf '      "servers": %s\n' "$(hg_status_json_words_array "${HG_DNS_UPSTREAM_SERVERS:-}")"
+    printf '    },\n'
+    printf '    "adblock": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_DNS_ADBLOCK_STATE:-UNKNOWN}")"
+    printf '      "configured": %s,\n' "$adblock_configured_json"
+    printf '      "autostart": %s,\n' "$adblock_autostart_json"
+    printf '      "runtime_mode": "generated_rules",\n'
+    printf '      "backend": %s,\n' "$(hg_json_string_or_null "${HG_DNS_ADBLOCK_BACKEND:-}")"
+    printf '      "runtime_file": %s,\n' "$(hg_json_string_or_null "${HG_DNS_ADBLOCK_RUNTIME_FILE:-}")"
+    printf '      "runtime_lines": %s,\n' "$(hg_json_number_or_null "${HG_DNS_ADBLOCK_RUNTIME_LINES:-}")"
+    printf '      "runtime_bytes": %s,\n' "$(hg_json_number_or_null "${HG_DNS_ADBLOCK_RUNTIME_BYTES:-}")"
+    printf '      "attached": %s,\n' "$adblock_attached_json"
+    printf '      "attached_configs": %s\n' "$(hg_json_number_or_null "${HG_DNS_ADBLOCK_ATTACHED_CONFIGS:-}")"
     printf '    }\n'
     printf '  },\n'
     printf '  "resources": {\n'

@@ -99,6 +99,7 @@ hg_selftest_run() {
     status_module="${HG_LIBDIR}/status.sh"
     network_module="${HG_LIBDIR}/network.sh"
     vpn_module="${HG_LIBDIR}/vpn.sh"
+    dns_module="${HG_LIBDIR}/dns.sh"
     doctor_module="${HG_LIBDIR}/doctor.sh"
     selftest_module="${HG_LIBDIR}/selftest.sh"
 
@@ -117,6 +118,7 @@ hg_selftest_run() {
     hg_selftest_readable 'status.sh' "$status_module"
     hg_selftest_readable 'network.sh' "$network_module"
     hg_selftest_readable 'vpn.sh' "$vpn_module"
+    hg_selftest_readable 'dns.sh' "$dns_module"
     hg_selftest_readable 'doctor.sh' "$doctor_module"
     hg_selftest_readable 'selftest.sh' "$selftest_module"
 
@@ -125,6 +127,7 @@ hg_selftest_run() {
     hg_selftest_syntax 'status.sh syntax' "$status_module"
     hg_selftest_syntax 'network.sh syntax' "$network_module"
     hg_selftest_syntax 'vpn.sh syntax' "$vpn_module"
+    hg_selftest_syntax 'dns.sh syntax' "$dns_module"
     hg_selftest_syntax 'doctor.sh syntax' "$doctor_module"
     hg_selftest_syntax 'selftest.sh syntax' "$selftest_module"
 
@@ -149,6 +152,12 @@ hg_selftest_run() {
         hg_selftest_api 'VPN API' 'hg_vpn_collect'
     else
         hg_selftest_result FAIL 'VPN API' 'модуль vpn не загружается'
+    fi
+
+    if hg_load_module dns >/dev/null 2>&1; then
+        hg_selftest_api 'DNS API' 'hg_dns_collect'
+    else
+        hg_selftest_result FAIL 'DNS API' 'модуль dns не загружается'
     fi
 
     if hg_load_module doctor >/dev/null 2>&1; then
