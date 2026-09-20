@@ -1,13 +1,15 @@
 # План релизов
 
-## 0.1 — Foundation
+## 0.1 — Foundation ✅
 
 - read-only preflight целевого роутера;
 - фиксация runtime и ограничений;
 - структура проекта;
 - базовые правила безопасности и хранения секретов.
 
-## 0.2 — Gateway CLI
+**Статус:** завершён 21.09.2026. Data plane не изменялся.
+
+## 0.2 — Gateway CLI ← текущий этап
 
 - `gateway status`;
 - `gateway status --json`;
