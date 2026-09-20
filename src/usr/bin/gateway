@@ -21,6 +21,7 @@ CUDY Home Gateway
 Использование:
   gateway help       Показать эту справку
   gateway version    Показать версию CLI
+  gateway status     Показать системный статус роутера
 
 На этапе 0.2 команды управления сетью ещё не реализованы.
 CLI работает только в read-only режиме.
@@ -36,6 +37,10 @@ main() {
             ;;
         version|-V|--version)
             hg_print_version
+            ;;
+        status)
+            hg_load_module status
+            hg_status_print
             ;;
         *)
             hg_error "неизвестная команда: $command"
