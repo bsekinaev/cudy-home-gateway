@@ -23,6 +23,7 @@ CUDY Home Gateway
   gateway version          Показать версию CLI
   gateway status           Показать системный статус роутера
   gateway status --json    Вывести системный статус в JSON
+  gateway doctor           Проверить окружение и зависимости
 
 На этапе 0.2 команды управления сетью ещё не реализованы.
 CLI работает только в read-only режиме.
@@ -50,6 +51,15 @@ main() {
                 hg_error 'использование: gateway status [--json]'
                 return "$HG_EXIT_USAGE"
             fi
+            ;;
+        doctor)
+            if [ "$#" -ne 1 ]; then
+                hg_error 'использование: gateway doctor'
+                return "$HG_EXIT_USAGE"
+            fi
+
+            hg_load_module doctor
+            hg_doctor_run
             ;;
         *)
             hg_error "неизвестная команда: $command"
