@@ -1,0 +1,32 @@
+# Секреты
+.env
+*.env
+secrets/
+*.key
+*.pem
+*.token
+
+# Конфигурации и состояния конкретного роутера
+local/
+state/
+cache/
+*.state
+
+# Бэкапы и диагностические дампы
+backups/
+*.tar.gz
+*.tgz
+*.log
+preflight-*.txt
+
+# Временные файлы
+.tmp/
+*.tmp
+*.swp
+*~
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
