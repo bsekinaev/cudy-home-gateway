@@ -97,6 +97,7 @@ hg_selftest_run() {
     entrypoint="${1:-}"
     common_module="${HG_LIBDIR}/common.sh"
     status_module="${HG_LIBDIR}/status.sh"
+    network_module="${HG_LIBDIR}/network.sh"
     doctor_module="${HG_LIBDIR}/doctor.sh"
     selftest_module="${HG_LIBDIR}/selftest.sh"
 
@@ -113,12 +114,14 @@ hg_selftest_run() {
 
     hg_selftest_readable 'common.sh' "$common_module"
     hg_selftest_readable 'status.sh' "$status_module"
+    hg_selftest_readable 'network.sh' "$network_module"
     hg_selftest_readable 'doctor.sh' "$doctor_module"
     hg_selftest_readable 'selftest.sh' "$selftest_module"
 
     [ -n "$entrypoint" ] && hg_selftest_syntax 'CLI syntax' "$entrypoint"
     hg_selftest_syntax 'common.sh syntax' "$common_module"
     hg_selftest_syntax 'status.sh syntax' "$status_module"
+    hg_selftest_syntax 'network.sh syntax' "$network_module"
     hg_selftest_syntax 'doctor.sh syntax' "$doctor_module"
     hg_selftest_syntax 'selftest.sh syntax' "$selftest_module"
 
@@ -131,6 +134,12 @@ hg_selftest_run() {
         hg_selftest_result FAIL 'Status API' 'модуль status не загружается'
         hg_selftest_result FAIL 'Status JSON API' 'модуль status не загружается'
         hg_selftest_result FAIL 'Status JSON contract' 'модуль status не загружается'
+    fi
+
+    if hg_load_module network >/dev/null 2>&1; then
+        hg_selftest_api 'Network API' 'hg_network_collect'
+    else
+        hg_selftest_result FAIL 'Network API' 'модуль network не загружается'
     fi
 
     if hg_load_module doctor >/dev/null 2>&1; then

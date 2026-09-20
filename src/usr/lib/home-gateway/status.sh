@@ -75,6 +75,13 @@ hg_status_collect() {
     else
         HG_STATUS_NTP_PROCESS='not_running'
     fi
+
+    if ! command -v hg_network_collect >/dev/null 2>&1; then
+        hg_load_module network >/dev/null 2>&1 || true
+    fi
+    if command -v hg_network_collect >/dev/null 2>&1; then
+        hg_network_collect
+    fi
 }
 
 hg_status_format_uptime() {
@@ -149,6 +156,31 @@ hg_status_print() {
     else
         printf '  NTP:      NOT RUNNING\n'
     fi
+
+    case "${HG_NETWORK_WAN_CGNAT:-unknown}" in
+        true) cgnat_label='yes' ;;
+        false) cgnat_label='no' ;;
+        *) cgnat_label='unknown' ;;
+    esac
+
+    if [ -n "${HG_NETWORK_WAN_IPV4:-}" ]; then
+        wan_ipv4_label="$HG_NETWORK_WAN_IPV4"
+        [ -n "${HG_NETWORK_WAN_PREFIX:-}" ] && wan_ipv4_label="${wan_ipv4_label}/${HG_NETWORK_WAN_PREFIX}"
+    else
+        wan_ipv4_label='n/a'
+    fi
+
+    direct_ipv4_label="${HG_NETWORK_DIRECT_IPV4:-n/a}"
+
+    printf '\nСеть\n'
+    printf '  WAN:           %s\n' "${HG_NETWORK_WAN_STATE:-UNKNOWN}"
+    printf '  Interface:     %s\n' "${HG_NETWORK_WAN_INTERFACE:-wan}"
+    printf '  Device:        %s\n' "${HG_NETWORK_WAN_DEVICE:-n/a}"
+    printf '  Protocol:      %s\n' "${HG_NETWORK_WAN_PROTO:-n/a}"
+    printf '  WAN IPv4:      %s\n' "$wan_ipv4_label"
+    printf '  Gateway:       %s\n' "${HG_NETWORK_WAN_GATEWAY:-n/a}"
+    printf '  CGNAT:         %s\n' "$cgnat_label"
+    printf '  Direct egress: %s (%s)\n' "$direct_ipv4_label" "${HG_NETWORK_DIRECT_STATE:-UNKNOWN}"
 }
 
 hg_status_print_json() {
@@ -173,6 +205,29 @@ hg_status_print_json() {
     printf '      "1m": %s,\n' "$(hg_json_number_or_null "$HG_STATUS_LOAD_1")"
     printf '      "5m": %s,\n' "$(hg_json_number_or_null "$HG_STATUS_LOAD_5")"
     printf '      "15m": %s\n' "$(hg_json_number_or_null "$HG_STATUS_LOAD_15")"
+    printf '    }\n'
+    printf '  },\n'
+    case "${HG_NETWORK_WAN_CGNAT:-unknown}" in
+        true|false) cgnat_json="$HG_NETWORK_WAN_CGNAT" ;;
+        *) cgnat_json='null' ;;
+    esac
+    printf '  "network": {\n'
+    printf '    "wan": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_NETWORK_WAN_STATE:-UNKNOWN}")"
+    printf '      "interface": %s,\n' "$(hg_json_string "${HG_NETWORK_WAN_INTERFACE:-wan}")"
+    printf '      "device": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_WAN_DEVICE:-}")"
+    printf '      "proto": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_WAN_PROTO:-}")"
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_WAN_IPV4:-}")"
+    printf '      "prefix_length": %s,\n' "$(hg_json_number_or_null "${HG_NETWORK_WAN_PREFIX:-}")"
+    printf '      "gateway": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_WAN_GATEWAY:-}")"
+    printf '      "cgnat": %s\n' "$cgnat_json"
+    printf '    },\n'
+    printf '    "direct_egress": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_NETWORK_DIRECT_STATE:-UNKNOWN}")"
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_DIRECT_IPV4:-}")"
+    printf '      "source": %s,\n' "$(hg_json_string "${HG_NETWORK_DIRECT_SOURCE:-live_probe}")"
+    printf '      "provider": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_DIRECT_PROVIDER:-}")"
+    printf '      "checked_at": %s\n' "$(hg_json_number_or_null "${HG_NETWORK_DIRECT_CHECKED_AT:-}")"
     printf '    }\n'
     printf '  },\n'
     printf '  "resources": {\n'

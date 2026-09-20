@@ -36,7 +36,7 @@ hg_doctor_result() {
 hg_doctor_runtime() {
     missing=''
 
-    for bin in sh awk sed grep wc date ps df curl jsonfilter uci ubus nft flock ucode; do
+    for bin in sh awk sed grep wc date ps df curl jsonfilter uci ubus nft flock ucode ip; do
         if ! command -v "$bin" >/dev/null 2>&1; then
             missing="${missing}${missing:+, }${bin}"
         fi

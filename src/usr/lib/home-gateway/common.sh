@@ -2,7 +2,7 @@
 # Общие функции CUDY Home Gateway.
 
 HG_NAME='CUDY Home Gateway'
-HG_VERSION='0.2.0'
+HG_VERSION='0.3.0-dev'
 HG_EXIT_UNHEALTHY=1
 HG_EXIT_USAGE=2
 HG_EXIT_SOFTWARE=70
@@ -60,6 +60,16 @@ hg_json_number_or_null() {
 
     if awk -v value="$value" 'BEGIN { exit(value ~ /^-?[0-9]+([.][0-9]+)?$/ ? 0 : 1) }'; then
         printf '%s' "$value"
+    else
+        printf 'null'
+    fi
+}
+
+hg_json_string_or_null() {
+    value="${1:-}"
+
+    if [ -n "$value" ]; then
+        hg_json_string "$value"
     else
         printf 'null'
     fi
