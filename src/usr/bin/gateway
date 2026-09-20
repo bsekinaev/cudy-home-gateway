@@ -1,0 +1,49 @@
+#!/bin/sh
+# Единая точка входа CUDY Home Gateway.
+
+set -eu
+
+HG_LIBDIR="${HG_LIBDIR:-/usr/lib/home-gateway}"
+COMMON_MODULE="${HG_LIBDIR}/common.sh"
+
+if [ ! -r "$COMMON_MODULE" ]; then
+    printf 'gateway: не найден системный модуль: %s\n' "$COMMON_MODULE" >&2
+    exit 70
+fi
+
+# shellcheck source=/dev/null
+. "$COMMON_MODULE"
+
+print_help() {
+    cat <<'EOF_HELP'
+CUDY Home Gateway
+
+Использование:
+  gateway help       Показать эту справку
+  gateway version    Показать версию CLI
+
+На этапе 0.2 команды управления сетью ещё не реализованы.
+CLI работает только в read-only режиме.
+EOF_HELP
+}
+
+main() {
+    command="${1:-help}"
+
+    case "$command" in
+        help|-h|--help)
+            print_help
+            ;;
+        version|-V|--version)
+            hg_print_version
+            ;;
+        *)
+            hg_error "неизвестная команда: $command"
+            printf '\n' >&2
+            print_help >&2
+            return "$HG_EXIT_USAGE"
+            ;;
+    esac
+}
+
+main "$@"
