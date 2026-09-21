@@ -75,6 +75,55 @@ hg_status_collect() {
     else
         HG_STATUS_NTP_PROCESS='not_running'
     fi
+
+    if ! command -v hg_network_collect >/dev/null 2>&1; then
+        hg_load_module network >/dev/null 2>&1 || true
+    fi
+    if command -v hg_network_collect >/dev/null 2>&1; then
+        hg_network_collect
+    fi
+
+    if ! command -v hg_vpn_collect >/dev/null 2>&1; then
+        hg_load_module vpn >/dev/null 2>&1 || true
+    fi
+    if command -v hg_vpn_collect >/dev/null 2>&1; then
+        hg_vpn_collect
+    fi
+
+    if ! command -v hg_dns_collect >/dev/null 2>&1; then
+        hg_load_module dns >/dev/null 2>&1 || true
+    fi
+    if command -v hg_dns_collect >/dev/null 2>&1; then
+        hg_dns_collect
+    fi
+
+    if ! command -v hg_torrent_collect >/dev/null 2>&1; then
+        hg_load_module torrent >/dev/null 2>&1 || true
+    fi
+    if command -v hg_torrent_collect >/dev/null 2>&1; then
+        hg_torrent_collect
+    fi
+
+    if ! command -v hg_redmi_collect >/dev/null 2>&1; then
+        hg_load_module redmi >/dev/null 2>&1 || true
+    fi
+    if command -v hg_redmi_collect >/dev/null 2>&1; then
+        hg_redmi_collect
+    fi
+
+    if ! command -v hg_asata_collect >/dev/null 2>&1; then
+        hg_load_module asata >/dev/null 2>&1 || true
+    fi
+    if command -v hg_asata_collect >/dev/null 2>&1; then
+        hg_asata_collect
+    fi
+
+    if ! command -v hg_tailscale_collect >/dev/null 2>&1; then
+        hg_load_module tailscale >/dev/null 2>&1 || true
+    fi
+    if command -v hg_tailscale_collect >/dev/null 2>&1; then
+        hg_tailscale_collect
+    fi
 }
 
 hg_status_format_uptime() {
@@ -128,6 +177,21 @@ hg_status_format_overlay() {
         }'
 }
 
+hg_status_json_words_array() {
+    words="${1:-}"
+    first=1
+
+    printf '['
+    for word in $words; do
+        if [ "$first" -eq 0 ]; then
+            printf ', '
+        fi
+        hg_json_string "$word"
+        first=0
+    done
+    printf ']'
+}
+
 hg_status_print() {
     hg_status_collect
 
@@ -149,6 +213,186 @@ hg_status_print() {
     else
         printf '  NTP:      NOT RUNNING\n'
     fi
+
+    case "${HG_NETWORK_WAN_CGNAT:-unknown}" in
+        true) cgnat_label='yes' ;;
+        false) cgnat_label='no' ;;
+        *) cgnat_label='unknown' ;;
+    esac
+
+    if [ -n "${HG_NETWORK_WAN_IPV4:-}" ]; then
+        wan_ipv4_label="$HG_NETWORK_WAN_IPV4"
+        [ -n "${HG_NETWORK_WAN_PREFIX:-}" ] && wan_ipv4_label="${wan_ipv4_label}/${HG_NETWORK_WAN_PREFIX}"
+    else
+        wan_ipv4_label='n/a'
+    fi
+
+    direct_ipv4_label="${HG_NETWORK_DIRECT_IPV4:-n/a}"
+
+    printf '\nСеть\n'
+    printf '  WAN:           %s\n' "${HG_NETWORK_WAN_STATE:-UNKNOWN}"
+    printf '  Interface:     %s\n' "${HG_NETWORK_WAN_INTERFACE:-wan}"
+    printf '  Device:        %s\n' "${HG_NETWORK_WAN_DEVICE:-n/a}"
+    printf '  Protocol:      %s\n' "${HG_NETWORK_WAN_PROTO:-n/a}"
+    printf '  WAN IPv4:      %s\n' "$wan_ipv4_label"
+    printf '  Gateway:       %s\n' "${HG_NETWORK_WAN_GATEWAY:-n/a}"
+    printf '  CGNAT:         %s\n' "$cgnat_label"
+    printf '  Direct egress: %s (%s)\n' "$direct_ipv4_label" "${HG_NETWORK_DIRECT_STATE:-UNKNOWN}"
+
+    case "${HG_VPN_PASSWALL_ENABLED:-unknown}" in
+        true) passwall_label='enabled' ;;
+        false) passwall_label='disabled' ;;
+        *) passwall_label='unknown' ;;
+    esac
+    case "${HG_VPN_AUTOSWITCH_ENABLED:-unknown}" in
+        true) autoswitch_label='enabled' ;;
+        false) autoswitch_label='disabled' ;;
+        *) autoswitch_label='unknown' ;;
+    esac
+
+    vpn_name_label="${HG_VPN_MAIN_NAME:-n/a}"
+    vpn_backups_label="${HG_VPN_BACKUP_NODES:-none}"
+    vpn_egress_label="${HG_VPN_EGRESS_IPV4:-n/a}"
+    if [ -n "${HG_VPN_MAIN_SOCKS_PORT:-}" ]; then
+        vpn_socks_label="${HG_VPN_MAIN_SOCKS_HOST:-127.0.0.1}:${HG_VPN_MAIN_SOCKS_PORT}"
+    else
+        vpn_socks_label='n/a'
+    fi
+
+    printf '\nVPN\n'
+    printf '  PassWall2:      %s\n' "$passwall_label"
+    printf '  MAIN state:     %s\n' "${HG_VPN_MAIN_STATE:-UNKNOWN}"
+    printf '  Profile:        %s\n' "${HG_VPN_MAIN_PROFILE:-n/a}"
+    printf '  Node:           %s\n' "${HG_VPN_MAIN_NODE:-n/a}"
+    printf '  Name:           %s\n' "$vpn_name_label"
+    printf '  SOCKS:          %s\n' "$vpn_socks_label"
+    printf '  Xray:           %s\n' "${HG_VPN_MAIN_XRAY_STATE:-UNKNOWN}"
+    printf '  Autoswitch:     %s\n' "$autoswitch_label"
+    printf '  Backups:        %s\n' "$vpn_backups_label"
+    printf '  MAIN egress:    %s (%s)\n' "$vpn_egress_label" "${HG_VPN_EGRESS_STATE:-UNKNOWN}"
+    printf '  Active route:   %s\n' "${HG_VPN_ACTIVE_NODE_STATE:-UNKNOWN}"
+
+    case "${HG_TORRENT_AUTOSWITCH_ENABLED:-unknown}" in
+        true) torrent_autoswitch_label='enabled' ;;
+        false) torrent_autoswitch_label='disabled' ;;
+        *) torrent_autoswitch_label='unknown' ;;
+    esac
+
+    torrent_name_label="${HG_TORRENT_NAME:-n/a}"
+    torrent_egress_label="${HG_TORRENT_EGRESS_IPV4:-n/a}"
+    if [ -n "${HG_TORRENT_SOCKS_PORT:-}" ]; then
+        torrent_socks_label="${HG_TORRENT_SOCKS_HOST:-127.0.0.1}:${HG_TORRENT_SOCKS_PORT}"
+    else
+        torrent_socks_label='n/a'
+    fi
+
+    printf '\nTorrent\n'
+    printf '  State:       %s\n' "${HG_TORRENT_STATE:-UNKNOWN}"
+    printf '  Profile:     %s\n' "${HG_TORRENT_PROFILE:-n/a}"
+    printf '  Node:        %s\n' "${HG_TORRENT_NODE:-n/a}"
+    printf '  Name:        %s\n' "$torrent_name_label"
+    printf '  SOCKS:       %s\n' "$torrent_socks_label"
+    printf '  Xray:        %s\n' "${HG_TORRENT_XRAY_STATE:-UNKNOWN}"
+    printf '  Autoswitch:  %s\n' "$torrent_autoswitch_label"
+    printf '  Egress:      %s (%s)\n' "$torrent_egress_label" "${HG_TORRENT_EGRESS_STATE:-UNKNOWN}"
+
+    redmi_name_label="${HG_REDMI_NAME:-n/a}"
+    redmi_egress_label="${HG_REDMI_EGRESS_IPV4:-n/a}"
+
+    printf '\nRedmi\n'
+    printf '  State:        %s\n' "${HG_REDMI_STATE:-UNKNOWN}"
+    printf '  ACL:          %s\n' "${HG_REDMI_ACL_PROFILE:-n/a}"
+    printf '  Client IPv4:  %s\n' "${HG_REDMI_CLIENT_IPV4:-n/a}"
+    printf '  Client MAC:   %s\n' "${HG_REDMI_CLIENT_MAC:-n/a}"
+    printf '  Node:         %s\n' "${HG_REDMI_NODE:-n/a}"
+    printf '  Name:         %s\n' "$redmi_name_label"
+    printf '  Xray:         %s\n' "${HG_REDMI_XRAY_STATE:-UNKNOWN}"
+    printf '  Policy:       %s\n' "${HG_REDMI_POLICY_STATE:-UNKNOWN}"
+    printf '  Kill-switch:  %s\n' "${HG_REDMI_KILLSWITCH_STATE:-UNKNOWN}"
+    printf '  Egress:       %s (%s)\n' "$redmi_egress_label" "${HG_REDMI_EGRESS_STATE:-UNKNOWN}"
+
+    case "${HG_ASATA_KEEPER_AUTOSTART:-unknown}" in
+        true) asata_autostart_label='enabled' ;;
+        false) asata_autostart_label='disabled' ;;
+        *) asata_autostart_label='unknown' ;;
+    esac
+
+    if [ -n "${HG_ASATA_OBSERVED_MAC:-}" ]; then
+        asata_mac_label="$HG_ASATA_OBSERVED_MAC"
+    else
+        asata_mac_label="${HG_ASATA_EXPECTED_MAC:-n/a}"
+    fi
+
+    printf '\nASATA\n'
+    printf '  State:       %s\n' "${HG_ASATA_STATE:-UNKNOWN}"
+    printf '  Client IP:   %s\n' "${HG_ASATA_CLIENT_IPV4:-n/a}"
+    printf '  Client MAC:  %s\n' "$asata_mac_label"
+    printf '  Identity:    %s\n' "${HG_ASATA_IDENTITY_STATE:-UNKNOWN}"
+    printf '  Reachable:   %s\n' "${HG_ASATA_REACHABILITY_STATE:-UNKNOWN}"
+    printf '  UDP direct:  %s\n' "${HG_ASATA_RULE_STATE:-UNKNOWN}"
+    printf '  Rules:       %s\n' "${HG_ASATA_RULES:-n/a}"
+    printf '  Packets:     %s\n' "${HG_ASATA_RULE_PACKETS:-n/a}"
+    printf '  Bytes:       %s\n' "${HG_ASATA_RULE_BYTES:-n/a}"
+    printf '  Keeper:      %s\n' "${HG_ASATA_KEEPER_STATE:-UNKNOWN}"
+    printf '  Autostart:   %s\n' "$asata_autostart_label"
+    printf '  Interval:    %ss\n' "${HG_ASATA_KEEPER_INTERVAL_SECONDS:-n/a}"
+
+    case "${HG_TAILSCALE_AUTOSTART:-unknown}" in
+        true) tailscale_autostart_label='enabled' ;;
+        false) tailscale_autostart_label='disabled' ;;
+        *) tailscale_autostart_label='unknown' ;;
+    esac
+    case "${HG_TAILSCALE_ONLINE:-unknown}" in
+        true) tailscale_online_label='yes' ;;
+        false) tailscale_online_label='no' ;;
+        *) tailscale_online_label='unknown' ;;
+    esac
+    case "${HG_TAILSCALE_EXIT_NODE_ACTIVE:-unknown}" in
+        true) tailscale_exit_node_label='yes' ;;
+        false) tailscale_exit_node_label='no' ;;
+        *) tailscale_exit_node_label='unknown' ;;
+    esac
+
+    printf '\nTailscale\n'
+    printf '  State:       %s\n' "${HG_TAILSCALE_STATE:-UNKNOWN}"
+    printf '  Version:     %s\n' "${HG_TAILSCALE_VERSION:-n/a}"
+    printf '  Service:     %s\n' "${HG_TAILSCALE_SERVICE_STATE:-UNKNOWN}"
+    printf '  Autostart:   %s\n' "$tailscale_autostart_label"
+    printf '  Backend:     %s\n' "${HG_TAILSCALE_BACKEND_STATE:-UNKNOWN}"
+    printf '  Interface:   %s (%s)\n' "${HG_TAILSCALE_INTERFACE:-tailscale0}" "${HG_TAILSCALE_INTERFACE_STATE:-UNKNOWN}"
+    printf '  IPv4:        %s\n' "${HG_TAILSCALE_IPV4:-n/a}"
+    printf '  IPv6:        %s\n' "${HG_TAILSCALE_IPV6:-n/a}"
+    printf '  Online:      %s\n' "$tailscale_online_label"
+    printf '  Hostname:    %s\n' "${HG_TAILSCALE_HOSTNAME:-n/a}"
+    printf '  DNS name:    %s\n' "${HG_TAILSCALE_DNS_NAME:-n/a}"
+    printf '  Tailnet:     %s\n' "${HG_TAILSCALE_TAILNET:-n/a}"
+    printf '  Exit node:   %s\n' "$tailscale_exit_node_label"
+    printf '  Routing:     %s\n' "${HG_TAILSCALE_ROUTING_STATE:-UNKNOWN}"
+    printf '  Routes:      IPv4=%s IPv6=%s (table %s)\n'         "${HG_TAILSCALE_IPV4_ROUTES:-n/a}"         "${HG_TAILSCALE_IPV6_ROUTES:-n/a}"         "${HG_TAILSCALE_ROUTE_TABLE:-52}"
+
+    case "${HG_DNS_ADBLOCK_CONFIGURED:-unknown}" in
+        true) adblock_config_label='enabled' ;;
+        false) adblock_config_label='disabled' ;;
+        *) adblock_config_label='unknown' ;;
+    esac
+
+    dns_upstream_label="${HG_DNS_UPSTREAM_SERVERS:-none}"
+    if [ -n "${HG_DNS_ADBLOCK_RUNTIME_LINES:-}" ]; then
+        adblock_rules_label="${HG_DNS_ADBLOCK_RUNTIME_LINES} lines / ${HG_DNS_ADBLOCK_RUNTIME_BYTES:-0} bytes"
+    else
+        adblock_rules_label='n/a'
+    fi
+
+    printf '\nDNS\n'
+    printf '  State:          %s\n' "${HG_DNS_STATE:-UNKNOWN}"
+    printf '  dnsmasq:        %s\n' "${HG_DNS_DNSMASQ_STATE:-UNKNOWN}"
+    printf '  Port:           %s\n' "${HG_DNS_PORT:-n/a}"
+    printf '  Resolution:     %s (%s)\n' "${HG_DNS_RESOLUTION_STATE:-UNKNOWN}" "${HG_DNS_PROBE_DOMAIN:-n/a}"
+    printf '  Upstream DNS:   %s\n' "$dns_upstream_label"
+    printf '  Resolv file:    %s\n' "${HG_DNS_RESOLV_FILE:-n/a}"
+    printf '  AdBlock-Fast:   %s\n' "${HG_DNS_ADBLOCK_STATE:-UNKNOWN}"
+    printf '  AdBlock config: %s\n' "$adblock_config_label"
+    printf '  AdBlock rules:  %s\n' "$adblock_rules_label"
 }
 
 hg_status_print_json() {
@@ -173,6 +417,261 @@ hg_status_print_json() {
     printf '      "1m": %s,\n' "$(hg_json_number_or_null "$HG_STATUS_LOAD_1")"
     printf '      "5m": %s,\n' "$(hg_json_number_or_null "$HG_STATUS_LOAD_5")"
     printf '      "15m": %s\n' "$(hg_json_number_or_null "$HG_STATUS_LOAD_15")"
+    printf '    }\n'
+    printf '  },\n'
+    case "${HG_NETWORK_WAN_CGNAT:-unknown}" in
+        true|false) cgnat_json="$HG_NETWORK_WAN_CGNAT" ;;
+        *) cgnat_json='null' ;;
+    esac
+    printf '  "network": {\n'
+    printf '    "wan": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_NETWORK_WAN_STATE:-UNKNOWN}")"
+    printf '      "interface": %s,\n' "$(hg_json_string "${HG_NETWORK_WAN_INTERFACE:-wan}")"
+    printf '      "device": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_WAN_DEVICE:-}")"
+    printf '      "proto": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_WAN_PROTO:-}")"
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_WAN_IPV4:-}")"
+    printf '      "prefix_length": %s,\n' "$(hg_json_number_or_null "${HG_NETWORK_WAN_PREFIX:-}")"
+    printf '      "gateway": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_WAN_GATEWAY:-}")"
+    printf '      "cgnat": %s\n' "$cgnat_json"
+    printf '    },\n'
+    printf '    "direct_egress": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_NETWORK_DIRECT_STATE:-UNKNOWN}")"
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_DIRECT_IPV4:-}")"
+    printf '      "source": %s,\n' "$(hg_json_string "${HG_NETWORK_DIRECT_SOURCE:-live_probe}")"
+    printf '      "provider": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_DIRECT_PROVIDER:-}")"
+    printf '      "checked_at": %s\n' "$(hg_json_number_or_null "${HG_NETWORK_DIRECT_CHECKED_AT:-}")"
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_VPN_PASSWALL_ENABLED:-unknown}" in
+        true|false) passwall_json="$HG_VPN_PASSWALL_ENABLED" ;;
+        *) passwall_json='null' ;;
+    esac
+    case "${HG_VPN_MAIN_PROFILE_ENABLED:-unknown}" in
+        true|false) profile_enabled_json="$HG_VPN_MAIN_PROFILE_ENABLED" ;;
+        *) profile_enabled_json='null' ;;
+    esac
+    case "${HG_VPN_AUTOSWITCH_ENABLED:-unknown}" in
+        true|false) autoswitch_json="$HG_VPN_AUTOSWITCH_ENABLED" ;;
+        *) autoswitch_json='null' ;;
+    esac
+
+    printf '  "vpn": {\n'
+    printf '    "passwall2": {\n'
+    printf '      "enabled": %s\n' "$passwall_json"
+    printf '    },\n'
+    printf '    "main": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_VPN_MAIN_STATE:-UNKNOWN}")"
+    printf '      "config_state": %s,\n' "$(hg_json_string "${HG_VPN_MAIN_CONFIG_STATE:-UNKNOWN}")"
+    printf '      "profile": %s,\n' "$(hg_json_string_or_null "${HG_VPN_MAIN_PROFILE:-}")"
+    printf '      "profile_enabled": %s,\n' "$profile_enabled_json"
+    printf '      "configured_node": {\n'
+    printf '        "id": %s,\n' "$(hg_json_string_or_null "${HG_VPN_MAIN_NODE:-}")"
+    printf '        "name": %s\n' "$(hg_json_string_or_null "${HG_VPN_MAIN_NAME:-}")"
+    printf '      },\n'
+    printf '      "socks": {\n'
+    printf '        "host": %s,\n' "$(hg_json_string "${HG_VPN_MAIN_SOCKS_HOST:-127.0.0.1}")"
+    printf '        "port": %s\n' "$(hg_json_number_or_null "${HG_VPN_MAIN_SOCKS_PORT:-}")"
+    printf '      },\n'
+    printf '      "xray_process": %s,\n' "$(hg_json_string "${HG_VPN_MAIN_XRAY_STATE:-UNKNOWN}")"
+    printf '      "autoswitch": {\n'
+    printf '        "enabled": %s,\n' "$autoswitch_json"
+    printf '        "backup_nodes": %s,\n' "$(hg_status_json_words_array "${HG_VPN_BACKUP_NODES:-}")"
+    printf '        "active_node": %s,\n' "$(hg_json_string_or_null "${HG_VPN_ACTIVE_NODE:-}")"
+    printf '        "active_node_state": %s\n' "$(hg_json_string "${HG_VPN_ACTIVE_NODE_STATE:-UNKNOWN}")"
+    printf '      },\n'
+    printf '      "egress": {\n'
+    printf '        "state": %s,\n' "$(hg_json_string "${HG_VPN_EGRESS_STATE:-UNKNOWN}")"
+    printf '        "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_VPN_EGRESS_IPV4:-}")"
+    printf '        "source": %s,\n' "$(hg_json_string "${HG_VPN_EGRESS_SOURCE:-live_probe}")"
+    printf '        "provider": %s,\n' "$(hg_json_string_or_null "${HG_VPN_EGRESS_PROVIDER:-}")"
+    printf '        "checked_at": %s\n' "$(hg_json_number_or_null "${HG_VPN_EGRESS_CHECKED_AT:-}")"
+    printf '      }\n'
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_TORRENT_PROFILE_ENABLED:-unknown}" in
+        true|false) torrent_profile_enabled_json="$HG_TORRENT_PROFILE_ENABLED" ;;
+        *) torrent_profile_enabled_json='null' ;;
+    esac
+    case "${HG_TORRENT_AUTOSWITCH_ENABLED:-unknown}" in
+        true|false) torrent_autoswitch_json="$HG_TORRENT_AUTOSWITCH_ENABLED" ;;
+        *) torrent_autoswitch_json='null' ;;
+    esac
+
+    printf '  "torrent": {\n'
+    printf '    "state": %s,\n' "$(hg_json_string "${HG_TORRENT_STATE:-UNKNOWN}")"
+    printf '    "config_state": %s,\n' "$(hg_json_string "${HG_TORRENT_CONFIG_STATE:-UNKNOWN}")"
+    printf '    "profile": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_PROFILE:-}")"
+    printf '    "profile_enabled": %s,\n' "$torrent_profile_enabled_json"
+    printf '    "configured_node": {\n'
+    printf '      "id": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_NODE:-}")"
+    printf '      "name": %s\n' "$(hg_json_string_or_null "${HG_TORRENT_NAME:-}")"
+    printf '    },\n'
+    printf '    "socks": {\n'
+    printf '      "host": %s,\n' "$(hg_json_string "${HG_TORRENT_SOCKS_HOST:-127.0.0.1}")"
+    printf '      "port": %s\n' "$(hg_json_number_or_null "${HG_TORRENT_SOCKS_PORT:-}")"
+    printf '    },\n'
+    printf '    "xray_process": %s,\n' "$(hg_json_string "${HG_TORRENT_XRAY_STATE:-UNKNOWN}")"
+    printf '    "autoswitch": {\n'
+    printf '      "enabled": %s\n' "$torrent_autoswitch_json"
+    printf '    },\n'
+    printf '    "egress": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_TORRENT_EGRESS_STATE:-UNKNOWN}")"
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_EGRESS_IPV4:-}")"
+    printf '      "source": %s,\n' "$(hg_json_string "${HG_TORRENT_EGRESS_SOURCE:-live_probe}")"
+    printf '      "provider": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_EGRESS_PROVIDER:-}")"
+    printf '      "checked_at": %s\n' "$(hg_json_number_or_null "${HG_TORRENT_EGRESS_CHECKED_AT:-}")"
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_REDMI_ACL_ENABLED:-unknown}" in
+        true|false) redmi_enabled_json="$HG_REDMI_ACL_ENABLED" ;;
+        *) redmi_enabled_json='null' ;;
+    esac
+
+    printf '  "redmi": {\n'
+    printf '    "state": %s,\n' "$(hg_json_string "${HG_REDMI_STATE:-UNKNOWN}")"
+    printf '    "config_state": %s,\n' "$(hg_json_string "${HG_REDMI_CONFIG_STATE:-UNKNOWN}")"
+    printf '    "acl_profile": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_ACL_PROFILE:-}")"
+    printf '    "enabled": %s,\n' "$redmi_enabled_json"
+    printf '    "remark": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_REMARK:-}")"
+    printf '    "client": {\n'
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_CLIENT_IPV4:-}")"
+    printf '      "mac": %s\n' "$(hg_json_string_or_null "${HG_REDMI_CLIENT_MAC:-}")"
+    printf '    },\n'
+    printf '    "configured_node": {\n'
+    printf '      "id": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_NODE:-}")"
+    printf '      "name": %s\n' "$(hg_json_string_or_null "${HG_REDMI_NAME:-}")"
+    printf '    },\n'
+    printf '    "xray_process": %s,\n' "$(hg_json_string "${HG_REDMI_XRAY_STATE:-UNKNOWN}")"
+    printf '    "routing_policy": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_REDMI_POLICY_STATE:-UNKNOWN}")"
+    printf '      "rules": %s\n' "$(hg_json_number_or_null "${HG_REDMI_POLICY_RULES:-}")"
+    printf '    },\n'
+    printf '    "kill_switch": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_REDMI_KILLSWITCH_STATE:-UNKNOWN}")"
+    printf '      "rules": %s\n' "$(hg_json_number_or_null "${HG_REDMI_KILLSWITCH_RULES:-}")"
+    printf '    },\n'
+    printf '    "egress": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_REDMI_EGRESS_STATE:-UNKNOWN}")"
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_EGRESS_IPV4:-}")"
+    printf '      "source": %s\n' "$(hg_json_string "${HG_REDMI_EGRESS_SOURCE:-unverified}")"
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_ASATA_KEEPER_AUTOSTART:-unknown}" in
+        true|false) asata_autostart_json="$HG_ASATA_KEEPER_AUTOSTART" ;;
+        *) asata_autostart_json='null' ;;
+    esac
+
+    printf '  "asata": {\n'
+    printf '    "state": %s,\n' "$(hg_json_string "${HG_ASATA_STATE:-UNKNOWN}")"
+    printf '    "client": {\n'
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_ASATA_CLIENT_IPV4:-}")"
+    printf '      "name": %s,\n' "$(hg_json_string_or_null "${HG_ASATA_CLIENT_NAME:-}")"
+    printf '      "expected_mac": %s,\n' "$(hg_json_string_or_null "${HG_ASATA_EXPECTED_MAC:-}")"
+    printf '      "observed_mac": %s,\n' "$(hg_json_string_or_null "${HG_ASATA_OBSERVED_MAC:-}")"
+    printf '      "identity_state": %s,\n' "$(hg_json_string "${HG_ASATA_IDENTITY_STATE:-UNKNOWN}")"
+    printf '      "reachability": %s\n' "$(hg_json_string "${HG_ASATA_REACHABILITY_STATE:-UNKNOWN}")"
+    printf '    },\n'
+    printf '    "udp_direct": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_ASATA_RULE_STATE:-UNKNOWN}")"
+    printf '      "comment": %s,\n' "$(hg_json_string_or_null "${HG_ASATA_RULE_COMMENT:-}")"
+    printf '      "rules": %s,\n' "$(hg_json_number_or_null "${HG_ASATA_RULES:-}")"
+    printf '      "valid_rules": %s,\n' "$(hg_json_number_or_null "${HG_ASATA_VALID_RULES:-}")"
+    printf '      "packets": %s,\n' "$(hg_json_number_or_null "${HG_ASATA_RULE_PACKETS:-}")"
+    printf '      "bytes": %s\n' "$(hg_json_number_or_null "${HG_ASATA_RULE_BYTES:-}")"
+    printf '    },\n'
+    printf '    "keeper": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_ASATA_KEEPER_STATE:-UNKNOWN}")"
+    printf '      "autostart": %s,\n' "$asata_autostart_json"
+    printf '      "interval_seconds": %s\n' "$(hg_json_number_or_null "${HG_ASATA_KEEPER_INTERVAL_SECONDS:-}")"
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_TAILSCALE_AUTOSTART:-unknown}" in
+        true|false) tailscale_autostart_json="$HG_TAILSCALE_AUTOSTART" ;;
+        *) tailscale_autostart_json='null' ;;
+    esac
+    case "${HG_TAILSCALE_ONLINE:-unknown}" in
+        true|false) tailscale_online_json="$HG_TAILSCALE_ONLINE" ;;
+        *) tailscale_online_json='null' ;;
+    esac
+    case "${HG_TAILSCALE_EXIT_NODE_ACTIVE:-unknown}" in
+        true|false) tailscale_exit_node_json="$HG_TAILSCALE_EXIT_NODE_ACTIVE" ;;
+        *) tailscale_exit_node_json='null' ;;
+    esac
+
+    printf '  "tailscale": {\n'
+    printf '    "state": %s,\n' "$(hg_json_string "${HG_TAILSCALE_STATE:-UNKNOWN}")"
+    printf '    "version": %s,\n' "$(hg_json_string_or_null "${HG_TAILSCALE_VERSION:-}")"
+    printf '    "service": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_TAILSCALE_SERVICE_STATE:-UNKNOWN}")"
+    printf '      "autostart": %s\n' "$tailscale_autostart_json"
+    printf '    },\n'
+    printf '    "backend_state": %s,\n' "$(hg_json_string "${HG_TAILSCALE_BACKEND_STATE:-UNKNOWN}")"
+    printf '    "interface": {\n'
+    printf '      "name": %s,\n' "$(hg_json_string "${HG_TAILSCALE_INTERFACE:-tailscale0}")"
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_TAILSCALE_INTERFACE_STATE:-UNKNOWN}")"
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_TAILSCALE_IPV4:-}")"
+    printf '      "ipv6": %s\n' "$(hg_json_string_or_null "${HG_TAILSCALE_IPV6:-}")"
+    printf '    },\n'
+    printf '    "identity": {\n'
+    printf '      "hostname": %s,\n' "$(hg_json_string_or_null "${HG_TAILSCALE_HOSTNAME:-}")"
+    printf '      "dns_name": %s,\n' "$(hg_json_string_or_null "${HG_TAILSCALE_DNS_NAME:-}")"
+    printf '      "online": %s,\n' "$tailscale_online_json"
+    printf '      "tailnet": %s\n' "$(hg_json_string_or_null "${HG_TAILSCALE_TAILNET:-}")"
+    printf '    },\n'
+    printf '    "exit_node": {\n'
+    printf '      "active": %s\n' "$tailscale_exit_node_json"
+    printf '    },\n'
+    printf '    "routing": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_TAILSCALE_ROUTING_STATE:-UNKNOWN}")"
+    printf '      "table": %s,\n' "$(hg_json_number_or_null "${HG_TAILSCALE_ROUTE_TABLE:-}")"
+    printf '      "ipv4_routes": %s,\n' "$(hg_json_number_or_null "${HG_TAILSCALE_IPV4_ROUTES:-}")"
+    printf '      "ipv6_routes": %s\n' "$(hg_json_number_or_null "${HG_TAILSCALE_IPV6_ROUTES:-}")"
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_DNS_ADBLOCK_CONFIGURED:-unknown}" in
+        true|false) adblock_configured_json="$HG_DNS_ADBLOCK_CONFIGURED" ;;
+        *) adblock_configured_json='null' ;;
+    esac
+    case "${HG_DNS_ADBLOCK_AUTOSTART:-unknown}" in
+        true|false) adblock_autostart_json="$HG_DNS_ADBLOCK_AUTOSTART" ;;
+        *) adblock_autostart_json='null' ;;
+    esac
+    case "${HG_DNS_ADBLOCK_ATTACHED:-unknown}" in
+        true|false) adblock_attached_json="$HG_DNS_ADBLOCK_ATTACHED" ;;
+        *) adblock_attached_json='null' ;;
+    esac
+
+    printf '  "dns": {\n'
+    printf '    "state": %s,\n' "$(hg_json_string "${HG_DNS_STATE:-UNKNOWN}")"
+    printf '    "dnsmasq": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_DNS_DNSMASQ_STATE:-UNKNOWN}")"
+    printf '      "port": %s\n' "$(hg_json_number_or_null "${HG_DNS_PORT:-}")"
+    printf '    },\n'
+    printf '    "resolution": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_DNS_RESOLUTION_STATE:-UNKNOWN}")"
+    printf '      "probe": %s\n' "$(hg_json_string_or_null "${HG_DNS_PROBE_DOMAIN:-}")"
+    printf '    },\n'
+    printf '    "upstream": {\n'
+    printf '      "resolv_file": %s,\n' "$(hg_json_string_or_null "${HG_DNS_RESOLV_FILE:-}")"
+    printf '      "servers": %s\n' "$(hg_status_json_words_array "${HG_DNS_UPSTREAM_SERVERS:-}")"
+    printf '    },\n'
+    printf '    "adblock": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_DNS_ADBLOCK_STATE:-UNKNOWN}")"
+    printf '      "configured": %s,\n' "$adblock_configured_json"
+    printf '      "autostart": %s,\n' "$adblock_autostart_json"
+    printf '      "runtime_mode": "generated_rules",\n'
+    printf '      "backend": %s,\n' "$(hg_json_string_or_null "${HG_DNS_ADBLOCK_BACKEND:-}")"
+    printf '      "runtime_file": %s,\n' "$(hg_json_string_or_null "${HG_DNS_ADBLOCK_RUNTIME_FILE:-}")"
+    printf '      "runtime_lines": %s,\n' "$(hg_json_number_or_null "${HG_DNS_ADBLOCK_RUNTIME_LINES:-}")"
+    printf '      "runtime_bytes": %s,\n' "$(hg_json_number_or_null "${HG_DNS_ADBLOCK_RUNTIME_BYTES:-}")"
+    printf '      "attached": %s,\n' "$adblock_attached_json"
+    printf '      "attached_configs": %s\n' "$(hg_json_number_or_null "${HG_DNS_ADBLOCK_ATTACHED_CONFIGS:-}")"
     printf '    }\n'
     printf '  },\n'
     printf '  "resources": {\n'

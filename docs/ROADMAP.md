@@ -18,12 +18,14 @@
 
 **Статус:** завершён 21.09.2026. Regression-test: `version`, `status`, `status --json`, `doctor`, `selftest` — успешно; data plane не изменялся.
 
-## 0.3 — Status & System ← текущий этап
+## 0.3 — Status & System ✅
 
 - WAN, DNS, MAIN, egress;
 - Torrent, Redmi, ASATA, Tailscale;
 - uptime, load, RAM, flash, time sync;
 - состояния OK/DEGRADED/DOWN/UNKNOWN/MAINTENANCE.
+
+**Статус:** завершён 21.09.2026. Human/JSON status, fault-injection negative-tests, `doctor` и `selftest` проверены на целевом CUDY; data plane не изменялся.
 
 ## 0.4 — Telegram read-only
 

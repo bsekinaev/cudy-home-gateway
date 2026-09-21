@@ -97,6 +97,13 @@ hg_selftest_run() {
     entrypoint="${1:-}"
     common_module="${HG_LIBDIR}/common.sh"
     status_module="${HG_LIBDIR}/status.sh"
+    network_module="${HG_LIBDIR}/network.sh"
+    vpn_module="${HG_LIBDIR}/vpn.sh"
+    dns_module="${HG_LIBDIR}/dns.sh"
+    torrent_module="${HG_LIBDIR}/torrent.sh"
+    redmi_module="${HG_LIBDIR}/redmi.sh"
+    asata_module="${HG_LIBDIR}/asata.sh"
+    tailscale_module="${HG_LIBDIR}/tailscale.sh"
     doctor_module="${HG_LIBDIR}/doctor.sh"
     selftest_module="${HG_LIBDIR}/selftest.sh"
 
@@ -113,12 +120,26 @@ hg_selftest_run() {
 
     hg_selftest_readable 'common.sh' "$common_module"
     hg_selftest_readable 'status.sh' "$status_module"
+    hg_selftest_readable 'network.sh' "$network_module"
+    hg_selftest_readable 'vpn.sh' "$vpn_module"
+    hg_selftest_readable 'dns.sh' "$dns_module"
+    hg_selftest_readable 'torrent.sh' "$torrent_module"
+    hg_selftest_readable 'redmi.sh' "$redmi_module"
+    hg_selftest_readable 'asata.sh' "$asata_module"
+    hg_selftest_readable 'tailscale.sh' "$tailscale_module"
     hg_selftest_readable 'doctor.sh' "$doctor_module"
     hg_selftest_readable 'selftest.sh' "$selftest_module"
 
     [ -n "$entrypoint" ] && hg_selftest_syntax 'CLI syntax' "$entrypoint"
     hg_selftest_syntax 'common.sh syntax' "$common_module"
     hg_selftest_syntax 'status.sh syntax' "$status_module"
+    hg_selftest_syntax 'network.sh syntax' "$network_module"
+    hg_selftest_syntax 'vpn.sh syntax' "$vpn_module"
+    hg_selftest_syntax 'dns.sh syntax' "$dns_module"
+    hg_selftest_syntax 'torrent.sh syntax' "$torrent_module"
+    hg_selftest_syntax 'redmi.sh syntax' "$redmi_module"
+    hg_selftest_syntax 'asata.sh syntax' "$asata_module"
+    hg_selftest_syntax 'tailscale.sh syntax' "$tailscale_module"
     hg_selftest_syntax 'doctor.sh syntax' "$doctor_module"
     hg_selftest_syntax 'selftest.sh syntax' "$selftest_module"
 
@@ -131,6 +152,48 @@ hg_selftest_run() {
         hg_selftest_result FAIL 'Status API' 'модуль status не загружается'
         hg_selftest_result FAIL 'Status JSON API' 'модуль status не загружается'
         hg_selftest_result FAIL 'Status JSON contract' 'модуль status не загружается'
+    fi
+
+    if hg_load_module network >/dev/null 2>&1; then
+        hg_selftest_api 'Network API' 'hg_network_collect'
+    else
+        hg_selftest_result FAIL 'Network API' 'модуль network не загружается'
+    fi
+
+    if hg_load_module vpn >/dev/null 2>&1; then
+        hg_selftest_api 'VPN API' 'hg_vpn_collect'
+    else
+        hg_selftest_result FAIL 'VPN API' 'модуль vpn не загружается'
+    fi
+
+    if hg_load_module dns >/dev/null 2>&1; then
+        hg_selftest_api 'DNS API' 'hg_dns_collect'
+    else
+        hg_selftest_result FAIL 'DNS API' 'модуль dns не загружается'
+    fi
+
+    if hg_load_module torrent >/dev/null 2>&1; then
+        hg_selftest_api 'Torrent API' 'hg_torrent_collect'
+    else
+        hg_selftest_result FAIL 'Torrent API' 'модуль torrent не загружается'
+    fi
+
+    if hg_load_module redmi >/dev/null 2>&1; then
+        hg_selftest_api 'Redmi API' 'hg_redmi_collect'
+    else
+        hg_selftest_result FAIL 'Redmi API' 'модуль redmi не загружается'
+    fi
+
+    if hg_load_module asata >/dev/null 2>&1; then
+        hg_selftest_api 'ASATA API' 'hg_asata_collect'
+    else
+        hg_selftest_result FAIL 'ASATA API' 'модуль asata не загружается'
+    fi
+
+    if hg_load_module tailscale >/dev/null 2>&1; then
+        hg_selftest_api 'Tailscale API' 'hg_tailscale_collect'
+    else
+        hg_selftest_result FAIL 'Tailscale API' 'модуль tailscale не загружается'
     fi
 
     if hg_load_module doctor >/dev/null 2>&1; then

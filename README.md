@@ -30,9 +30,11 @@
 
 ## Статус
 
-`0.2 — Gateway CLI / completed`
+`0.3 — Status & System / completed`
 
-Реализован read-only CLI `gateway` с командами `status`, `status --json`, `doctor` и `selftest`. Финальный regression-test на целевом CUDY прошёл без ошибок; data plane остался неизменным. Следующий этап — `0.3 Status & System`.
+Реализован единый read-only статус для WAN/direct egress, MAIN VPN, Torrent, Redmi, ASATA, Tailscale, DNS/AdBlock-Fast и системных ресурсов. Human-readable и JSON режимы проверены на целевом CUDY, включая безопасные negative-tests для критичных состояний; финальный selftest проходит без ошибок. Data plane не изменялся.
+
+Следующий этап — `0.4 Telegram read-only`.
 
 ## Документация
 
