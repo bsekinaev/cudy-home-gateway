@@ -103,6 +103,13 @@ hg_status_collect() {
     if command -v hg_torrent_collect >/dev/null 2>&1; then
         hg_torrent_collect
     fi
+
+    if ! command -v hg_redmi_collect >/dev/null 2>&1; then
+        hg_load_module redmi >/dev/null 2>&1 || true
+    fi
+    if command -v hg_redmi_collect >/dev/null 2>&1; then
+        hg_redmi_collect
+    fi
 }
 
 hg_status_format_uptime() {
@@ -275,6 +282,21 @@ hg_status_print() {
     printf '  Autoswitch:  %s\n' "$torrent_autoswitch_label"
     printf '  Egress:      %s (%s)\n' "$torrent_egress_label" "${HG_TORRENT_EGRESS_STATE:-UNKNOWN}"
 
+    redmi_name_label="${HG_REDMI_NAME:-n/a}"
+    redmi_egress_label="${HG_REDMI_EGRESS_IPV4:-n/a}"
+
+    printf '\nRedmi\n'
+    printf '  State:        %s\n' "${HG_REDMI_STATE:-UNKNOWN}"
+    printf '  ACL:          %s\n' "${HG_REDMI_ACL_PROFILE:-n/a}"
+    printf '  Client IPv4:  %s\n' "${HG_REDMI_CLIENT_IPV4:-n/a}"
+    printf '  Client MAC:   %s\n' "${HG_REDMI_CLIENT_MAC:-n/a}"
+    printf '  Node:         %s\n' "${HG_REDMI_NODE:-n/a}"
+    printf '  Name:         %s\n' "$redmi_name_label"
+    printf '  Xray:         %s\n' "${HG_REDMI_XRAY_STATE:-UNKNOWN}"
+    printf '  Policy:       %s\n' "${HG_REDMI_POLICY_STATE:-UNKNOWN}"
+    printf '  Kill-switch:  %s\n' "${HG_REDMI_KILLSWITCH_STATE:-UNKNOWN}"
+    printf '  Egress:       %s (%s)\n' "$redmi_egress_label" "${HG_REDMI_EGRESS_STATE:-UNKNOWN}"
+
     case "${HG_DNS_ADBLOCK_CONFIGURED:-unknown}" in
         true) adblock_config_label='enabled' ;;
         false) adblock_config_label='disabled' ;;
@@ -427,6 +449,41 @@ hg_status_print_json() {
     printf '      "source": %s,\n' "$(hg_json_string "${HG_TORRENT_EGRESS_SOURCE:-live_probe}")"
     printf '      "provider": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_EGRESS_PROVIDER:-}")"
     printf '      "checked_at": %s\n' "$(hg_json_number_or_null "${HG_TORRENT_EGRESS_CHECKED_AT:-}")"
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_REDMI_ACL_ENABLED:-unknown}" in
+        true|false) redmi_enabled_json="$HG_REDMI_ACL_ENABLED" ;;
+        *) redmi_enabled_json='null' ;;
+    esac
+
+    printf '  "redmi": {\n'
+    printf '    "state": %s,\n' "$(hg_json_string "${HG_REDMI_STATE:-UNKNOWN}")"
+    printf '    "config_state": %s,\n' "$(hg_json_string "${HG_REDMI_CONFIG_STATE:-UNKNOWN}")"
+    printf '    "acl_profile": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_ACL_PROFILE:-}")"
+    printf '    "enabled": %s,\n' "$redmi_enabled_json"
+    printf '    "remark": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_REMARK:-}")"
+    printf '    "client": {\n'
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_CLIENT_IPV4:-}")"
+    printf '      "mac": %s\n' "$(hg_json_string_or_null "${HG_REDMI_CLIENT_MAC:-}")"
+    printf '    },\n'
+    printf '    "configured_node": {\n'
+    printf '      "id": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_NODE:-}")"
+    printf '      "name": %s\n' "$(hg_json_string_or_null "${HG_REDMI_NAME:-}")"
+    printf '    },\n'
+    printf '    "xray_process": %s,\n' "$(hg_json_string "${HG_REDMI_XRAY_STATE:-UNKNOWN}")"
+    printf '    "routing_policy": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_REDMI_POLICY_STATE:-UNKNOWN}")"
+    printf '      "rules": %s\n' "$(hg_json_number_or_null "${HG_REDMI_POLICY_RULES:-}")"
+    printf '    },\n'
+    printf '    "kill_switch": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_REDMI_KILLSWITCH_STATE:-UNKNOWN}")"
+    printf '      "rules": %s\n' "$(hg_json_number_or_null "${HG_REDMI_KILLSWITCH_RULES:-}")"
+    printf '    },\n'
+    printf '    "egress": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_REDMI_EGRESS_STATE:-UNKNOWN}")"
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_EGRESS_IPV4:-}")"
+    printf '      "source": %s\n' "$(hg_json_string "${HG_REDMI_EGRESS_SOURCE:-unverified}")"
     printf '    }\n'
     printf '  },\n'
 
