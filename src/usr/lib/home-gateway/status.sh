@@ -110,6 +110,13 @@ hg_status_collect() {
     if command -v hg_redmi_collect >/dev/null 2>&1; then
         hg_redmi_collect
     fi
+
+    if ! command -v hg_asata_collect >/dev/null 2>&1; then
+        hg_load_module asata >/dev/null 2>&1 || true
+    fi
+    if command -v hg_asata_collect >/dev/null 2>&1; then
+        hg_asata_collect
+    fi
 }
 
 hg_status_format_uptime() {
@@ -296,6 +303,32 @@ hg_status_print() {
     printf '  Policy:       %s\n' "${HG_REDMI_POLICY_STATE:-UNKNOWN}"
     printf '  Kill-switch:  %s\n' "${HG_REDMI_KILLSWITCH_STATE:-UNKNOWN}"
     printf '  Egress:       %s (%s)\n' "$redmi_egress_label" "${HG_REDMI_EGRESS_STATE:-UNKNOWN}"
+
+    case "${HG_ASATA_KEEPER_AUTOSTART:-unknown}" in
+        true) asata_autostart_label='enabled' ;;
+        false) asata_autostart_label='disabled' ;;
+        *) asata_autostart_label='unknown' ;;
+    esac
+
+    if [ -n "${HG_ASATA_OBSERVED_MAC:-}" ]; then
+        asata_mac_label="$HG_ASATA_OBSERVED_MAC"
+    else
+        asata_mac_label="${HG_ASATA_EXPECTED_MAC:-n/a}"
+    fi
+
+    printf '\nASATA\n'
+    printf '  State:       %s\n' "${HG_ASATA_STATE:-UNKNOWN}"
+    printf '  Client IP:   %s\n' "${HG_ASATA_CLIENT_IPV4:-n/a}"
+    printf '  Client MAC:  %s\n' "$asata_mac_label"
+    printf '  Identity:    %s\n' "${HG_ASATA_IDENTITY_STATE:-UNKNOWN}"
+    printf '  Reachable:   %s\n' "${HG_ASATA_REACHABILITY_STATE:-UNKNOWN}"
+    printf '  UDP direct:  %s\n' "${HG_ASATA_RULE_STATE:-UNKNOWN}"
+    printf '  Rules:       %s\n' "${HG_ASATA_RULES:-n/a}"
+    printf '  Packets:     %s\n' "${HG_ASATA_RULE_PACKETS:-n/a}"
+    printf '  Bytes:       %s\n' "${HG_ASATA_RULE_BYTES:-n/a}"
+    printf '  Keeper:      %s\n' "${HG_ASATA_KEEPER_STATE:-UNKNOWN}"
+    printf '  Autostart:   %s\n' "$asata_autostart_label"
+    printf '  Interval:    %ss\n' "${HG_ASATA_KEEPER_INTERVAL_SECONDS:-n/a}"
 
     case "${HG_DNS_ADBLOCK_CONFIGURED:-unknown}" in
         true) adblock_config_label='enabled' ;;
@@ -484,6 +517,36 @@ hg_status_print_json() {
     printf '      "state": %s,\n' "$(hg_json_string "${HG_REDMI_EGRESS_STATE:-UNKNOWN}")"
     printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_REDMI_EGRESS_IPV4:-}")"
     printf '      "source": %s\n' "$(hg_json_string "${HG_REDMI_EGRESS_SOURCE:-unverified}")"
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_ASATA_KEEPER_AUTOSTART:-unknown}" in
+        true|false) asata_autostart_json="$HG_ASATA_KEEPER_AUTOSTART" ;;
+        *) asata_autostart_json='null' ;;
+    esac
+
+    printf '  "asata": {\n'
+    printf '    "state": %s,\n' "$(hg_json_string "${HG_ASATA_STATE:-UNKNOWN}")"
+    printf '    "client": {\n'
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_ASATA_CLIENT_IPV4:-}")"
+    printf '      "name": %s,\n' "$(hg_json_string_or_null "${HG_ASATA_CLIENT_NAME:-}")"
+    printf '      "expected_mac": %s,\n' "$(hg_json_string_or_null "${HG_ASATA_EXPECTED_MAC:-}")"
+    printf '      "observed_mac": %s,\n' "$(hg_json_string_or_null "${HG_ASATA_OBSERVED_MAC:-}")"
+    printf '      "identity_state": %s,\n' "$(hg_json_string "${HG_ASATA_IDENTITY_STATE:-UNKNOWN}")"
+    printf '      "reachability": %s\n' "$(hg_json_string "${HG_ASATA_REACHABILITY_STATE:-UNKNOWN}")"
+    printf '    },\n'
+    printf '    "udp_direct": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_ASATA_RULE_STATE:-UNKNOWN}")"
+    printf '      "comment": %s,\n' "$(hg_json_string_or_null "${HG_ASATA_RULE_COMMENT:-}")"
+    printf '      "rules": %s,\n' "$(hg_json_number_or_null "${HG_ASATA_RULES:-}")"
+    printf '      "valid_rules": %s,\n' "$(hg_json_number_or_null "${HG_ASATA_VALID_RULES:-}")"
+    printf '      "packets": %s,\n' "$(hg_json_number_or_null "${HG_ASATA_RULE_PACKETS:-}")"
+    printf '      "bytes": %s\n' "$(hg_json_number_or_null "${HG_ASATA_RULE_BYTES:-}")"
+    printf '    },\n'
+    printf '    "keeper": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_ASATA_KEEPER_STATE:-UNKNOWN}")"
+    printf '      "autostart": %s,\n' "$asata_autostart_json"
+    printf '      "interval_seconds": %s\n' "$(hg_json_number_or_null "${HG_ASATA_KEEPER_INTERVAL_SECONDS:-}")"
     printf '    }\n'
     printf '  },\n'
 

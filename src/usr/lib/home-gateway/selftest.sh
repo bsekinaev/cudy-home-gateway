@@ -102,6 +102,7 @@ hg_selftest_run() {
     dns_module="${HG_LIBDIR}/dns.sh"
     torrent_module="${HG_LIBDIR}/torrent.sh"
     redmi_module="${HG_LIBDIR}/redmi.sh"
+    asata_module="${HG_LIBDIR}/asata.sh"
     doctor_module="${HG_LIBDIR}/doctor.sh"
     selftest_module="${HG_LIBDIR}/selftest.sh"
 
@@ -123,6 +124,7 @@ hg_selftest_run() {
     hg_selftest_readable 'dns.sh' "$dns_module"
     hg_selftest_readable 'torrent.sh' "$torrent_module"
     hg_selftest_readable 'redmi.sh' "$redmi_module"
+    hg_selftest_readable 'asata.sh' "$asata_module"
     hg_selftest_readable 'doctor.sh' "$doctor_module"
     hg_selftest_readable 'selftest.sh' "$selftest_module"
 
@@ -134,6 +136,7 @@ hg_selftest_run() {
     hg_selftest_syntax 'dns.sh syntax' "$dns_module"
     hg_selftest_syntax 'torrent.sh syntax' "$torrent_module"
     hg_selftest_syntax 'redmi.sh syntax' "$redmi_module"
+    hg_selftest_syntax 'asata.sh syntax' "$asata_module"
     hg_selftest_syntax 'doctor.sh syntax' "$doctor_module"
     hg_selftest_syntax 'selftest.sh syntax' "$selftest_module"
 
@@ -176,6 +179,12 @@ hg_selftest_run() {
         hg_selftest_api 'Redmi API' 'hg_redmi_collect'
     else
         hg_selftest_result FAIL 'Redmi API' 'модуль redmi не загружается'
+    fi
+
+    if hg_load_module asata >/dev/null 2>&1; then
+        hg_selftest_api 'ASATA API' 'hg_asata_collect'
+    else
+        hg_selftest_result FAIL 'ASATA API' 'модуль asata не загружается'
     fi
 
     if hg_load_module doctor >/dev/null 2>&1; then
