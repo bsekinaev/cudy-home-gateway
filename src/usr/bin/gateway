@@ -25,9 +25,12 @@ CUDY Home Gateway
   gateway status --json    Вывести системный статус в JSON
   gateway doctor           Проверить окружение и зависимости
   gateway selftest         Проверить установку Gateway CLI
+  gateway telegram get-me  Проверить Telegram Bot API
+  gateway telegram get-updates [offset] [timeout]
+                           Получить updates без изменения data plane
 
-На этапе 0.3 команды управления сетью ещё не реализованы.
-CLI работает только в read-only режиме.
+На этапе 0.4 Telegram работает только как read-only control plane.
+Команды изменения сетевой конфигурации не реализованы.
 EOF_HELP
 }
 
@@ -52,6 +55,32 @@ main() {
                 hg_error 'использование: gateway status [--json]'
                 return "$HG_EXIT_USAGE"
             fi
+            ;;
+        telegram)
+            hg_load_module telegram
+
+            subcommand="${2:-}"
+
+            case "$subcommand" in
+                get-me)
+                    if [ "$#" -ne 2 ]; then
+                        hg_error 'использование: gateway telegram get-me'
+                        return "$HG_EXIT_USAGE"
+                    fi
+                    hg_telegram_get_me
+                    ;;
+                get-updates)
+                    if [ "$#" -gt 4 ]; then
+                        hg_error 'использование: gateway telegram get-updates [offset] [timeout]'
+                        return "$HG_EXIT_USAGE"
+                    fi
+                    hg_telegram_get_updates "${3:-}" "${4:-0}"
+                    ;;
+                *)
+                    hg_error 'использование: gateway telegram {get-me|get-updates [offset] [timeout]}'
+                    return "$HG_EXIT_USAGE"
+                    ;;
+            esac
             ;;
         doctor)
             if [ "$#" -ne 1 ]; then

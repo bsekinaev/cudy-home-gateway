@@ -104,6 +104,7 @@ hg_selftest_run() {
     redmi_module="${HG_LIBDIR}/redmi.sh"
     asata_module="${HG_LIBDIR}/asata.sh"
     tailscale_module="${HG_LIBDIR}/tailscale.sh"
+    telegram_module="${HG_LIBDIR}/telegram.sh"
     doctor_module="${HG_LIBDIR}/doctor.sh"
     selftest_module="${HG_LIBDIR}/selftest.sh"
 
@@ -127,6 +128,7 @@ hg_selftest_run() {
     hg_selftest_readable 'redmi.sh' "$redmi_module"
     hg_selftest_readable 'asata.sh' "$asata_module"
     hg_selftest_readable 'tailscale.sh' "$tailscale_module"
+    hg_selftest_readable 'telegram.sh' "$telegram_module"
     hg_selftest_readable 'doctor.sh' "$doctor_module"
     hg_selftest_readable 'selftest.sh' "$selftest_module"
 
@@ -140,6 +142,7 @@ hg_selftest_run() {
     hg_selftest_syntax 'redmi.sh syntax' "$redmi_module"
     hg_selftest_syntax 'asata.sh syntax' "$asata_module"
     hg_selftest_syntax 'tailscale.sh syntax' "$tailscale_module"
+    hg_selftest_syntax 'telegram.sh syntax' "$telegram_module"
     hg_selftest_syntax 'doctor.sh syntax' "$doctor_module"
     hg_selftest_syntax 'selftest.sh syntax' "$selftest_module"
 
@@ -194,6 +197,14 @@ hg_selftest_run() {
         hg_selftest_api 'Tailscale API' 'hg_tailscale_collect'
     else
         hg_selftest_result FAIL 'Tailscale API' 'модуль tailscale не загружается'
+    fi
+
+    if hg_load_module telegram >/dev/null 2>&1; then
+        hg_selftest_api 'Telegram getMe API' 'hg_telegram_get_me'
+        hg_selftest_api 'Telegram getUpdates API' 'hg_telegram_get_updates'
+    else
+        hg_selftest_result FAIL 'Telegram getMe API' 'модуль telegram не загружается'
+        hg_selftest_result FAIL 'Telegram getUpdates API' 'модуль telegram не загружается'
     fi
 
     if hg_load_module doctor >/dev/null 2>&1; then

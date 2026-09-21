@@ -27,7 +27,7 @@
 
 **Статус:** завершён 21.09.2026. Human/JSON status, fault-injection negative-tests, `doctor` и `selftest` проверены на целевом CUDY; data plane не изменялся.
 
-## 0.4 — Telegram read-only
+## 0.4 — Telegram read-only ← текущий этап
 
 - BotFather и secrets provisioning;
 - long polling;
