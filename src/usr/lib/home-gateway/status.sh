@@ -117,6 +117,13 @@ hg_status_collect() {
     if command -v hg_asata_collect >/dev/null 2>&1; then
         hg_asata_collect
     fi
+
+    if ! command -v hg_tailscale_collect >/dev/null 2>&1; then
+        hg_load_module tailscale >/dev/null 2>&1 || true
+    fi
+    if command -v hg_tailscale_collect >/dev/null 2>&1; then
+        hg_tailscale_collect
+    fi
 }
 
 hg_status_format_uptime() {
@@ -329,6 +336,39 @@ hg_status_print() {
     printf '  Keeper:      %s\n' "${HG_ASATA_KEEPER_STATE:-UNKNOWN}"
     printf '  Autostart:   %s\n' "$asata_autostart_label"
     printf '  Interval:    %ss\n' "${HG_ASATA_KEEPER_INTERVAL_SECONDS:-n/a}"
+
+    case "${HG_TAILSCALE_AUTOSTART:-unknown}" in
+        true) tailscale_autostart_label='enabled' ;;
+        false) tailscale_autostart_label='disabled' ;;
+        *) tailscale_autostart_label='unknown' ;;
+    esac
+    case "${HG_TAILSCALE_ONLINE:-unknown}" in
+        true) tailscale_online_label='yes' ;;
+        false) tailscale_online_label='no' ;;
+        *) tailscale_online_label='unknown' ;;
+    esac
+    case "${HG_TAILSCALE_EXIT_NODE_ACTIVE:-unknown}" in
+        true) tailscale_exit_node_label='yes' ;;
+        false) tailscale_exit_node_label='no' ;;
+        *) tailscale_exit_node_label='unknown' ;;
+    esac
+
+    printf '\nTailscale\n'
+    printf '  State:       %s\n' "${HG_TAILSCALE_STATE:-UNKNOWN}"
+    printf '  Version:     %s\n' "${HG_TAILSCALE_VERSION:-n/a}"
+    printf '  Service:     %s\n' "${HG_TAILSCALE_SERVICE_STATE:-UNKNOWN}"
+    printf '  Autostart:   %s\n' "$tailscale_autostart_label"
+    printf '  Backend:     %s\n' "${HG_TAILSCALE_BACKEND_STATE:-UNKNOWN}"
+    printf '  Interface:   %s (%s)\n' "${HG_TAILSCALE_INTERFACE:-tailscale0}" "${HG_TAILSCALE_INTERFACE_STATE:-UNKNOWN}"
+    printf '  IPv4:        %s\n' "${HG_TAILSCALE_IPV4:-n/a}"
+    printf '  IPv6:        %s\n' "${HG_TAILSCALE_IPV6:-n/a}"
+    printf '  Online:      %s\n' "$tailscale_online_label"
+    printf '  Hostname:    %s\n' "${HG_TAILSCALE_HOSTNAME:-n/a}"
+    printf '  DNS name:    %s\n' "${HG_TAILSCALE_DNS_NAME:-n/a}"
+    printf '  Tailnet:     %s\n' "${HG_TAILSCALE_TAILNET:-n/a}"
+    printf '  Exit node:   %s\n' "$tailscale_exit_node_label"
+    printf '  Routing:     %s\n' "${HG_TAILSCALE_ROUTING_STATE:-UNKNOWN}"
+    printf '  Routes:      IPv4=%s IPv6=%s (table %s)\n'         "${HG_TAILSCALE_IPV4_ROUTES:-n/a}"         "${HG_TAILSCALE_IPV6_ROUTES:-n/a}"         "${HG_TAILSCALE_ROUTE_TABLE:-52}"
 
     case "${HG_DNS_ADBLOCK_CONFIGURED:-unknown}" in
         true) adblock_config_label='enabled' ;;
@@ -547,6 +587,50 @@ hg_status_print_json() {
     printf '      "state": %s,\n' "$(hg_json_string "${HG_ASATA_KEEPER_STATE:-UNKNOWN}")"
     printf '      "autostart": %s,\n' "$asata_autostart_json"
     printf '      "interval_seconds": %s\n' "$(hg_json_number_or_null "${HG_ASATA_KEEPER_INTERVAL_SECONDS:-}")"
+    printf '    }\n'
+    printf '  },\n'
+
+    case "${HG_TAILSCALE_AUTOSTART:-unknown}" in
+        true|false) tailscale_autostart_json="$HG_TAILSCALE_AUTOSTART" ;;
+        *) tailscale_autostart_json='null' ;;
+    esac
+    case "${HG_TAILSCALE_ONLINE:-unknown}" in
+        true|false) tailscale_online_json="$HG_TAILSCALE_ONLINE" ;;
+        *) tailscale_online_json='null' ;;
+    esac
+    case "${HG_TAILSCALE_EXIT_NODE_ACTIVE:-unknown}" in
+        true|false) tailscale_exit_node_json="$HG_TAILSCALE_EXIT_NODE_ACTIVE" ;;
+        *) tailscale_exit_node_json='null' ;;
+    esac
+
+    printf '  "tailscale": {\n'
+    printf '    "state": %s,\n' "$(hg_json_string "${HG_TAILSCALE_STATE:-UNKNOWN}")"
+    printf '    "version": %s,\n' "$(hg_json_string_or_null "${HG_TAILSCALE_VERSION:-}")"
+    printf '    "service": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_TAILSCALE_SERVICE_STATE:-UNKNOWN}")"
+    printf '      "autostart": %s\n' "$tailscale_autostart_json"
+    printf '    },\n'
+    printf '    "backend_state": %s,\n' "$(hg_json_string "${HG_TAILSCALE_BACKEND_STATE:-UNKNOWN}")"
+    printf '    "interface": {\n'
+    printf '      "name": %s,\n' "$(hg_json_string "${HG_TAILSCALE_INTERFACE:-tailscale0}")"
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_TAILSCALE_INTERFACE_STATE:-UNKNOWN}")"
+    printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_TAILSCALE_IPV4:-}")"
+    printf '      "ipv6": %s\n' "$(hg_json_string_or_null "${HG_TAILSCALE_IPV6:-}")"
+    printf '    },\n'
+    printf '    "identity": {\n'
+    printf '      "hostname": %s,\n' "$(hg_json_string_or_null "${HG_TAILSCALE_HOSTNAME:-}")"
+    printf '      "dns_name": %s,\n' "$(hg_json_string_or_null "${HG_TAILSCALE_DNS_NAME:-}")"
+    printf '      "online": %s,\n' "$tailscale_online_json"
+    printf '      "tailnet": %s\n' "$(hg_json_string_or_null "${HG_TAILSCALE_TAILNET:-}")"
+    printf '    },\n'
+    printf '    "exit_node": {\n'
+    printf '      "active": %s\n' "$tailscale_exit_node_json"
+    printf '    },\n'
+    printf '    "routing": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_TAILSCALE_ROUTING_STATE:-UNKNOWN}")"
+    printf '      "table": %s,\n' "$(hg_json_number_or_null "${HG_TAILSCALE_ROUTE_TABLE:-}")"
+    printf '      "ipv4_routes": %s,\n' "$(hg_json_number_or_null "${HG_TAILSCALE_IPV4_ROUTES:-}")"
+    printf '      "ipv6_routes": %s\n' "$(hg_json_number_or_null "${HG_TAILSCALE_IPV6_ROUTES:-}")"
     printf '    }\n'
     printf '  },\n'
 
