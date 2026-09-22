@@ -2,6 +2,11 @@ name: Router Smoke
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/health-alerts
+    paths:
+      - .github/workflows/router-smoke.yml
 
 permissions:
   contents: read
