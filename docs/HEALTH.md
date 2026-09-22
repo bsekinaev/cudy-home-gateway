@@ -50,12 +50,13 @@ Health Core не превращает `stale_cache` в `OK`.
 
 Incident state реализуется отдельной state machine и не смешивается с adapters/Health Core. См. [Incident State](INCIDENTS.md).
 
+Adaptive confirmation probes описаны в [Adaptive External Probes](ADAPTIVE_PROBES.md).
+
 Дальше:
 
-1. adaptive confirmation probes;
-2. persistent notification queue;
-3. Telegram delivery через MAIN SOCKS с fallback на Torrent SOCKS;
-4. mute/categories и recovery summary.
+1. persistent notification queue;
+2. Telegram delivery через MAIN SOCKS с fallback на Torrent SOCKS;
+3. mute/categories и recovery summary.
 
 До релиза `0.5.0` также должны быть закрыты подтверждённые hardening-задачи:
 

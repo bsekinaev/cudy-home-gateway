@@ -207,6 +207,10 @@ hg_health_collect() {
     HG_HEALTH_MAIN_EGRESS_FRESHNESS="$(hg_health_freshness "${HG_VPN_EGRESS_SOURCE:-}" "${HG_VPN_EGRESS_CHECKED_AT:-}")"
     HG_HEALTH_TORRENT_EGRESS_FRESHNESS="$(hg_health_freshness "${HG_TORRENT_EGRESS_SOURCE:-}" "${HG_TORRENT_EGRESS_CHECKED_AT:-}")"
 
+    HG_HEALTH_DIRECT_EGRESS_ATTEMPTS="${HG_NETWORK_DIRECT_PROBE_ATTEMPTS:-0}"
+    HG_HEALTH_MAIN_EGRESS_ATTEMPTS="${HG_VPN_EGRESS_PROBE_ATTEMPTS:-0}"
+    HG_HEALTH_TORRENT_EGRESS_ATTEMPTS="${HG_TORRENT_EGRESS_PROBE_ATTEMPTS:-0}"
+
     HG_HEALTH_WAN_REASON="$(hg_health_reason_wan)"
     HG_HEALTH_DNS_REASON="$(hg_health_reason_dns)"
     HG_HEALTH_MAIN_REASON="$(hg_health_reason_main)"
@@ -280,12 +284,14 @@ hg_health_print_evidence() {
     source="$3"
     freshness="$4"
     age="$5"
+    attempts="$6"
+    provider="$7"
 
     age_label='n/a'
     [ -n "$age" ] && age_label="${age}s"
 
-    printf '  %-16s %-11s source=%-11s freshness=%-7s age=%s\n' \
-        "$label" "$state" "${source:-unknown}" "$freshness" "$age_label"
+    printf '  %-16s %-11s source=%-11s freshness=%-7s age=%-6s attempts=%s provider=%s\n' \
+        "$label" "$state" "${source:-unknown}" "$freshness" "$age_label" "${attempts:-0}" "${provider:-unknown}"
 }
 
 hg_health_print() {
@@ -307,9 +313,9 @@ hg_health_print() {
     printf '  Tailscale: %-11s %s\n' "$HG_HEALTH_TAILSCALE_STATE" "$HG_HEALTH_TAILSCALE_REASON"
 
     printf '\nExternal evidence\n'
-    hg_health_print_evidence 'Direct egress' "$HG_HEALTH_DIRECT_EGRESS_STATE" "${HG_NETWORK_DIRECT_SOURCE:-unknown}" "$HG_HEALTH_DIRECT_EGRESS_FRESHNESS" "$HG_HEALTH_DIRECT_EGRESS_AGE"
-    hg_health_print_evidence 'MAIN egress' "$HG_HEALTH_MAIN_EGRESS_STATE" "${HG_VPN_EGRESS_SOURCE:-unknown}" "$HG_HEALTH_MAIN_EGRESS_FRESHNESS" "$HG_HEALTH_MAIN_EGRESS_AGE"
-    hg_health_print_evidence 'Torrent egress' "$HG_HEALTH_TORRENT_EGRESS_STATE" "${HG_TORRENT_EGRESS_SOURCE:-unknown}" "$HG_HEALTH_TORRENT_EGRESS_FRESHNESS" "$HG_HEALTH_TORRENT_EGRESS_AGE"
+    hg_health_print_evidence 'Direct egress' "$HG_HEALTH_DIRECT_EGRESS_STATE" "${HG_NETWORK_DIRECT_SOURCE:-unknown}" "$HG_HEALTH_DIRECT_EGRESS_FRESHNESS" "$HG_HEALTH_DIRECT_EGRESS_AGE" "$HG_HEALTH_DIRECT_EGRESS_ATTEMPTS" "${HG_NETWORK_DIRECT_PROVIDER:-}"
+    hg_health_print_evidence 'MAIN egress' "$HG_HEALTH_MAIN_EGRESS_STATE" "${HG_VPN_EGRESS_SOURCE:-unknown}" "$HG_HEALTH_MAIN_EGRESS_FRESHNESS" "$HG_HEALTH_MAIN_EGRESS_AGE" "$HG_HEALTH_MAIN_EGRESS_ATTEMPTS" "${HG_VPN_EGRESS_PROVIDER:-}"
+    hg_health_print_evidence 'Torrent egress' "$HG_HEALTH_TORRENT_EGRESS_STATE" "${HG_TORRENT_EGRESS_SOURCE:-unknown}" "$HG_HEALTH_TORRENT_EGRESS_FRESHNESS" "$HG_HEALTH_TORRENT_EGRESS_AGE" "$HG_HEALTH_TORRENT_EGRESS_ATTEMPTS" "${HG_TORRENT_EGRESS_PROVIDER:-}"
 
     case "$HG_HEALTH_OVERALL_STATE" in
         OK|MAINTENANCE) return 0 ;;
@@ -343,14 +349,27 @@ hg_health_json_evidence() {
     checked_at="$4"
     age="$5"
     freshness="$6"
-    comma="${7:-true}"
+    attempts="$7"
+    provider="$8"
+    comma="${9:-true}"
+
+    secondary_attempted='false'
+    case "$attempts" in
+        ''|*[!0-9]*) attempts='' ;;
+        *)
+            [ "$attempts" -gt 1 ] && secondary_attempted='true'
+            ;;
+    esac
 
     printf '    "%s": {\n' "$name"
     printf '      "state": %s,\n' "$(hg_json_string "$state")"
     printf '      "source": %s,\n' "$(hg_json_string "${source:-unknown}")"
+    printf '      "provider": %s,\n' "$(hg_json_string_or_null "$provider")"
     printf '      "checked_at": %s,\n' "$(hg_json_number_or_null "$checked_at")"
     printf '      "age_seconds": %s,\n' "$(hg_json_number_or_null "$age")"
-    printf '      "freshness": %s\n' "$(hg_json_string "$freshness")"
+    printf '      "freshness": %s,\n' "$(hg_json_string "$freshness")"
+    printf '      "probe_attempts": %s,\n' "$(hg_json_number_or_null "$attempts")"
+    printf '      "secondary_attempted": %s\n' "$secondary_attempted"
 
     if [ "$comma" = 'true' ]; then
         printf '    },\n'
@@ -388,9 +407,9 @@ hg_health_print_json() {
     hg_health_json_component 'tailscale' "$HG_HEALTH_TAILSCALE_STATE" 'service' "$HG_HEALTH_TAILSCALE_REASON" false
     printf '  },\n'
     printf '  "external_evidence": {\n'
-    hg_health_json_evidence 'direct_egress' "$HG_HEALTH_DIRECT_EGRESS_STATE" "${HG_NETWORK_DIRECT_SOURCE:-unknown}" "${HG_NETWORK_DIRECT_CHECKED_AT:-}" "$HG_HEALTH_DIRECT_EGRESS_AGE" "$HG_HEALTH_DIRECT_EGRESS_FRESHNESS"
-    hg_health_json_evidence 'main_egress' "$HG_HEALTH_MAIN_EGRESS_STATE" "${HG_VPN_EGRESS_SOURCE:-unknown}" "${HG_VPN_EGRESS_CHECKED_AT:-}" "$HG_HEALTH_MAIN_EGRESS_AGE" "$HG_HEALTH_MAIN_EGRESS_FRESHNESS"
-    hg_health_json_evidence 'torrent_egress' "$HG_HEALTH_TORRENT_EGRESS_STATE" "${HG_TORRENT_EGRESS_SOURCE:-unknown}" "${HG_TORRENT_EGRESS_CHECKED_AT:-}" "$HG_HEALTH_TORRENT_EGRESS_AGE" "$HG_HEALTH_TORRENT_EGRESS_FRESHNESS" false
+    hg_health_json_evidence 'direct_egress' "$HG_HEALTH_DIRECT_EGRESS_STATE" "${HG_NETWORK_DIRECT_SOURCE:-unknown}" "${HG_NETWORK_DIRECT_CHECKED_AT:-}" "$HG_HEALTH_DIRECT_EGRESS_AGE" "$HG_HEALTH_DIRECT_EGRESS_FRESHNESS" "$HG_HEALTH_DIRECT_EGRESS_ATTEMPTS" "${HG_NETWORK_DIRECT_PROVIDER:-}"
+    hg_health_json_evidence 'main_egress' "$HG_HEALTH_MAIN_EGRESS_STATE" "${HG_VPN_EGRESS_SOURCE:-unknown}" "${HG_VPN_EGRESS_CHECKED_AT:-}" "$HG_HEALTH_MAIN_EGRESS_AGE" "$HG_HEALTH_MAIN_EGRESS_FRESHNESS" "$HG_HEALTH_MAIN_EGRESS_ATTEMPTS" "${HG_VPN_EGRESS_PROVIDER:-}"
+    hg_health_json_evidence 'torrent_egress' "$HG_HEALTH_TORRENT_EGRESS_STATE" "${HG_TORRENT_EGRESS_SOURCE:-unknown}" "${HG_TORRENT_EGRESS_CHECKED_AT:-}" "$HG_HEALTH_TORRENT_EGRESS_AGE" "$HG_HEALTH_TORRENT_EGRESS_FRESHNESS" "$HG_HEALTH_TORRENT_EGRESS_ATTEMPTS" "${HG_TORRENT_EGRESS_PROVIDER:-}" false
     printf '  }\n'
     printf '}\n'
 

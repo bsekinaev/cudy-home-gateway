@@ -64,6 +64,8 @@ Journal является persistent source of truth. Активные incidents 
 
 Наличие неисправности и работоспособность самого Incident Engine — разные понятия.
 
-## Следующий шаг
+## External confirmation
 
-`0.5.3` добавит adaptive confirmation probes. Затем persistent notification queue сможет подписываться на journal transitions, а Telegram delivery будет использовать MAIN SOCKS с fallback на Torrent SOCKS.
+Начиная с `0.5.3`, egress adapters используют adaptive confirmation: secondary provider вызывается только после неуспешного primary probe. Incident State получает уже подтверждённую observation и не зависит от конкретного HTTP provider.
+
+Следующий слой — persistent notification queue, подписанная на journal transitions.

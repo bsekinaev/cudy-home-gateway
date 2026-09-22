@@ -439,7 +439,8 @@ hg_status_print_json() {
     printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_DIRECT_IPV4:-}")"
     printf '      "source": %s,\n' "$(hg_json_string "${HG_NETWORK_DIRECT_SOURCE:-live_probe}")"
     printf '      "provider": %s,\n' "$(hg_json_string_or_null "${HG_NETWORK_DIRECT_PROVIDER:-}")"
-    printf '      "checked_at": %s\n' "$(hg_json_number_or_null "${HG_NETWORK_DIRECT_CHECKED_AT:-}")"
+    printf '      "checked_at": %s,\n' "$(hg_json_number_or_null "${HG_NETWORK_DIRECT_CHECKED_AT:-}")"
+    printf '      "probe_attempts": %s\n' "$(hg_json_number_or_null "${HG_NETWORK_DIRECT_PROBE_ATTEMPTS:-0}")"
     printf '    }\n'
     printf '  },\n'
 
@@ -485,7 +486,8 @@ hg_status_print_json() {
     printf '        "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_VPN_EGRESS_IPV4:-}")"
     printf '        "source": %s,\n' "$(hg_json_string "${HG_VPN_EGRESS_SOURCE:-live_probe}")"
     printf '        "provider": %s,\n' "$(hg_json_string_or_null "${HG_VPN_EGRESS_PROVIDER:-}")"
-    printf '        "checked_at": %s\n' "$(hg_json_number_or_null "${HG_VPN_EGRESS_CHECKED_AT:-}")"
+    printf '        "checked_at": %s,\n' "$(hg_json_number_or_null "${HG_VPN_EGRESS_CHECKED_AT:-}")"
+    printf '        "probe_attempts": %s\n' "$(hg_json_number_or_null "${HG_VPN_EGRESS_PROBE_ATTEMPTS:-0}")"
     printf '      }\n'
     printf '    }\n'
     printf '  },\n'
@@ -521,7 +523,8 @@ hg_status_print_json() {
     printf '      "ipv4": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_EGRESS_IPV4:-}")"
     printf '      "source": %s,\n' "$(hg_json_string "${HG_TORRENT_EGRESS_SOURCE:-live_probe}")"
     printf '      "provider": %s,\n' "$(hg_json_string_or_null "${HG_TORRENT_EGRESS_PROVIDER:-}")"
-    printf '      "checked_at": %s\n' "$(hg_json_number_or_null "${HG_TORRENT_EGRESS_CHECKED_AT:-}")"
+    printf '      "checked_at": %s,\n' "$(hg_json_number_or_null "${HG_TORRENT_EGRESS_CHECKED_AT:-}")"
+    printf '      "probe_attempts": %s\n' "$(hg_json_number_or_null "${HG_TORRENT_EGRESS_PROBE_ATTEMPTS:-0}")"
     printf '    }\n'
     printf '  },\n'
 

@@ -32,7 +32,7 @@
 
 `0.5 — Health & Alerts / in progress`
 
-Health Core уже нормализует WAN, DNS, MAIN и service/policy observations, сохраняя freshness внешних evidence. Текущая итерация добавляет debounce/hysteresis и persistent incident journal без сетевых действий и без Telegram-спама. Data plane не изменяется.
+Health Core нормализует WAN, DNS, MAIN и service/policy observations. Incident State добавляет debounce/hysteresis и persistent journal. Текущая итерация добавляет adaptive external confirmation: secondary egress provider вызывается только после неуспешного primary probe. Data plane не изменяется.
 
 Текущая ветка разработки — `feature/health-alerts`.
 
@@ -43,6 +43,7 @@ Health Core уже нормализует WAN, DNS, MAIN и service/policy obser
 - [План релизов](docs/ROADMAP.md)
 - [Health Core](docs/HEALTH.md)
 - [Incident State](docs/INCIDENTS.md)
+- [Adaptive External Probes](docs/ADAPTIVE_PROBES.md)
 - [Telegram read-only](docs/TELEGRAM.md)
 - [Результаты preflight](docs/PREFLIGHT.md)
 
