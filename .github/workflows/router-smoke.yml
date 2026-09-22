@@ -54,6 +54,7 @@ jobs:
 
           output="$(
             ssh \
+              -p 2222 \
               -i "${HOME}/.ssh/cudy_ci" \
               -o BatchMode=yes \
               -o IdentitiesOnly=yes \
