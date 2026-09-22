@@ -41,6 +41,7 @@
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Инженерные решения](docs/DECISIONS.md)
 - [План релизов](docs/ROADMAP.md)
+- [Health Core](docs/HEALTH.md)
 - [Telegram read-only](docs/TELEGRAM.md)
 - [Результаты preflight](docs/PREFLIGHT.md)
 

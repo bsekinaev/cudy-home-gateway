@@ -163,6 +163,7 @@ hg_selftest_run() {
     entrypoint="${1:-}"
     common_module="${HG_LIBDIR}/common.sh"
     status_module="${HG_LIBDIR}/status.sh"
+    health_module="${HG_LIBDIR}/health.sh"
     network_module="${HG_LIBDIR}/network.sh"
     vpn_module="${HG_LIBDIR}/vpn.sh"
     dns_module="${HG_LIBDIR}/dns.sh"
@@ -189,6 +190,7 @@ hg_selftest_run() {
 
     hg_selftest_readable 'common.sh' "$common_module"
     hg_selftest_readable 'status.sh' "$status_module"
+    hg_selftest_readable 'health.sh' "$health_module"
     hg_selftest_readable 'network.sh' "$network_module"
     hg_selftest_readable 'vpn.sh' "$vpn_module"
     hg_selftest_readable 'dns.sh' "$dns_module"
@@ -206,6 +208,7 @@ hg_selftest_run() {
     [ -n "$entrypoint" ] && hg_selftest_syntax 'CLI syntax' "$entrypoint"
     hg_selftest_syntax 'common.sh syntax' "$common_module"
     hg_selftest_syntax 'status.sh syntax' "$status_module"
+    hg_selftest_syntax 'health.sh syntax' "$health_module"
     hg_selftest_syntax 'network.sh syntax' "$network_module"
     hg_selftest_syntax 'vpn.sh syntax' "$vpn_module"
     hg_selftest_syntax 'dns.sh syntax' "$dns_module"
@@ -229,6 +232,16 @@ hg_selftest_run() {
         hg_selftest_result FAIL 'Status API' 'модуль status не загружается'
         hg_selftest_result FAIL 'Status JSON API' 'модуль status не загружается'
         hg_selftest_result FAIL 'Status JSON contract' 'модуль status не загружается'
+    fi
+
+    if hg_load_module health >/dev/null 2>&1; then
+        hg_selftest_api 'Health collect API' 'hg_health_collect'
+        hg_selftest_api 'Health human API' 'hg_health_print'
+        hg_selftest_api 'Health JSON API' 'hg_health_print_json'
+    else
+        hg_selftest_result FAIL 'Health collect API' 'модуль health не загружается'
+        hg_selftest_result FAIL 'Health human API' 'модуль health не загружается'
+        hg_selftest_result FAIL 'Health JSON API' 'модуль health не загружается'
     fi
 
     if hg_load_module network >/dev/null 2>&1; then

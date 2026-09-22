@@ -37,13 +37,15 @@
 
 **Статус:** завершён 22.09.2026. На целевом CUDY проверены long polling, inline refresh через `editMessageText`, whitelist, stale/replay/TTL callbacks, singleton lock, procd respawn и autostart. Data plane не изменялся.
 
-## 0.5 — Health & Alerts ← следующий этап
+## 0.5 — Health & Alerts ← текущий этап
 
-- локальные проверки;
-- адаптивные внешние проверки;
-- incident journal;
-- queued recovery summary;
-- mute и категории уведомлений.
+- Health Core: нормализованные local/service observations;
+- freshness-aware и адаптивные внешние проверки;
+- incident journal + hysteresis/debounce;
+- persistent notification queue и queued recovery summary;
+- Telegram delivery: MAIN SOCKS → Torrent SOCKS fallback;
+- mute и категории уведомлений;
+- hardening до релиза: sysupgrade persistence и ASATA keeper semantics.
 
 ## 0.6 — vtest
 
