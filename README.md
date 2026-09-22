@@ -30,17 +30,18 @@
 
 ## Статус
 
-`0.3 — Status & System / completed`
+`0.4 — Telegram read-only / completed`
 
-Реализован единый read-only статус для WAN/direct egress, MAIN VPN, Torrent, Redmi, ASATA, Tailscale, DNS/AdBlock-Fast и системных ресурсов. Human-readable и JSON режимы проверены на целевом CUDY, включая безопасные negative-tests для критичных состояний; финальный selftest проходит без ошибок. Data plane не изменялся.
+Реализован приватный Telegram control plane с long polling, whitelist user/chat и русским inline dashboard. `/status` показывает живой статус Gateway, кнопка `🔄 Обновить` редактирует существующее сообщение, callback защищён TTL и nonce/replay-проверкой. Poller работает как singleton procd service с respawn и autostart. Data plane не изменялся.
 
-Следующий этап — `0.4 Telegram read-only`.
+Следующий этап — `0.5 Health & Alerts`.
 
 ## Документация
 
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Инженерные решения](docs/DECISIONS.md)
 - [План релизов](docs/ROADMAP.md)
+- [Telegram read-only](docs/TELEGRAM.md)
 - [Результаты preflight](docs/PREFLIGHT.md)
 
 ## Лицензия

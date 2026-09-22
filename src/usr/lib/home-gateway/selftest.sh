@@ -41,6 +41,34 @@ hg_selftest_readable() {
     fi
 }
 
+hg_selftest_executable() {
+    name="$1"
+    path="$2"
+
+    if [ -x "$path" ]; then
+        hg_selftest_result PASS "$name" "$path"
+    else
+        hg_selftest_result FAIL "$name" "не исполняется: $path"
+    fi
+}
+
+hg_selftest_service_contract() {
+    path="$1"
+
+    if [ ! -r "$path" ]; then
+        hg_selftest_result FAIL 'Telegram service contract' "файл недоступен: $path"
+        return 0
+    fi
+
+    if grep -q '^USE_PROCD=1$' "$path" 2>/dev/null &&
+       grep -q 'procd_set_param command' "$path" 2>/dev/null &&
+       grep -q 'procd_set_param respawn' "$path" 2>/dev/null; then
+        hg_selftest_result PASS 'Telegram service contract' 'procd command/respawn объявлены'
+    else
+        hg_selftest_result FAIL 'Telegram service contract' 'неполный procd contract'
+    fi
+}
+
 hg_selftest_syntax() {
     name="$1"
     path="$2"
@@ -57,6 +85,30 @@ hg_selftest_syntax() {
     fi
 }
 
+hg_selftest_ucode_syntax() {
+    name="$1"
+    path="$2"
+    tmp_file="/tmp/home-gateway-ucode-selftest.$$.out"
+
+    if [ ! -r "$path" ]; then
+        hg_selftest_result FAIL "$name" "файл недоступен: $path"
+        return 0
+    fi
+
+    if ! command -v ucode >/dev/null 2>&1; then
+        hg_selftest_result FAIL "$name" 'ucode не найден'
+        return 0
+    fi
+
+    if ucode -c -o "$tmp_file" "$path" >/dev/null 2>&1; then
+        rm -f "$tmp_file"
+        hg_selftest_result PASS "$name" 'ucode-синтаксис корректен'
+    else
+        rm -f "$tmp_file"
+        hg_selftest_result FAIL "$name" 'ошибка ucode-синтаксиса'
+    fi
+}
+
 hg_selftest_api() {
     name="$1"
     function_name="$2"
@@ -65,6 +117,20 @@ hg_selftest_api() {
         hg_selftest_result PASS "$name" "$function_name"
     else
         hg_selftest_result FAIL "$name" "нет функции: $function_name"
+    fi
+}
+
+hg_selftest_telegram_validation() {
+    if hg_telegram_validate_chat_id '123456789' >/dev/null 2>&1 &&
+       hg_telegram_validate_chat_id '-100123456789' >/dev/null 2>&1 &&
+       ! hg_telegram_validate_chat_id '12-34' >/dev/null 2>&1 &&
+       ! hg_telegram_validate_chat_id '--123' >/dev/null 2>&1 &&
+       ! hg_telegram_validate_chat_id 'abc' >/dev/null 2>&1 &&
+       hg_telegram_validate_message_id '42' >/dev/null 2>&1 &&
+       ! hg_telegram_validate_message_id '4-2' >/dev/null 2>&1; then
+        hg_selftest_result PASS 'Telegram ID validation' 'chat_id/message_id contract'
+    else
+        hg_selftest_result FAIL 'Telegram ID validation' 'validation contract нарушен'
     fi
 }
 
@@ -104,6 +170,9 @@ hg_selftest_run() {
     redmi_module="${HG_LIBDIR}/redmi.sh"
     asata_module="${HG_LIBDIR}/asata.sh"
     tailscale_module="${HG_LIBDIR}/tailscale.sh"
+    telegram_module="${HG_LIBDIR}/telegram.sh"
+    telegram_poller="${HG_LIBDIR}/telegram-poller.uc"
+    telegram_service="${HG_TELEGRAM_SERVICE:-/etc/init.d/home-gateway-telegram}"
     doctor_module="${HG_LIBDIR}/doctor.sh"
     selftest_module="${HG_LIBDIR}/selftest.sh"
 
@@ -127,6 +196,10 @@ hg_selftest_run() {
     hg_selftest_readable 'redmi.sh' "$redmi_module"
     hg_selftest_readable 'asata.sh' "$asata_module"
     hg_selftest_readable 'tailscale.sh' "$tailscale_module"
+    hg_selftest_readable 'telegram.sh' "$telegram_module"
+    hg_selftest_readable 'telegram-poller.uc' "$telegram_poller"
+    hg_selftest_readable 'Telegram procd service' "$telegram_service"
+    hg_selftest_executable 'Telegram procd service executable' "$telegram_service"
     hg_selftest_readable 'doctor.sh' "$doctor_module"
     hg_selftest_readable 'selftest.sh' "$selftest_module"
 
@@ -140,6 +213,10 @@ hg_selftest_run() {
     hg_selftest_syntax 'redmi.sh syntax' "$redmi_module"
     hg_selftest_syntax 'asata.sh syntax' "$asata_module"
     hg_selftest_syntax 'tailscale.sh syntax' "$tailscale_module"
+    hg_selftest_syntax 'telegram.sh syntax' "$telegram_module"
+    hg_selftest_ucode_syntax 'telegram-poller.uc syntax' "$telegram_poller"
+    hg_selftest_syntax 'Telegram procd service syntax' "$telegram_service"
+    hg_selftest_service_contract "$telegram_service"
     hg_selftest_syntax 'doctor.sh syntax' "$doctor_module"
     hg_selftest_syntax 'selftest.sh syntax' "$selftest_module"
 
@@ -194,6 +271,22 @@ hg_selftest_run() {
         hg_selftest_api 'Tailscale API' 'hg_tailscale_collect'
     else
         hg_selftest_result FAIL 'Tailscale API' 'модуль tailscale не загружается'
+    fi
+
+    if hg_load_module telegram >/dev/null 2>&1; then
+        hg_selftest_api 'Telegram getMe API' 'hg_telegram_get_me'
+        hg_selftest_api 'Telegram getUpdates API' 'hg_telegram_get_updates'
+        hg_selftest_api 'Telegram sendMessage API' 'hg_telegram_send_message'
+        hg_selftest_api 'Telegram editMessage API' 'hg_telegram_edit_message'
+        hg_selftest_api 'Telegram answerCallback API' 'hg_telegram_answer_callback'
+        hg_selftest_telegram_validation
+    else
+        hg_selftest_result FAIL 'Telegram getMe API' 'модуль telegram не загружается'
+        hg_selftest_result FAIL 'Telegram getUpdates API' 'модуль telegram не загружается'
+        hg_selftest_result FAIL 'Telegram sendMessage API' 'модуль telegram не загружается'
+        hg_selftest_result FAIL 'Telegram editMessage API' 'модуль telegram не загружается'
+        hg_selftest_result FAIL 'Telegram answerCallback API' 'модуль telegram не загружается'
+        hg_selftest_result FAIL 'Telegram ID validation' 'модуль telegram не загружается'
     fi
 
     if hg_load_module doctor >/dev/null 2>&1; then

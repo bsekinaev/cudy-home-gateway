@@ -25,9 +25,18 @@ CUDY Home Gateway
   gateway status --json    Вывести системный статус в JSON
   gateway doctor           Проверить окружение и зависимости
   gateway selftest         Проверить установку Gateway CLI
+  gateway telegram get-me  Проверить Telegram Bot API
+  gateway telegram get-updates [offset] [timeout]
+                           Получить updates без изменения data plane
+  gateway telegram send-message CHAT_ID TEXT [REPLY_MARKUP]
+                           Отправить сообщение через Telegram Bot API
+  gateway telegram edit-message CHAT_ID MESSAGE_ID TEXT [REPLY_MARKUP]
+                           Обновить сообщение Telegram
+  gateway telegram answer-callback CALLBACK_QUERY_ID [TEXT]
+                           Завершить Telegram callback query
 
-На этапе 0.3 команды управления сетью ещё не реализованы.
-CLI работает только в read-only режиме.
+На этапе 0.4 Telegram работает только как read-only control plane.
+Команды изменения сетевой конфигурации не реализованы.
 EOF_HELP
 }
 
@@ -52,6 +61,53 @@ main() {
                 hg_error 'использование: gateway status [--json]'
                 return "$HG_EXIT_USAGE"
             fi
+            ;;
+        telegram)
+            hg_load_module telegram
+
+            subcommand="${2:-}"
+
+            case "$subcommand" in
+                get-me)
+                    if [ "$#" -ne 2 ]; then
+                        hg_error 'использование: gateway telegram get-me'
+                        return "$HG_EXIT_USAGE"
+                    fi
+                    hg_telegram_get_me
+                    ;;
+                get-updates)
+                    if [ "$#" -gt 4 ]; then
+                        hg_error 'использование: gateway telegram get-updates [offset] [timeout]'
+                        return "$HG_EXIT_USAGE"
+                    fi
+                    hg_telegram_get_updates "${3:-}" "${4:-0}"
+                    ;;
+                send-message)
+                    if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
+                        hg_error 'использование: gateway telegram send-message CHAT_ID TEXT [REPLY_MARKUP]'
+                        return "$HG_EXIT_USAGE"
+                    fi
+                    hg_telegram_send_message "$3" "$4" "${5:-}"
+                    ;;
+                edit-message)
+                    if [ "$#" -lt 5 ] || [ "$#" -gt 6 ]; then
+                        hg_error 'использование: gateway telegram edit-message CHAT_ID MESSAGE_ID TEXT [REPLY_MARKUP]'
+                        return "$HG_EXIT_USAGE"
+                    fi
+                    hg_telegram_edit_message "$3" "$4" "$5" "${6:-}"
+                    ;;
+                answer-callback)
+                    if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
+                        hg_error 'использование: gateway telegram answer-callback CALLBACK_QUERY_ID [TEXT]'
+                        return "$HG_EXIT_USAGE"
+                    fi
+                    hg_telegram_answer_callback "$3" "${4:-}"
+                    ;;
+                *)
+                    hg_error 'использование: gateway telegram {get-me|get-updates|send-message|edit-message|answer-callback}'
+                    return "$HG_EXIT_USAGE"
+                    ;;
+            esac
             ;;
         doctor)
             if [ "$#" -ne 1 ]; then
