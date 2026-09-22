@@ -14,6 +14,8 @@ Telegram provisioning хранится только на роутере:
 
 Файлы должны принадлежать `root` и иметь права `0600`. Token и whitelist не хранятся в Git. Token не должен попадать в логи и не передаётся `curl` через argv.
 
+`telegram.user_id` и `telegram.chat_id` должны содержать только числовой Telegram ID без дополнительных символов.
+
 ## Транспорт
 
 По умолчанию Telegram Bot API вызывается через существующий MAIN SOCKS:
@@ -33,18 +35,46 @@ Telegram provisioning хранится только на роутере:
 gateway telegram get-me
 gateway telegram get-updates
 gateway telegram get-updates OFFSET TIMEOUT
-gateway telegram send-message CHAT_ID TEXT
+gateway telegram send-message CHAT_ID TEXT [REPLY_MARKUP]
+gateway telegram edit-message CHAT_ID MESSAGE_ID TEXT [REPLY_MARKUP]
+gateway telegram answer-callback CALLBACK_QUERY_ID [TEXT]
 ```
 
 ## Poller
 
-`telegram-poller.uc` использует `fs.popen()` с argv-массивом, поэтому входные значения не интерпретируются shell. Poller:
+На целевом OpenWrt установлен ucode `2026.01`, где `fs.popen()` принимает строковую команду. Poller shell-quote'ит каждый аргумент перед передачей в `/bin/sh -c`; Telegram payload не исполняется как shell-код.
 
-- принимает updates через long polling;
+Poller:
+
+- принимает `message` и `callback_query` через long polling;
 - допускает только один `user_id` и `chat_id`;
-- фиксирует следующий `update_id` до обработки сообщения;
+- фиксирует следующий `update_id` до обработки update;
 - отбрасывает сообщения старше 120 секунд;
 - поддерживает `/start` и `/status`;
+- отправляет inline dashboard с кнопкой `🔄 Обновить`;
+- отвечает на callback через `answerCallbackQuery`;
+- обновляет dashboard через `editMessageText`, не создавая новое сообщение при refresh;
+- хранит callback nonce, timestamp и `message_id` в runtime state;
+- отклоняет callback старше 120 секунд, callback от старого dashboard и повторный callback после ротации nonce;
+- использует runtime lock, чтобы loop-mode имел единственного активного poller;
 - не изменяет data plane.
 
-Runtime offset хранится в `/tmp/home-gateway/telegram.offset`. Callback-кнопки, TTL/nonce для callback и procd deployment добавляются следующей итерацией `0.4`.
+Runtime-файлы:
+
+```text
+/tmp/home-gateway/telegram.offset
+/tmp/home-gateway/telegram.callback
+/tmp/home-gateway/telegram-poller.lock
+```
+
+Они намеренно находятся в `/tmp`. После reboot старые Telegram updates отсекаются по времени, а callback старого dashboard не проходит из-за отсутствующего runtime state.
+
+## procd
+
+Постоянный poller запускается сервисом:
+
+```text
+/etc/init.d/home-gateway-telegram
+```
+
+Сервис использует procd и respawn. Сначала сервис проверяется вручную через `start`; автозапуск включается только после успешного runtime/restart теста.

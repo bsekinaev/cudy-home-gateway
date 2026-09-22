@@ -112,34 +112,107 @@ hg_telegram_get_updates() {
         hg_telegram_api_request getUpdates "$max_time" \
             --request POST \
             --data-urlencode "offset=$offset" \
-            --data-urlencode "timeout=$timeout"
+            --data-urlencode "timeout=$timeout" \
+            --data-urlencode 'allowed_updates=["message","callback_query"]'
     else
         hg_telegram_api_request getUpdates "$max_time" \
             --request POST \
-            --data-urlencode "timeout=$timeout"
+            --data-urlencode "timeout=$timeout" \
+            --data-urlencode 'allowed_updates=["message","callback_query"]'
     fi
 }
 
-# Transport primitive для poller/dashboard. CLI экспортирует только
-# фиксированный send-message без shell/eval и без доступа к data plane.
-hg_telegram_send_message() {
-    chat_id="${1:-}"
-    text="${2:-}"
-
-    case "$chat_id" in
+hg_telegram_validate_chat_id() {
+    case "${1:-}" in
         ''|*[!0-9-]*)
             hg_error 'некорректный Telegram chat_id'
             return "$HG_EXIT_USAGE"
             ;;
     esac
+}
+
+hg_telegram_validate_message_id() {
+    case "${1:-}" in
+        ''|*[!0-9]*)
+            hg_error 'некорректный Telegram message_id'
+            return "$HG_EXIT_USAGE"
+            ;;
+    esac
+}
+
+hg_telegram_send_message() {
+    chat_id="${1:-}"
+    text="${2:-}"
+    reply_markup="${3:-}"
+
+    hg_telegram_validate_chat_id "$chat_id" || return $?
 
     [ -n "$text" ] || {
         hg_error 'пустой Telegram message'
         return "$HG_EXIT_USAGE"
     }
 
-    hg_telegram_api_request sendMessage 10 \
-        --request POST \
-        --data-urlencode "chat_id=$chat_id" \
-        --data-urlencode "text=$text"
+    if [ -n "$reply_markup" ]; then
+        hg_telegram_api_request sendMessage 10 \
+            --request POST \
+            --data-urlencode "chat_id=$chat_id" \
+            --data-urlencode "text=$text" \
+            --data-urlencode "reply_markup=$reply_markup"
+    else
+        hg_telegram_api_request sendMessage 10 \
+            --request POST \
+            --data-urlencode "chat_id=$chat_id" \
+            --data-urlencode "text=$text"
+    fi
+}
+
+hg_telegram_edit_message() {
+    chat_id="${1:-}"
+    message_id="${2:-}"
+    text="${3:-}"
+    reply_markup="${4:-}"
+
+    hg_telegram_validate_chat_id "$chat_id" || return $?
+    hg_telegram_validate_message_id "$message_id" || return $?
+
+    [ -n "$text" ] || {
+        hg_error 'пустой Telegram message'
+        return "$HG_EXIT_USAGE"
+    }
+
+    if [ -n "$reply_markup" ]; then
+        hg_telegram_api_request editMessageText 10 \
+            --request POST \
+            --data-urlencode "chat_id=$chat_id" \
+            --data-urlencode "message_id=$message_id" \
+            --data-urlencode "text=$text" \
+            --data-urlencode "reply_markup=$reply_markup"
+    else
+        hg_telegram_api_request editMessageText 10 \
+            --request POST \
+            --data-urlencode "chat_id=$chat_id" \
+            --data-urlencode "message_id=$message_id" \
+            --data-urlencode "text=$text"
+    fi
+}
+
+hg_telegram_answer_callback() {
+    callback_query_id="${1:-}"
+    text="${2:-}"
+
+    [ -n "$callback_query_id" ] || {
+        hg_error 'пустой Telegram callback_query_id'
+        return "$HG_EXIT_USAGE"
+    }
+
+    if [ -n "$text" ]; then
+        hg_telegram_api_request answerCallbackQuery 10 \
+            --request POST \
+            --data-urlencode "callback_query_id=$callback_query_id" \
+            --data-urlencode "text=$text"
+    else
+        hg_telegram_api_request answerCallbackQuery 10 \
+            --request POST \
+            --data-urlencode "callback_query_id=$callback_query_id"
+    fi
 }
