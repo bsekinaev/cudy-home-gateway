@@ -57,6 +57,30 @@ hg_selftest_syntax() {
     fi
 }
 
+hg_selftest_ucode_syntax() {
+    name="$1"
+    path="$2"
+    tmp_file="/tmp/home-gateway-ucode-selftest.$$.out"
+
+    if [ ! -r "$path" ]; then
+        hg_selftest_result FAIL "$name" "файл недоступен: $path"
+        return 0
+    fi
+
+    if ! command -v ucode >/dev/null 2>&1; then
+        hg_selftest_result FAIL "$name" 'ucode не найден'
+        return 0
+    fi
+
+    if ucode -c -o "$tmp_file" "$path" >/dev/null 2>&1; then
+        rm -f "$tmp_file"
+        hg_selftest_result PASS "$name" 'ucode-синтаксис корректен'
+    else
+        rm -f "$tmp_file"
+        hg_selftest_result FAIL "$name" 'ошибка ucode-синтаксиса'
+    fi
+}
+
 hg_selftest_api() {
     name="$1"
     function_name="$2"
@@ -105,6 +129,7 @@ hg_selftest_run() {
     asata_module="${HG_LIBDIR}/asata.sh"
     tailscale_module="${HG_LIBDIR}/tailscale.sh"
     telegram_module="${HG_LIBDIR}/telegram.sh"
+    telegram_poller="${HG_LIBDIR}/telegram-poller.uc"
     doctor_module="${HG_LIBDIR}/doctor.sh"
     selftest_module="${HG_LIBDIR}/selftest.sh"
 
@@ -129,6 +154,7 @@ hg_selftest_run() {
     hg_selftest_readable 'asata.sh' "$asata_module"
     hg_selftest_readable 'tailscale.sh' "$tailscale_module"
     hg_selftest_readable 'telegram.sh' "$telegram_module"
+    hg_selftest_readable 'telegram-poller.uc' "$telegram_poller"
     hg_selftest_readable 'doctor.sh' "$doctor_module"
     hg_selftest_readable 'selftest.sh' "$selftest_module"
 
@@ -143,6 +169,7 @@ hg_selftest_run() {
     hg_selftest_syntax 'asata.sh syntax' "$asata_module"
     hg_selftest_syntax 'tailscale.sh syntax' "$tailscale_module"
     hg_selftest_syntax 'telegram.sh syntax' "$telegram_module"
+    hg_selftest_ucode_syntax 'telegram-poller.uc syntax' "$telegram_poller"
     hg_selftest_syntax 'doctor.sh syntax' "$doctor_module"
     hg_selftest_syntax 'selftest.sh syntax' "$selftest_module"
 
@@ -202,6 +229,7 @@ hg_selftest_run() {
     if hg_load_module telegram >/dev/null 2>&1; then
         hg_selftest_api 'Telegram getMe API' 'hg_telegram_get_me'
         hg_selftest_api 'Telegram getUpdates API' 'hg_telegram_get_updates'
+        hg_selftest_api 'Telegram sendMessage API' 'hg_telegram_send_message'
     else
         hg_selftest_result FAIL 'Telegram getMe API' 'модуль telegram не загружается'
         hg_selftest_result FAIL 'Telegram getUpdates API' 'модуль telegram не загружается'

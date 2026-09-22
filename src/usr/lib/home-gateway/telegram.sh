@@ -120,8 +120,8 @@ hg_telegram_get_updates() {
     fi
 }
 
-# Внутренний transport primitive. Не экспортируется отдельной CLI-командой,
-# но понадобится dashboard/poller для ответов пользователю.
+# Transport primitive для poller/dashboard. CLI экспортирует только
+# фиксированный send-message без shell/eval и без доступа к data plane.
 hg_telegram_send_message() {
     chat_id="${1:-}"
     text="${2:-}"

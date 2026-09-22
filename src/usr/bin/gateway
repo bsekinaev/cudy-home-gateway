@@ -28,6 +28,8 @@ CUDY Home Gateway
   gateway telegram get-me  Проверить Telegram Bot API
   gateway telegram get-updates [offset] [timeout]
                            Получить updates без изменения data plane
+  gateway telegram send-message CHAT_ID TEXT
+                           Отправить ответ через Telegram Bot API
 
 На этапе 0.4 Telegram работает только как read-only control plane.
 Команды изменения сетевой конфигурации не реализованы.
@@ -76,8 +78,15 @@ main() {
                     fi
                     hg_telegram_get_updates "${3:-}" "${4:-0}"
                     ;;
+                send-message)
+                    if [ "$#" -ne 4 ]; then
+                        hg_error 'использование: gateway telegram send-message CHAT_ID TEXT'
+                        return "$HG_EXIT_USAGE"
+                    fi
+                    hg_telegram_send_message "$3" "$4"
+                    ;;
                 *)
-                    hg_error 'использование: gateway telegram {get-me|get-updates [offset] [timeout]}'
+                    hg_error 'использование: gateway telegram {get-me|get-updates [offset] [timeout]|send-message CHAT_ID TEXT}'
                     return "$HG_EXIT_USAGE"
                     ;;
             esac
