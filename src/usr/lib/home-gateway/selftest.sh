@@ -109,6 +109,31 @@ hg_selftest_ucode_syntax() {
     fi
 }
 
+hg_selftest_incidents_engine() {
+    path="$1"
+    entrypoint="$2"
+    tmp_file="/tmp/home-gateway-incidents-selftest.$$.out"
+
+    if [ ! -r "$path" ]; then
+        hg_selftest_result FAIL 'Incident Engine selftest' "файл недоступен: $path"
+        return 0
+    fi
+
+    if ! command -v ucode >/dev/null 2>&1; then
+        hg_selftest_result FAIL 'Incident Engine selftest' 'ucode не найден'
+        return 0
+    fi
+
+    if ucode "$path" "$entrypoint" selftest >"$tmp_file" 2>&1; then
+        rm -f "$tmp_file"
+        hg_selftest_result PASS 'Incident Engine selftest' 'debounce/hysteresis contract'
+    else
+        detail="$(tail -n 1 "$tmp_file" 2>/dev/null || true)"
+        rm -f "$tmp_file"
+        hg_selftest_result FAIL 'Incident Engine selftest' "${detail:-state machine test failed}"
+    fi
+}
+
 hg_selftest_api() {
     name="$1"
     function_name="$2"
@@ -164,6 +189,7 @@ hg_selftest_run() {
     common_module="${HG_LIBDIR}/common.sh"
     status_module="${HG_LIBDIR}/status.sh"
     health_module="${HG_LIBDIR}/health.sh"
+    incidents_engine="${HG_LIBDIR}/incidents.uc"
     network_module="${HG_LIBDIR}/network.sh"
     vpn_module="${HG_LIBDIR}/vpn.sh"
     dns_module="${HG_LIBDIR}/dns.sh"
@@ -191,6 +217,7 @@ hg_selftest_run() {
     hg_selftest_readable 'common.sh' "$common_module"
     hg_selftest_readable 'status.sh' "$status_module"
     hg_selftest_readable 'health.sh' "$health_module"
+    hg_selftest_readable 'incidents.uc' "$incidents_engine"
     hg_selftest_readable 'network.sh' "$network_module"
     hg_selftest_readable 'vpn.sh' "$vpn_module"
     hg_selftest_readable 'dns.sh' "$dns_module"
@@ -209,6 +236,8 @@ hg_selftest_run() {
     hg_selftest_syntax 'common.sh syntax' "$common_module"
     hg_selftest_syntax 'status.sh syntax' "$status_module"
     hg_selftest_syntax 'health.sh syntax' "$health_module"
+    hg_selftest_ucode_syntax 'incidents.uc syntax' "$incidents_engine"
+    hg_selftest_incidents_engine "$incidents_engine" "$entrypoint"
     hg_selftest_syntax 'network.sh syntax' "$network_module"
     hg_selftest_syntax 'vpn.sh syntax' "$vpn_module"
     hg_selftest_syntax 'dns.sh syntax' "$dns_module"

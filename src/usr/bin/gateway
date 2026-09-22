@@ -25,6 +25,9 @@ CUDY Home Gateway
   gateway status --json    Вывести системный статус в JSON
   gateway health           Показать нормализованное health-состояние
   gateway health --json    Вывести health-состояние в JSON
+  gateway incidents        Показать подтверждённые incidents и candidates
+  gateway incidents --json Вывести incident state в JSON
+  gateway incidents tick   Выполнить одну итерацию incident state machine
   gateway doctor           Проверить окружение и зависимости
   gateway selftest         Проверить установку Gateway CLI
   gateway telegram get-me  Проверить Telegram Bot API
@@ -73,6 +76,30 @@ main() {
                 hg_health_print_json
             else
                 hg_error 'использование: gateway health [--json]'
+                return "$HG_EXIT_USAGE"
+            fi
+            ;;
+        incidents)
+            incidents_engine="${HG_LIBDIR}/incidents.uc"
+
+            if [ ! -r "$incidents_engine" ]; then
+                hg_error "не найден модуль: $incidents_engine"
+                return "$HG_EXIT_SOFTWARE"
+            fi
+
+            if ! command -v ucode >/dev/null 2>&1; then
+                hg_error 'ucode не найден'
+                return "$HG_EXIT_SOFTWARE"
+            fi
+
+            if [ "$#" -eq 1 ]; then
+                ucode "$incidents_engine" "$0" show
+            elif [ "$#" -eq 2 ] && [ "$2" = '--json' ]; then
+                ucode "$incidents_engine" "$0" json
+            elif [ "$#" -eq 2 ] && [ "$2" = 'tick' ]; then
+                ucode "$incidents_engine" "$0" tick
+            else
+                hg_error 'использование: gateway incidents [--json|tick]'
                 return "$HG_EXIT_USAGE"
             fi
             ;;

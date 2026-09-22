@@ -39,9 +39,9 @@
 
 ## 0.5 — Health & Alerts ← текущий этап
 
-- Health Core: нормализованные local/service observations;
+- Health Core: нормализованные local/service observations ✅;
+- incident journal + hysteresis/debounce ← текущая итерация;
 - freshness-aware и адаптивные внешние проверки;
-- incident journal + hysteresis/debounce;
 - persistent notification queue и queued recovery summary;
 - Telegram delivery: MAIN SOCKS → Torrent SOCKS fallback;
 - mute и категории уведомлений;

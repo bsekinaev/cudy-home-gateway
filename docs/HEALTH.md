@@ -46,15 +46,16 @@ Health Core не превращает `stale_cache` в `OK`.
 
 ## Следующие итерации
 
-`0.5.1` не содержит incident state и не отправляет alerts.
+`0.5.1` не отправляет alerts.
+
+Incident state реализуется отдельной state machine и не смешивается с adapters/Health Core. См. [Incident State](INCIDENTS.md).
 
 Дальше:
 
-1. hysteresis/debounce и incident journal;
-2. adaptive confirmation probes;
-3. persistent notification queue;
-4. Telegram delivery через MAIN SOCKS с fallback на Torrent SOCKS;
-5. mute/categories и recovery summary.
+1. adaptive confirmation probes;
+2. persistent notification queue;
+3. Telegram delivery через MAIN SOCKS с fallback на Torrent SOCKS;
+4. mute/categories и recovery summary.
 
 До релиза `0.5.0` также должны быть закрыты подтверждённые hardening-задачи:
 
