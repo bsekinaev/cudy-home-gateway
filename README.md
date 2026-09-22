@@ -44,6 +44,7 @@ Health Core нормализует WAN, DNS, MAIN и service/policy observations
 - [Health Core](docs/HEALTH.md)
 - [Incident State](docs/INCIDENTS.md)
 - [Adaptive External Probes](docs/ADAPTIVE_PROBES.md)
+- [CI/CD](docs/CI_CD.md)
 - [Telegram read-only](docs/TELEGRAM.md)
 - [Результаты preflight](docs/PREFLIGHT.md)
 

@@ -45,7 +45,9 @@
 - persistent notification queue и queued recovery summary;
 - Telegram delivery: MAIN SOCKS → Torrent SOCKS fallback;
 - mute и категории уведомлений;
-- hardening до релиза: sysupgrade persistence и ASATA keeper semantics.
+- hardening до релиза: sysupgrade persistence и ASATA keeper semantics;
+- CI checkpoint: GitHub Actions static/runtime-contract checks ✅;
+- CD checkpoint: read-only Tailscale router smoke → atomic deploy/rollback later.
 
 ## 0.6 — vtest
 

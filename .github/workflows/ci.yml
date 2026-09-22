@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate control plane
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    env:
+      # Exact ucode revision validated on the target CUDY/OpenWrt runtime.
+      UCODE_REV: 85922056ef7abeace3cca3ab28bc1ac2d88e31b1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check changed-file whitespace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
+            git fetch --no-tags origin "${GITHUB_BASE_REF}"
+            git diff --check "origin/${GITHUB_BASE_REF}...HEAD"
+          elif git rev-parse HEAD^ >/dev/null 2>&1; then
+            git diff --check HEAD^ HEAD
+          else
+            git show --check --format= HEAD
+          fi
+
+      - name: Install ucode build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libjson-c-dev \
+            libmd-dev \
+            zlib1g-dev
+
+      - name: Build target-compatible ucode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git clone --filter=blob:none https://github.com/jow-/ucode.git /tmp/ucode
+          git -C /tmp/ucode checkout --detach "${UCODE_REV}"
+
+          cmake \
+            -S /tmp/ucode \
+            -B /tmp/ucode-build \
+            -DFS_SUPPORT=ON \
+            -DMATH_SUPPORT=ON \
+            -DSTRUCT_SUPPORT=ON \
+            -DUBUS_SUPPORT=OFF \
+            -DUCI_SUPPORT=OFF \
+            -DULOOP_SUPPORT=OFF \
+            -DNL80211_SUPPORT=OFF \
+            -DRESOLV_SUPPORT=OFF \
+            -DRTNL_SUPPORT=OFF
+
+          cmake --build /tmp/ucode-build --parallel 2
+          sudo cmake --install /tmp/ucode-build
+          sudo ldconfig
+
+          ucode -e 'print("ucode-ci-ok\n")'
+
+      - name: Run repository CI checks
+        run: ./scripts/ci/check.sh
