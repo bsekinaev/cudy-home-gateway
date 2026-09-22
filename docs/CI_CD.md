@@ -36,29 +36,43 @@ CI не подключается к домашней сети и не имеет
 
 До этого GitHub Actions не должен копировать файлы поверх живого `/usr/bin` и `/usr/lib`.
 
-## Следующий CD checkpoint
+## Read-only router smoke
 
-Следующим инфраструктурным шагом будет read-only `router-smoke` workflow:
+Второй checkpoint — ручной workflow `Router Smoke`.
 
 ```text
 GitHub-hosted runner
         ↓
-Tailscale ephemeral node
+Tailscale ephemeral tag:ci
         ↓
 CUDY Tailscale address
         ↓
-gateway version
-gateway selftest
-gateway doctor
-gateway health
+Dropbear key with forced command
+        ↓
+home-gateway-ci-smoke
+        ↓
+gateway version / selftest / doctor / health
 ```
 
-Он докажет безопасный GitHub → Tailnet → CUDY канал, но ничего на роутере не изменит.
+Workflow не получает универсальный SSH shell. Выделенный public key на CUDY привязан через Dropbear `command=` к `/usr/bin/home-gateway-ci-smoke`, а также запрещает PTY и port forwarding.
 
-Для production deployment будет использоваться отдельный GitHub Environment `production` с ручным запуском/защитой окружения и единственным deployment concurrency group.
+Даже при компрометации этого deployment credential ключ не предназначен для произвольного изменения CUDY.
+
+Workflow запускается только вручную через `workflow_dispatch`.
+
+Для production deployment позже будет использоваться отдельный GitHub Environment `production` с ручным запуском/защитой окружения и единственным deployment concurrency group.
 
 ## Tailscale
 
-Для GitHub-hosted runner предпочтителен ephemeral tagged node. Production SSH не публикуется в WAN.
+Для GitHub-hosted runner используется ephemeral tagged node `tag:ci` через Tailscale Workload Identity Federation. Production SSH не публикуется в WAN.
 
-Доступ `tag:ci` должен быть минимальным: только к SSH CUDY, без широкого доступа ко всему tailnet.
+GitHub secrets:
+
+- `TS_OAUTH_CLIENT_ID`;
+- `TS_AUDIENCE`;
+- `CUDY_CI_SSH_KEY`;
+- `CUDY_SSH_KNOWN_HOSTS`.
+
+`TS_OAUTH_CLIENT_ID` + `TS_AUDIENCE` относятся только к federated identity с writable `auth_keys` scope и `tag:ci`.
+
+Доступ `tag:ci` должен быть минимальным: в идеале только TCP/22 к Tailscale IPv4 CUDY. Если в tailnet всё ещё действует permissive allow-all policy, её hardening выполняется отдельно после проверки текущего policy, чтобы не потерять административный доступ.

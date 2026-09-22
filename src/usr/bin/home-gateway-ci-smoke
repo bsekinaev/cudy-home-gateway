@@ -1,0 +1,29 @@
+#!/bin/sh
+# Forced-command target for GitHub Actions read-only router smoke.
+# This script intentionally exposes no arbitrary command execution.
+
+set -eu
+
+PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
+
+if [ "${SSH_ORIGINAL_COMMAND:-}" != 'smoke' ]; then
+    printf 'router-smoke: unsupported command\n' >&2
+    exit 64
+fi
+
+printf '=== CUDY ROUTER SMOKE ===\n'
+
+printf '\n=== VERSION ===\n'
+/usr/bin/gateway version
+
+printf '\n=== SELFTEST ===\n'
+/usr/bin/gateway selftest
+
+printf '\n=== DOCTOR ===\n'
+/usr/bin/gateway doctor
+
+printf '\n=== HEALTH ===\n'
+/usr/bin/gateway health
+
+printf '\nROUTER_SMOKE_RESULT=PASS\n'
