@@ -28,7 +28,16 @@ function read_trimmed(path) {
 	return length(value) ? value : null;
 }
 
-function read_identity(path) {
+function read_user_id(path) {
+	let value = read_trimmed(path);
+
+	if (value == null || match(value, /^[0-9]+$/) == null)
+		return null;
+
+	return value;
+}
+
+function read_chat_id(path) {
 	let value = read_trimmed(path);
 
 	if (value == null || match(value, /^-?[0-9]+$/) == null)
@@ -419,8 +428,8 @@ function poll_once(offset, timeout, allowed_user, allowed_chat) {
 	return true;
 }
 
-let allowed_user = read_identity(USER_FILE);
-let allowed_chat = read_identity(CHAT_FILE);
+let allowed_user = read_user_id(USER_FILE);
+let allowed_chat = read_chat_id(CHAT_FILE);
 
 if (allowed_user == null || allowed_chat == null) {
 	warn('telegram-poller: whitelist files are missing or invalid\n');

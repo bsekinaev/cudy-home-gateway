@@ -2,7 +2,7 @@
 # Общие функции CUDY Home Gateway.
 
 HG_NAME='CUDY Home Gateway'
-HG_VERSION='0.4.0-dev'
+HG_VERSION='0.4.0'
 HG_EXIT_UNHEALTHY=1
 HG_EXIT_USAGE=2
 HG_EXIT_SOFTWARE=70

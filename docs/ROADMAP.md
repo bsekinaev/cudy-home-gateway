@@ -27,7 +27,7 @@
 
 **Статус:** завершён 21.09.2026. Human/JSON status, fault-injection negative-tests, `doctor` и `selftest` проверены на целевом CUDY; data plane не изменялся.
 
-## 0.4 — Telegram read-only ← текущий этап
+## 0.4 — Telegram read-only ✅
 
 - BotFather и secrets provisioning;
 - long polling;
@@ -35,7 +35,9 @@
 - whitelist user/chat;
 - защита от replay и устаревших callbacks.
 
-## 0.5 — Health & Alerts
+**Статус:** завершён 22.09.2026. На целевом CUDY проверены long polling, inline refresh через `editMessageText`, whitelist, stale/replay/TTL callbacks, singleton lock, procd respawn и autostart. Data plane не изменялся.
+
+## 0.5 — Health & Alerts ← следующий этап
 
 - локальные проверки;
 - адаптивные внешние проверки;

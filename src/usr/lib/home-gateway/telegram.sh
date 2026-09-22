@@ -123,8 +123,19 @@ hg_telegram_get_updates() {
 }
 
 hg_telegram_validate_chat_id() {
-    case "${1:-}" in
-        ''|*[!0-9-]*)
+    chat_id="${1:-}"
+
+    case "$chat_id" in
+        -*)
+            digits="${chat_id#-}"
+            ;;
+        *)
+            digits="$chat_id"
+            ;;
+    esac
+
+    case "$digits" in
+        ''|*[!0-9]*)
             hg_error 'некорректный Telegram chat_id'
             return "$HG_EXIT_USAGE"
             ;;

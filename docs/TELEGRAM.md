@@ -77,4 +77,18 @@ Runtime-файлы:
 /etc/init.d/home-gateway-telegram
 ```
 
-Сервис использует procd и respawn. Сначала сервис проверяется вручную через `start`; автозапуск включается только после успешного runtime/restart теста.
+Сервис использует procd и respawn. На целевом CUDY проверены штатный restart, crash-respawn, singleton lock и boot autostart.
+
+## Проверенный security/runtime contract
+
+Перед завершением `0.4` на целевом роутере подтверждены:
+
+- whitelist `user_id`/`chat_id`;
+- отбрасывание stale message;
+- ротация callback nonce после успешного refresh;
+- отклонение callback от старого dashboard;
+- TTL callback 120 секунд;
+- отсутствие повторной обработки уже подтверждённого update;
+- singleton loop с exit `73` для второго poller;
+- procd respawn после аварийного завершения;
+- отсутствие изменений routing, PassWall2, nftables и DNS.
