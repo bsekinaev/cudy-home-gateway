@@ -29,7 +29,7 @@ usr/lib/home-gateway/doctor.sh
 usr/lib/home-gateway/health.sh
 usr/lib/home-gateway/incidents.uc
 usr/lib/home-gateway/network.sh
-usr/lib/home-gateway/notifications.sh
+usr/lib/home-gateway/notifications.uc
 usr/lib/home-gateway/redmi.sh
 usr/lib/home-gateway/selftest.sh
 usr/lib/home-gateway/status.sh
