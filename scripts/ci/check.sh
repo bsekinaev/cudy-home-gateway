@@ -61,6 +61,8 @@ pass 'executable modes'
 
 # BusyBox/POSIX shell syntax.
 for file in \
+    scripts/deploy/*.sh \
+    scripts/deploy/recovery.init \
     scripts/router-preflight.sh \
     scripts/ci/check.sh \
     src/usr/bin/gateway \

@@ -9,6 +9,15 @@ POLLER=/usr/lib/home-gateway/telegram-poller.uc
 GATEWAY=/usr/bin/gateway
 
 start_service() {
+	# Do not start the poller on a mixed tree after an interrupted deployment.
+	if [ -f /etc/home-gateway-deploy/active ]; then
+		local tx phase
+		tx="$(cat /etc/home-gateway-deploy/active)"
+		case "$tx" in tx.*) ;; *) return 1 ;; esac
+		case "$tx" in *[!a-zA-Z0-9.]*|*..*) return 1 ;; esac
+		phase="$(cat "/etc/home-gateway-deploy/$tx/phase")"
+		case "$phase" in CHECKING|COMMITTED|RESTORED) ;; *) return 1 ;; esac
+	fi
 	[ -x "$PROG" ] || return 1
 	[ -r "$POLLER" ] || return 1
 	[ -x "$GATEWAY" ] || return 1

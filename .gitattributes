@@ -5,3 +5,4 @@ src/etc/init.d/* text eol=lf
 
 *.py text eol=lf
 .github/workflows/*.yml text eol=lf
+scripts/deploy/*.init text eol=lf

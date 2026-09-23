@@ -48,8 +48,8 @@
 - hardening до релиза: sysupgrade persistence и ASATA keeper semantics;
 - CI checkpoint: GitHub Actions static/runtime-contract checks ✅;
 - CD checkpoint: read-only Tailscale router smoke проверен;
-- release bundle: сборщик, manifest/SHA256 и CI artifact добавлены; проверка CI после push;
-- controlled install и rollback — следующий CD checkpoint.
+- release bundle: сборщик, manifest/SHA256, строгая проверка и CI artifact проверены;
+- controlled install/rollback и workflow CD реализованы; активация и приёмка на CUDY ожидаются (docs/DEPLOYMENT.md).
 
 ## 0.6 — vtest
 
