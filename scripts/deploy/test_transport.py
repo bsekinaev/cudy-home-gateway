@@ -45,7 +45,7 @@ class TransportTests(unittest.TestCase):
         lines = wire.splitlines()
         self.assertEqual(lines[0], ('HGDEPLOY1 ' + self.commit).encode())
         self.assertEqual(lines[-1], b'END')
-        self.assertEqual(len(lines), 38)
+        self.assertEqual(len(lines), 40)
         for index, path in enumerate(PATHS):
             data = base64.b64decode(lines[index * 2 + 2], validate=True)
             mode, size, digest = lines[index * 2 + 1].decode().split()
