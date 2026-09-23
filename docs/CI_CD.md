@@ -1,78 +1,254 @@
 # CI/CD
 
-## Текущий checkpoint
+## Статус
 
-CI включается до продолжения `0.5 Health & Alerts`.
+На 2026-09-23 проверены:
 
-На каждый push в `main` и `feature/**`, а также на pull request в `main`, GitHub Actions выполняет:
+- запуск Router Smoke из GitHub Actions;
+- подключение к CUDY через Tailscale и SSH на TCP/2222;
+- выполнение gateway version, selftest, doctor и health;
+- автоматический перезапуск CI-экземпляра Dropbear после пересоздания tailscale0;
+- успешный Router Smoke после настройки локального SOCKS5-прокси для Tailscale.
 
-- whitespace check изменённых файлов;
-- policy-check, что secrets/runtime state не отслеживаются Git;
+Автоматическое развёртывание (write-deploy) пока не реализовано.
+Длительная стабильность соединения и восстановление после полной
+перезагрузки роутера требуют отдельной проверки.
+
+## Проверки кода
+
+На push в main и feature/**, а также на pull request в main,
+основной CI выполняет:
+
+- проверку whitespace изменённых файлов;
+- проверку отсутствия secrets/runtime state в Git;
 - базовый secret scan;
-- LF-check для runtime и CI-файлов;
+- проверку LF для runtime и CI-файлов;
 - проверку executable mode;
-- `sh -n` для BusyBox/POSIX shell;
-- сборку ucode той же revision, которая была проверена на целевом CUDY;
-- `ucode -c` для `.uc`;
+- sh -n для BusyBox/POSIX shell;
+- сборку ucode проверенной на CUDY ревизии;
+- ucode -c для файлов .uc;
 - детерминированный selftest Incident Engine;
-- safety-check против универсального remote shell.
+- проверку против универсального remote shell.
 
-CI не подключается к домашней сети и не имеет production secrets.
+Основной CI не подключается к домашней сети.
+Доступ к роутеру используется отдельным workflow Router Smoke.
 
-## Почему CD пока не включён
+## Router Smoke
 
-Прямой deployment на CUDY пока намеренно запрещён.
+Файл: .github/workflows/router-smoke.yml.
 
-Перед write-deploy должны быть реализованы:
+Условия запуска:
 
-1. versioned release bundle;
-2. SHA256 verification;
-3. staging в `/tmp`;
-4. backup текущего control plane;
-5. atomic/controlled install;
-6. post-deploy `selftest`, `doctor`, `health`;
-7. automatic rollback;
-8. sysupgrade persistence для Home Gateway.
+- workflow_dispatch;
+- push в feature/health-alerts, если изменён сам router-smoke.yml.
 
-До этого GitHub Actions не должен копировать файлы поверх живого `/usr/bin` и `/usr/lib`.
+Триггер push добавлен для проверки workflow в рабочей ветке.
+После переноса workflow в основную ветку его необходимость нужно пересмотреть.
 
-## Read-only router smoke
+Runner входит в tailnet с тегом tag:ci и подключается к
+root@100.84.35.92 на порту 2222.
 
-Второй checkpoint — ручной workflow `Router Smoke`.
+На роутере выполняется /usr/bin/home-gateway-ci-smoke.
+Разрешённая исходная SSH-команда: smoke.
+Признак успеха: ROUTER_SMOKE_RESULT=PASS и успешный код завершения.
 
-```text
-GitHub-hosted runner
-        ↓
-Tailscale ephemeral tag:ci
-        ↓
-CUDY Tailscale address
-        ↓
-Dropbear key with forced command
-        ↓
-home-gateway-ci-smoke
-        ↓
-gateway version / selftest / doctor / health
+Скрипт вызывает:
+
+- gateway version;
+- gateway selftest;
+- gateway doctor;
+- gateway health.
+
+Это проверка установленного на роутере состояния.
+Workflow не устанавливает код из проверяемого коммита на CUDY.
+
+## Ограничения доступа
+
+Для CI используется отдельный SSH-ключ.
+
+В /etc/dropbear/authorized_keys его публичная часть имеет ограничения:
+
+- command="/usr/bin/home-gateway-ci-smoke";
+- no-port-forwarding;
+- no-agent-forwarding;
+- no-X11-forwarding;
+- no-pty.
+
+CI-экземпляр Dropbear дополнительно использует ForceCommand,
+запрещает парольную аутентификацию и перенаправление портов.
+
+Ключ даёт доступ к проверкам, выполняемым от root.
+Безопасность зависит от содержимого smoke-скрипта и вызываемых команд.
+
+Административный SSH через LAN остаётся на 192.168.1.1:22.
+
+## GitHub secrets и OIDC
+
+Используются:
+
+- TS_OAUTH_CLIENT_ID;
+- TS_AUDIENCE;
+- CUDY_CI_SSH_KEY;
+- CUDY_SSH_KNOWN_HOSTS.
+
+Tailscale Trust Credential использует GitHub OIDC.
+
+Issuer:
+https://token.actions.githubusercontent.com
+
+Subject, проверенный для текущей ветки:
+repo:bsekinaev@208483034/cudy-home-gateway@1378260931:ref:refs/heads/feature/health-alerts
+
+Для credential настроены auth_keys с правом Write и тег tag:ci.
+При смене ветки или добавлении GitHub Environment необходимо сверить
+фактический OIDC subject и обновить доверие.
+
+Приватный SSH-ключ хранится в GitHub secret и локально вне Git.
+Файлы ключей, состояние Tailscale и рабочие конфигурации с секретами
+не должны попадать в репозиторий.
+
+## Tailscale policy и SSH host key
+
+Для tag:ci разрешён только TCP/2222 к 100.84.35.92.
+
+Policy tests проверяют:
+
+- разрешён 100.84.35.92:2222;
+- запрещены 100.84.35.92:22, :80, :443;
+- запрещён 192.168.1.1:22.
+
+Правило autogroup:member сохраняет административный доступ пользователей.
+При изменении policy нужно учитывать, что разрешения правил суммируются.
+
+CUDY_SSH_KNOWN_HOSTS содержит закреплённый ключ роутера в формате:
+
+[100.84.35.92]:2222 ssh-ed25519 <публичный host key роутера>
+
+Host key получен через доверенное LAN-подключение.
+Проверенный fingerprint:
+SHA256:DP1+MfTRCQuax4uo+Zac/akmTugaJiQ+ehBG3M2NECg
+
+StrictHostKeyChecking включён.
+
+## Конфигурация OpenWrt
+
+Логический интерфейс network.tailscale_ci:
+
+- proto=none;
+- device=tailscale0.
+
+Адрес Tailscale назначает tailscaled.
+Пустые массивы адресов в ubus для proto=none не заменяют проверку
+фактического адреса командой ip -4 addr show dev tailscale0.
+
+CI-экземпляр dropbear.ci_smoke:
+
+- enable=1;
+- DirectInterface=tailscale_ci;
+- Port=2222;
+- PasswordAuth=0;
+- RootPasswordAuth=0;
+- RootLogin=1;
+- LocalPortForward=0;
+- RemotePortForward=0;
+- ForceCommand=/usr/bin/home-gateway-ci-smoke;
+- mdns=0.
+
+Firewall разрешает IPv4 TCP/2222 из зоны tailscale
+к адресу 100.84.35.92.
+
+## Восстановление Dropbear после пересоздания интерфейса
+
+В установленном /etc/init.d/dropbear после строки:
+
+procd_append_param command -l "${ndev}" -p "${Port}"
+
+добавлена строка:
+
+procd_set_param netdev "${ndev}"
+
+Она передаёт сетевое устройство в procd, чтобы reload мог обнаружить
+смену индекса интерфейса и перезапустить соответствующий экземпляр.
+
+Проверено: после перезапуска Tailscale индекс tailscale0 и PID
+CI-экземпляра изменились; PID LAN-экземпляра остался прежним.
+
+Резервная копия до изменения:
+/root/dropbear.init.before-netdev.Pbmoha
+
+Это локальная правка пакетного файла. После обновления Dropbear
+необходимо проверить её наличие или наличие эквивалентного исправления
+в пакете.
+
+## Tailscale через локальный SOCKS5
+
+На прямом соединении наблюдались длительные тайм-ауты запросов
+к серверу координации и TCP-повторы без видимого ответа.
+Точная причина прямых обрывов не установлена.
+
+Для сравнительного теста в start_service файла /etc/init.d/tailscale
+после procd_set_param env TS_DEBUG_FIREWALL_MODE добавлены:
+
+procd_append_param env HTTP_PROXY=socks5://127.0.0.1:1070
+procd_append_param env HTTPS_PROXY=socks5://127.0.0.1:1070
+
+Локальный SOCKS5 предоставляет Xray.
+Соединения Tailscale, использующие эти настройки прокси,
+зависят от его доступности.
+
+Через прокси Router Smoke прошёл.
+В журнале также наблюдались unexpected EOF и ошибки DialPlan
+с последующим успешным восстановлением через DNS.
+Полное отсутствие обрывов не подтверждено.
+
+Резервная копия:
+/root/tailscale.init.before-proxy-test
+
+Откат прокси через LAN:
+
+```sh
+cp -p /root/tailscale.init.before-proxy-test /etc/init.d/tailscale
+/etc/init.d/tailscale restart
 ```
 
-Workflow не получает универсальный SSH shell. Выделенный public key на CUDY привязан через Dropbear `command=` к `/usr/bin/home-gateway-ci-smoke`, а также запрещает PTY и port forwarding.
+Правка находится в пакетном init-скрипте.
+После обновления Tailscale необходимо проверить её наличие.
+Перенос настройки в устойчивый к обновлениям механизм остаётся задачей.
 
-Даже при компрометации этого deployment credential ключ не предназначен для произвольного изменения CUDY.
+## Проверка после обслуживания
 
-Workflow запускается только вручную через `workflow_dispatch`.
+Через LAN выполнить:
 
-Для production deployment позже будет использоваться отдельный GitHub Environment `production` с ручным запуском/защитой окружения и единственным deployment concurrency group.
+```sh
+tailscale status
+ip -4 addr show dev tailscale0
+ubus call service list '{"name":"dropbear"}'
+netstat -ntp | grep tailscaled
+logread -e tailscaled | tail -40
+```
 
-## Tailscale
+Проверить наличие адреса CUDY, работающего CI-экземпляра с netdev
+tailscale0 и отсутствие сохраняющихся предупреждений Tailscale.
 
-Для GitHub-hosted runner используется ephemeral tagged node `tag:ci` через Tailscale Workload Identity Federation. Production SSH не публикуется в WAN.
+Затем запустить Router Smoke.
+Для проверки автоматического восстановления не перезапускать
+Dropbear вручную между перезапуском Tailscale и smoke-проверкой.
 
-GitHub secrets:
+## Условия включения write-deploy
 
-- `TS_OAUTH_CLIENT_ID`;
-- `TS_AUDIENCE`;
-- `CUDY_CI_SSH_KEY`;
-- `CUDY_SSH_KNOWN_HOSTS`.
+До автоматической установки на CUDY необходимы:
 
-`TS_OAUTH_CLIENT_ID` + `TS_AUDIENCE` относятся только к federated identity с writable `auth_keys` scope и `tag:ci`.
+1. Версионированный release bundle.
+2. Проверка SHA256.
+3. Staging в /tmp.
+4. Backup текущего control plane.
+5. Контролируемая установка.
+6. Проверки selftest, doctor, health после установки.
+7. Автоматический rollback.
+8. Сохранение Home Gateway при sysupgrade.
 
-Доступ `tag:ci` должен быть минимальным: в идеале только TCP/22 к Tailscale IPv4 CUDY. Если в tailnet всё ещё действует permissive allow-all policy, её hardening выполняется отдельно после проверки текущего policy, чтобы не потерять административный доступ.
+До реализации этих механизмов Actions не должен копировать файлы
+поверх живых /usr/bin и /usr/lib.
+
+Для write-deploy планируется отдельное GitHub Environment production
+с ограничениями доступа и общей группой concurrency для развёртываний.
