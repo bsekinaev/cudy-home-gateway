@@ -44,12 +44,16 @@ hg_vpn_collect() {
     HG_VPN_EGRESS_STATE='UNKNOWN'
     HG_VPN_EGRESS_IPV4=''
     HG_VPN_EGRESS_SOURCE='live_probe'
-    HG_VPN_EGRESS_PROVIDER="${HG_MAIN_EGRESS_PROVIDER:-api.ipify.org}"
+    primary_provider="${HG_MAIN_EGRESS_PROVIDER:-api.ipify.org}"
+    secondary_provider="${HG_MAIN_EGRESS_SECONDARY_PROVIDER:-ipv4.icanhazip.com}"
+    HG_VPN_EGRESS_PROVIDER=''
     HG_VPN_EGRESS_CHECKED_AT=''
+    HG_VPN_EGRESS_PROBE_ATTEMPTS='0'
 
     egress_cache_file="${HG_MAIN_EGRESS_CACHE_FILE:-/tmp/home-gateway-main-egress.cache}"
     egress_cache_ttl="${HG_MAIN_EGRESS_CACHE_TTL:-300}"
     egress_probe_url="${HG_MAIN_EGRESS_PROBE_URL:-https://api.ipify.org}"
+    secondary_probe_url="${HG_MAIN_EGRESS_SECONDARY_PROBE_URL:-https://ipv4.icanhazip.com/}"
 
     case "$egress_cache_ttl" in
         ''|*[!0-9]*) egress_cache_ttl=300 ;;
@@ -128,16 +132,19 @@ hg_vpn_collect() {
 
     cache_checked_at=''
     cache_ipv4=''
+    cache_provider=''
     if [ -r "$egress_cache_file" ]; then
-        set -- $(awk 'NR == 1 { print $1, $2; exit }' "$egress_cache_file" 2>/dev/null || true)
+        set -- $(awk 'NR == 1 { print $1, $2, $3; exit }' "$egress_cache_file" 2>/dev/null || true)
         cache_checked_at="${1:-}"
         cache_ipv4="${2:-}"
+        cache_provider="${3:-}"
 
         case "$cache_checked_at" in
             ''|*[!0-9]*) cache_checked_at='' ;;
         esac
         if ! hg_vpn_is_ipv4 "$cache_ipv4"; then
             cache_ipv4=''
+            cache_provider=''
         fi
     fi
 
@@ -146,6 +153,7 @@ hg_vpn_collect() {
             HG_VPN_EGRESS_IPV4="$cache_ipv4"
             HG_VPN_EGRESS_SOURCE='stale_cache'
             HG_VPN_EGRESS_CHECKED_AT="$cache_checked_at"
+            HG_VPN_EGRESS_PROVIDER="$cache_provider"
         fi
         if [ "$HG_VPN_MAIN_XRAY_STATE" = 'DOWN' ]; then
             HG_VPN_EGRESS_STATE='DOWN'
@@ -161,6 +169,7 @@ hg_vpn_collect() {
             HG_VPN_EGRESS_IPV4="$cache_ipv4"
             HG_VPN_EGRESS_SOURCE='cache'
             HG_VPN_EGRESS_CHECKED_AT="$cache_checked_at"
+            HG_VPN_EGRESS_PROVIDER="$cache_provider"
             HG_VPN_MAIN_STATE='OK'
             return 0
         fi
@@ -169,6 +178,7 @@ hg_vpn_collect() {
     HG_VPN_EGRESS_CHECKED_AT="$now"
 
     if command -v curl >/dev/null 2>&1 && [ -n "$HG_VPN_MAIN_SOCKS_PORT" ]; then
+        HG_VPN_EGRESS_PROBE_ATTEMPTS='1'
         vpn_ipv4="$(
             curl -4 -fsS \
                 --socks5-hostname "${HG_VPN_MAIN_SOCKS_HOST}:${HG_VPN_MAIN_SOCKS_PORT}" \
@@ -181,13 +191,39 @@ hg_vpn_collect() {
         if hg_vpn_is_ipv4 "$vpn_ipv4"; then
             HG_VPN_EGRESS_IPV4="$vpn_ipv4"
             HG_VPN_EGRESS_SOURCE='live_probe'
+            HG_VPN_EGRESS_PROVIDER="$primary_provider"
             HG_VPN_EGRESS_STATE='OK'
             HG_VPN_MAIN_STATE='OK'
 
             if [ -n "$now" ]; then
-                printf '%s %s\n' "$now" "$vpn_ipv4" >"$egress_cache_file" 2>/dev/null || true
+                printf '%s %s %s\n' "$now" "$vpn_ipv4" "$primary_provider" >"$egress_cache_file" 2>/dev/null || true
             fi
             return 0
+        fi
+
+        if [ -n "$secondary_probe_url" ] && [ "$secondary_probe_url" != "$egress_probe_url" ]; then
+            HG_VPN_EGRESS_PROBE_ATTEMPTS='2'
+            vpn_ipv4="$(
+                curl -4 -fsS \
+                    --socks5-hostname "${HG_VPN_MAIN_SOCKS_HOST}:${HG_VPN_MAIN_SOCKS_PORT}" \
+                    --connect-timeout 2 \
+                    --max-time 6 \
+                    "$secondary_probe_url" 2>/dev/null |
+                    awk 'NR == 1 { gsub(/[[:space:]]/, ""); print; exit }' || true
+            )"
+
+            if hg_vpn_is_ipv4 "$vpn_ipv4"; then
+                HG_VPN_EGRESS_IPV4="$vpn_ipv4"
+                HG_VPN_EGRESS_SOURCE='live_probe'
+                HG_VPN_EGRESS_PROVIDER="$secondary_provider"
+                HG_VPN_EGRESS_STATE='OK'
+                HG_VPN_MAIN_STATE='OK'
+
+                if [ -n "$now" ]; then
+                    printf '%s %s %s\n' "$now" "$vpn_ipv4" "$secondary_provider" >"$egress_cache_file" 2>/dev/null || true
+                fi
+                return 0
+            fi
         fi
     fi
 
@@ -195,6 +231,7 @@ hg_vpn_collect() {
         HG_VPN_EGRESS_IPV4="$cache_ipv4"
         HG_VPN_EGRESS_SOURCE='stale_cache'
         HG_VPN_EGRESS_CHECKED_AT="$cache_checked_at"
+        HG_VPN_EGRESS_PROVIDER="$cache_provider"
     fi
 
     # Локальный Xray работает, но внешний путь не удалось подтвердить.

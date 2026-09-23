@@ -23,6 +23,11 @@ CUDY Home Gateway
   gateway version          Показать версию CLI
   gateway status           Показать системный статус роутера
   gateway status --json    Вывести системный статус в JSON
+  gateway health           Показать нормализованное health-состояние
+  gateway health --json    Вывести health-состояние в JSON
+  gateway incidents        Показать подтверждённые incidents и candidates
+  gateway incidents --json Вывести incident state в JSON
+  gateway incidents tick   Выполнить одну итерацию incident state machine
   gateway doctor           Проверить окружение и зависимости
   gateway selftest         Проверить установку Gateway CLI
   gateway telegram get-me  Проверить Telegram Bot API
@@ -35,8 +40,8 @@ CUDY Home Gateway
   gateway telegram answer-callback CALLBACK_QUERY_ID [TEXT]
                            Завершить Telegram callback query
 
-На этапе 0.4 Telegram работает только как read-only control plane.
-Команды изменения сетевой конфигурации не реализованы.
+Health и Telegram работают только как control plane.
+Команды изменения сетевой конфигурации на этапе 0.5 не реализованы.
 EOF_HELP
 }
 
@@ -59,6 +64,42 @@ main() {
                 hg_status_print_json
             else
                 hg_error 'использование: gateway status [--json]'
+                return "$HG_EXIT_USAGE"
+            fi
+            ;;
+        health)
+            hg_load_module health
+
+            if [ "$#" -eq 1 ]; then
+                hg_health_print
+            elif [ "$#" -eq 2 ] && [ "$2" = '--json' ]; then
+                hg_health_print_json
+            else
+                hg_error 'использование: gateway health [--json]'
+                return "$HG_EXIT_USAGE"
+            fi
+            ;;
+        incidents)
+            incidents_engine="${HG_LIBDIR}/incidents.uc"
+
+            if [ ! -r "$incidents_engine" ]; then
+                hg_error "не найден модуль: $incidents_engine"
+                return "$HG_EXIT_SOFTWARE"
+            fi
+
+            if ! command -v ucode >/dev/null 2>&1; then
+                hg_error 'ucode не найден'
+                return "$HG_EXIT_SOFTWARE"
+            fi
+
+            if [ "$#" -eq 1 ]; then
+                ucode "$incidents_engine" "$0" show
+            elif [ "$#" -eq 2 ] && [ "$2" = '--json' ]; then
+                ucode "$incidents_engine" "$0" json
+            elif [ "$#" -eq 2 ] && [ "$2" = 'tick' ]; then
+                ucode "$incidents_engine" "$0" tick
+            else
+                hg_error 'использование: gateway incidents [--json|tick]'
                 return "$HG_EXIT_USAGE"
             fi
             ;;

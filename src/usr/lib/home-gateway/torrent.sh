@@ -40,12 +40,16 @@ hg_torrent_collect() {
     HG_TORRENT_EGRESS_STATE='UNKNOWN'
     HG_TORRENT_EGRESS_IPV4=''
     HG_TORRENT_EGRESS_SOURCE='live_probe'
-    HG_TORRENT_EGRESS_PROVIDER="${HG_TORRENT_EGRESS_PROVIDER:-api.ipify.org}"
+    primary_provider="${HG_TORRENT_EGRESS_PROVIDER:-api.ipify.org}"
+    secondary_provider="${HG_TORRENT_EGRESS_SECONDARY_PROVIDER:-ipv4.icanhazip.com}"
+    HG_TORRENT_EGRESS_PROVIDER=''
     HG_TORRENT_EGRESS_CHECKED_AT=''
+    HG_TORRENT_EGRESS_PROBE_ATTEMPTS='0'
 
     egress_cache_file="${HG_TORRENT_EGRESS_CACHE_FILE:-/tmp/home-gateway-torrent-egress.cache}"
     egress_cache_ttl="${HG_TORRENT_EGRESS_CACHE_TTL:-300}"
     egress_probe_url="${HG_TORRENT_EGRESS_PROBE_URL:-https://api.ipify.org}"
+    secondary_probe_url="${HG_TORRENT_EGRESS_SECONDARY_PROBE_URL:-https://ipv4.icanhazip.com/}"
 
     case "$egress_cache_ttl" in
         ''|*[!0-9]*) egress_cache_ttl=300 ;;
@@ -114,16 +118,19 @@ hg_torrent_collect() {
 
     cache_checked_at=''
     cache_ipv4=''
+    cache_provider=''
     if [ -r "$egress_cache_file" ]; then
-        set -- $(awk 'NR == 1 { print $1, $2; exit }' "$egress_cache_file" 2>/dev/null || true)
+        set -- $(awk 'NR == 1 { print $1, $2, $3; exit }' "$egress_cache_file" 2>/dev/null || true)
         cache_checked_at="${1:-}"
         cache_ipv4="${2:-}"
+        cache_provider="${3:-}"
 
         case "$cache_checked_at" in
             ''|*[!0-9]*) cache_checked_at='' ;;
         esac
         if ! hg_torrent_is_ipv4 "$cache_ipv4"; then
             cache_ipv4=''
+            cache_provider=''
         fi
     fi
 
@@ -132,6 +139,7 @@ hg_torrent_collect() {
             HG_TORRENT_EGRESS_IPV4="$cache_ipv4"
             HG_TORRENT_EGRESS_SOURCE='stale_cache'
             HG_TORRENT_EGRESS_CHECKED_AT="$cache_checked_at"
+            HG_TORRENT_EGRESS_PROVIDER="$cache_provider"
         fi
         if [ "$HG_TORRENT_XRAY_STATE" = 'DOWN' ]; then
             HG_TORRENT_EGRESS_STATE='DOWN'
@@ -147,6 +155,7 @@ hg_torrent_collect() {
             HG_TORRENT_EGRESS_IPV4="$cache_ipv4"
             HG_TORRENT_EGRESS_SOURCE='cache'
             HG_TORRENT_EGRESS_CHECKED_AT="$cache_checked_at"
+            HG_TORRENT_EGRESS_PROVIDER="$cache_provider"
             HG_TORRENT_STATE='OK'
             return 0
         fi
@@ -155,6 +164,7 @@ hg_torrent_collect() {
     HG_TORRENT_EGRESS_CHECKED_AT="$now"
 
     if command -v curl >/dev/null 2>&1 && [ -n "$HG_TORRENT_SOCKS_PORT" ]; then
+        HG_TORRENT_EGRESS_PROBE_ATTEMPTS='1'
         torrent_ipv4="$(
             curl -4 -fsS \
                 --socks5-hostname "${HG_TORRENT_SOCKS_HOST}:${HG_TORRENT_SOCKS_PORT}" \
@@ -167,13 +177,39 @@ hg_torrent_collect() {
         if hg_torrent_is_ipv4 "$torrent_ipv4"; then
             HG_TORRENT_EGRESS_IPV4="$torrent_ipv4"
             HG_TORRENT_EGRESS_SOURCE='live_probe'
+            HG_TORRENT_EGRESS_PROVIDER="$primary_provider"
             HG_TORRENT_EGRESS_STATE='OK'
             HG_TORRENT_STATE='OK'
 
             if [ -n "$now" ]; then
-                printf '%s %s\n' "$now" "$torrent_ipv4" >"$egress_cache_file" 2>/dev/null || true
+                printf '%s %s %s\n' "$now" "$torrent_ipv4" "$primary_provider" >"$egress_cache_file" 2>/dev/null || true
             fi
             return 0
+        fi
+
+        if [ -n "$secondary_probe_url" ] && [ "$secondary_probe_url" != "$egress_probe_url" ]; then
+            HG_TORRENT_EGRESS_PROBE_ATTEMPTS='2'
+            torrent_ipv4="$(
+                curl -4 -fsS \
+                    --socks5-hostname "${HG_TORRENT_SOCKS_HOST}:${HG_TORRENT_SOCKS_PORT}" \
+                    --connect-timeout 2 \
+                    --max-time 6 \
+                    "$secondary_probe_url" 2>/dev/null |
+                    awk 'NR == 1 { gsub(/[[:space:]]/, ""); print; exit }' || true
+            )"
+
+            if hg_torrent_is_ipv4 "$torrent_ipv4"; then
+                HG_TORRENT_EGRESS_IPV4="$torrent_ipv4"
+                HG_TORRENT_EGRESS_SOURCE='live_probe'
+                HG_TORRENT_EGRESS_PROVIDER="$secondary_provider"
+                HG_TORRENT_EGRESS_STATE='OK'
+                HG_TORRENT_STATE='OK'
+
+                if [ -n "$now" ]; then
+                    printf '%s %s %s\n' "$now" "$torrent_ipv4" "$secondary_provider" >"$egress_cache_file" 2>/dev/null || true
+                fi
+                return 0
+            fi
         fi
     fi
 
@@ -181,6 +217,7 @@ hg_torrent_collect() {
         HG_TORRENT_EGRESS_IPV4="$cache_ipv4"
         HG_TORRENT_EGRESS_SOURCE='stale_cache'
         HG_TORRENT_EGRESS_CHECKED_AT="$cache_checked_at"
+        HG_TORRENT_EGRESS_PROVIDER="$cache_provider"
     fi
 
     # Локальный Xray работает, но внешний Torrent egress сейчас не подтверждён.

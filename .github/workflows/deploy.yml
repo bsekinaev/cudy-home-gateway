@@ -1,0 +1,109 @@
+name: Deploy CUDY
+run-name: CUDY ${{ inputs.operation }} — ${{ inputs.commit || 'current installation' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'plan = read-only; apply = install; rollback = previous code; recover = interrupted install'
+        type: choice
+        options: [plan, apply, status, rollback, recover]
+        default: plan
+        required: true
+      ci_run_id:
+        description: 'Successful CI run ID (required for plan/apply)'
+        type: string
+      commit:
+        description: 'Full 40-character commit SHA of that CI run (required for plan/apply)'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: cudy-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Controlled CUDY deployment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: production
+    env:
+      OPERATION: ${{ inputs.operation }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      CI_RUN_ID: ${{ inputs.ci_run_id }}
+      ALLOWED_REF: ${{ vars.CD_ALLOWED_REF || 'refs/heads/main' }}
+    steps:
+      - name: Enforce trusted workflow branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "$ALLOWED_REF" ]]
+          [[ "$ALLOWED_REF" == refs/heads/* ]]
+
+      - name: Checkout trusted deployment tools
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify successful CI release
+        id: release
+        if: inputs.operation == 'plan' || inputs.operation == 'apply'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/deploy/fetch_release.py \
+            --run-id "$CI_RUN_ID" --commit "$RELEASE_COMMIT" \
+            --branch "${ALLOWED_REF#refs/heads/}"
+
+      - name: Join deployment tailnet identity
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_CD_CLIENT_ID }}
+          audience: ${{ secrets.TS_CD_AUDIENCE }}
+          tags: tag:cd
+          version: 1.94.2
+          ping: 100.84.35.92
+
+      - name: Prepare deployment SSH identity
+        env:
+          DEPLOY_KEY: ${{ secrets.CUDY_CD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.CUDY_CD_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/cudy-cd"
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/cudy-cd/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/cudy-cd/known_hosts"
+          ssh-keygen -y -P '' -f "$RUNNER_TEMP/cudy-cd/key" >/dev/null
+          ssh-keygen -F '[100.84.35.92]:2223' -f "$RUNNER_TEMP/cudy-cd/known_hosts" >/dev/null
+
+      - name: Execute bounded deployment command
+        env:
+          RELEASE_ARCHIVE: ${{ steps.release.outputs.archive }}
+          RELEASE_SHA256: ${{ steps.release.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=("$OPERATION" --key "$RUNNER_TEMP/cudy-cd/key" --known-hosts "$RUNNER_TEMP/cudy-cd/known_hosts")
+          if [[ "$OPERATION" == plan || "$OPERATION" == apply ]]; then
+            args+=(--archive "$RELEASE_ARCHIVE" --commit "$RELEASE_COMMIT" --sha256 "$RELEASE_SHA256")
+          fi
+          python3 scripts/deploy/transport.py "${args[@]}" 2>&1 | tee deploy-result.txt
+
+      - name: Publish deployment result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cudy-deployment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: deploy-result.txt
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Remove SSH material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/cudy-cd"

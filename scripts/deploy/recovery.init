@@ -1,0 +1,6 @@
+#!/bin/sh /etc/rc.common
+START=94
+STOP=9
+start() {
+    /bin/sh /usr/libexec/home-gateway-deploy/engine.sh recover >> /etc/home-gateway-deploy/boot-recovery.log 2>&1
+}

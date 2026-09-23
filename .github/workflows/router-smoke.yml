@@ -1,0 +1,70 @@
+name: Router Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/health-alerts
+    paths:
+      - .github/workflows/router-smoke.yml
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cudy-router-readonly-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Read-only CUDY smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Join tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:ci
+          ping: 100.84.35.92
+
+      - name: Configure pinned SSH identity
+        shell: bash
+        env:
+          CUDY_CI_SSH_KEY: ${{ secrets.CUDY_CI_SSH_KEY }}
+          CUDY_SSH_KNOWN_HOSTS: ${{ secrets.CUDY_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          install -d -m 700 "${HOME}/.ssh"
+          printf '%s\n' "${CUDY_CI_SSH_KEY}" > "${HOME}/.ssh/cudy_ci"
+          printf '%s\n' "${CUDY_SSH_KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 600 "${HOME}/.ssh/cudy_ci" "${HOME}/.ssh/known_hosts"
+
+          test -s "${HOME}/.ssh/cudy_ci"
+          test -s "${HOME}/.ssh/known_hosts"
+
+      - name: Run forced read-only smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          output="$(
+            ssh \
+              -p 2222 \
+              -i "${HOME}/.ssh/cudy_ci" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o PasswordAuthentication=no \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+              -o ConnectTimeout=10 \
+              root@100.84.35.92 \
+              smoke
+          )"
+
+          printf '%s\n' "${output}"
+          grep -q '^ROUTER_SMOKE_RESULT=PASS$' <<<"${output}"

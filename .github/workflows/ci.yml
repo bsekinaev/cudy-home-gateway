@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate control plane
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    env:
+      # Exact ucode revision validated on the target CUDY/OpenWrt runtime.
+      UCODE_REV: 85922056ef7abeace3cca3ab28bc1ac2d88e31b1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check changed-file whitespace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
+            git fetch --no-tags origin "${GITHUB_BASE_REF}"
+            git diff --check "origin/${GITHUB_BASE_REF}...HEAD"
+          elif git rev-parse HEAD^ >/dev/null 2>&1; then
+            git diff --check HEAD^ HEAD
+          else
+            git show --check --format= HEAD
+          fi
+
+      - name: Install ucode build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            busybox \
+            build-essential \
+            cmake \
+            pkg-config \
+            libjson-c-dev \
+            libmd-dev \
+            zlib1g-dev
+
+      - name: Build target-compatible ucode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git clone --filter=blob:none https://github.com/jow-/ucode.git /tmp/ucode
+          git -C /tmp/ucode checkout --detach "${UCODE_REV}"
+
+          cmake \
+            -S /tmp/ucode \
+            -B /tmp/ucode-build \
+            -DFS_SUPPORT=ON \
+            -DMATH_SUPPORT=ON \
+            -DSTRUCT_SUPPORT=ON \
+            -DUBUS_SUPPORT=OFF \
+            -DUCI_SUPPORT=OFF \
+            -DULOOP_SUPPORT=OFF \
+            -DNL80211_SUPPORT=OFF \
+            -DRESOLV_SUPPORT=OFF \
+            -DRTNL_SUPPORT=OFF
+
+          cmake --build /tmp/ucode-build --parallel 2
+          sudo cmake --install /tmp/ucode-build
+          sudo ldconfig
+
+          ucode -e 'print("ucode-ci-ok\n")'
+
+      - name: Run repository CI checks
+        run: ./scripts/ci/check.sh
+
+      - name: Test release bundle builder
+        run: python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
+
+      - name: Test deployment and crash recovery (BusyBox ash)
+        env:
+          HG_TEST_SHELL: busybox ash
+          HG_TEST_BUSYBOX: busybox
+        run: python3 -m unittest discover -s scripts/deploy -p 'test_*.py' -v
+
+      - name: Build release bundle
+        run: python3 scripts/release/build.py --ref HEAD --output dist
+
+      - name: Verify release archive checksum
+        working-directory: dist
+        run: sha256sum -c *.sha256
+
+      - name: Verify complete release format
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=(dist/*.tar.gz)
+          read -r digest _ < "${archive[0]}.sha256"
+          python3 scripts/release/verify.py "${archive[0]}" --commit "$GITHUB_SHA" --sha256 "$digest"
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: home-gateway-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

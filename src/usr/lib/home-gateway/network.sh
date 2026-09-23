@@ -38,12 +38,16 @@ hg_network_collect() {
     HG_NETWORK_DIRECT_STATE='UNKNOWN'
     HG_NETWORK_DIRECT_IPV4=''
     HG_NETWORK_DIRECT_SOURCE='live_probe'
-    HG_NETWORK_DIRECT_PROVIDER="${HG_EGRESS_PROVIDER:-api.ipify.org}"
+    primary_provider="${HG_EGRESS_PROVIDER:-api.ipify.org}"
+    secondary_provider="${HG_EGRESS_SECONDARY_PROVIDER:-ipv4.icanhazip.com}"
+    HG_NETWORK_DIRECT_PROVIDER=''
     HG_NETWORK_DIRECT_CHECKED_AT=''
+    HG_NETWORK_DIRECT_PROBE_ATTEMPTS='0'
 
     egress_cache_file="${HG_EGRESS_CACHE_FILE:-/tmp/home-gateway-direct-egress.cache}"
     egress_cache_ttl="${HG_EGRESS_CACHE_TTL:-300}"
     egress_probe_url="${HG_EGRESS_PROBE_URL:-https://api.ipify.org}"
+    secondary_probe_url="${HG_EGRESS_SECONDARY_PROBE_URL:-https://ipv4.icanhazip.com/}"
 
     case "$egress_cache_ttl" in
         ''|*[!0-9]*) egress_cache_ttl=300 ;;
@@ -121,16 +125,19 @@ hg_network_collect() {
 
     cache_checked_at=''
     cache_ipv4=''
+    cache_provider=''
     if [ -r "$egress_cache_file" ]; then
-        set -- $(awk 'NR == 1 { print $1, $2; exit }' "$egress_cache_file" 2>/dev/null || true)
+        set -- $(awk 'NR == 1 { print $1, $2, $3; exit }' "$egress_cache_file" 2>/dev/null || true)
         cache_checked_at="${1:-}"
         cache_ipv4="${2:-}"
+        cache_provider="${3:-}"
 
         case "$cache_checked_at" in
             ''|*[!0-9]*) cache_checked_at='' ;;
         esac
         if ! hg_network_is_ipv4 "$cache_ipv4"; then
             cache_ipv4=''
+            cache_provider=''
         fi
     fi
 
@@ -141,6 +148,7 @@ hg_network_collect() {
             HG_NETWORK_DIRECT_IPV4="$cache_ipv4"
             HG_NETWORK_DIRECT_SOURCE='cache'
             HG_NETWORK_DIRECT_CHECKED_AT="$cache_checked_at"
+            HG_NETWORK_DIRECT_PROVIDER="$cache_provider"
             return 0
         fi
     fi
@@ -148,7 +156,8 @@ hg_network_collect() {
     HG_NETWORK_DIRECT_CHECKED_AT="$now"
 
     if [ -n "$HG_NETWORK_WAN_DEVICE" ] && command -v curl >/dev/null 2>&1; then
-        direct_ipv4="$(
+        HG_NETWORK_DIRECT_PROBE_ATTEMPTS='1'
+        probe_ipv4="$(
             curl -4 -fsS \
                 --interface "$HG_NETWORK_WAN_DEVICE" \
                 --connect-timeout 2 \
@@ -157,15 +166,40 @@ hg_network_collect() {
                 awk 'NR == 1 { gsub(/[[:space:]]/, ""); print; exit }' || true
         )"
 
-        if hg_network_is_ipv4 "$direct_ipv4"; then
-            HG_NETWORK_DIRECT_IPV4="$direct_ipv4"
+        if hg_network_is_ipv4 "$probe_ipv4"; then
+            HG_NETWORK_DIRECT_IPV4="$probe_ipv4"
             HG_NETWORK_DIRECT_SOURCE='live_probe'
+            HG_NETWORK_DIRECT_PROVIDER="$primary_provider"
             HG_NETWORK_DIRECT_STATE='OK'
 
             if [ -n "$now" ]; then
-                printf '%s %s\n' "$now" "$direct_ipv4" >"$egress_cache_file" 2>/dev/null || true
+                printf '%s %s %s\n' "$now" "$probe_ipv4" "$primary_provider" >"$egress_cache_file" 2>/dev/null || true
             fi
             return 0
+        fi
+
+        if [ -n "$secondary_probe_url" ] && [ "$secondary_probe_url" != "$egress_probe_url" ]; then
+            HG_NETWORK_DIRECT_PROBE_ATTEMPTS='2'
+            probe_ipv4="$(
+                curl -4 -fsS \
+                    --interface "$HG_NETWORK_WAN_DEVICE" \
+                    --connect-timeout 2 \
+                    --max-time 4 \
+                    "$secondary_probe_url" 2>/dev/null |
+                    awk 'NR == 1 { gsub(/[[:space:]]/, ""); print; exit }' || true
+            )"
+
+            if hg_network_is_ipv4 "$probe_ipv4"; then
+                HG_NETWORK_DIRECT_IPV4="$probe_ipv4"
+                HG_NETWORK_DIRECT_SOURCE='live_probe'
+                HG_NETWORK_DIRECT_PROVIDER="$secondary_provider"
+                HG_NETWORK_DIRECT_STATE='OK'
+
+                if [ -n "$now" ]; then
+                    printf '%s %s %s\n' "$now" "$probe_ipv4" "$secondary_provider" >"$egress_cache_file" 2>/dev/null || true
+                fi
+                return 0
+            fi
         fi
     fi
 
@@ -175,5 +209,6 @@ hg_network_collect() {
         HG_NETWORK_DIRECT_IPV4="$cache_ipv4"
         HG_NETWORK_DIRECT_SOURCE='stale_cache'
         HG_NETWORK_DIRECT_CHECKED_AT="$cache_checked_at"
+        HG_NETWORK_DIRECT_PROVIDER="$cache_provider"
     fi
 }

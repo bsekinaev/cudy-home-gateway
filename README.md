@@ -30,17 +30,21 @@
 
 ## Статус
 
-`0.4 — Telegram read-only / completed`
+`0.5 — Health & Alerts / in progress`
 
-Реализован приватный Telegram control plane с long polling, whitelist user/chat и русским inline dashboard. `/status` показывает живой статус Gateway, кнопка `🔄 Обновить` редактирует существующее сообщение, callback защищён TTL и nonce/replay-проверкой. Poller работает как singleton procd service с respawn и autostart. Data plane не изменялся.
+Health Core нормализует WAN, DNS, MAIN и service/policy observations. Incident State добавляет debounce/hysteresis и persistent journal. Текущая итерация добавляет adaptive external confirmation: secondary egress provider вызывается только после неуспешного primary probe. Data plane не изменяется.
 
-Следующий этап — `0.5 Health & Alerts`.
+Текущая ветка разработки — `feature/health-alerts`.
 
 ## Документация
 
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Инженерные решения](docs/DECISIONS.md)
 - [План релизов](docs/ROADMAP.md)
+- [Health Core](docs/HEALTH.md)
+- [Incident State](docs/INCIDENTS.md)
+- [Adaptive External Probes](docs/ADAPTIVE_PROBES.md)
+- [CI/CD](docs/CI_CD.md)
 - [Telegram read-only](docs/TELEGRAM.md)
 - [Результаты preflight](docs/PREFLIGHT.md)
 
