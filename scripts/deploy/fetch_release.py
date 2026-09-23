@@ -29,7 +29,10 @@ def main():
     p.add_argument('--branch', required=True)
     p.add_argument('--output', type=Path, default=Path('release-download'))
     args = p.parse_args()
-    if not re.fullmatch(r'[0-9]+', args.run_id) or not re.fullmatch(r'[0-9a-f]{40}', args.commit):
+    if (
+            not re.fullmatch(r'[0-9]+', args.run_id)
+            or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', args.commit)
+    ):
         p.error('Numeric run ID and full lowercase commit SHA are required')
     repo = os.environ['GITHUB_REPOSITORY']
     run = api(f'repos/{repo}/actions/runs/{args.run_id}')
