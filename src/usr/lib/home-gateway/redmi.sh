@@ -1,5 +1,5 @@
 #!/bin/sh
-# Read-only статус Redmi VPN-only policy CUDY Home Gateway.
+# Read-only ╤Б╤В╨░╤В╤Г╤Б Redmi VPN-only policy CUDY Home Gateway.
 
 hg_redmi_is_ipv4() {
     value="$1"
@@ -19,12 +19,9 @@ hg_redmi_is_mac() {
     value="$1"
 
     printf '%s\n' "$value" | awk '
-        /^[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]$/ {
-            exit 0
-        }
-        {
-            exit 1
-        }
+        BEGIN { IGNORECASE = 1 }
+        $0 ~ /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/ { exit 0 }
+        { exit 1 }
     '
 }
 
@@ -144,8 +141,8 @@ hg_redmi_collect() {
         esac
     fi
 
-    # У ACL нет отдельного SOCKS endpoint, поэтому egress с роутера
-    # безопасно не подменяем egress'ом MAIN и оставляем UNKNOWN.
+    # ╨г ACL ╨╜╨╡╤В ╨╛╤В╨┤╨╡╨╗╤М╨╜╨╛╨│╨╛ SOCKS endpoint, ╨┐╨╛╤Н╤В╨╛╨╝╤Г egress ╤Б ╤А╨╛╤Г╤В╨╡╤А╨░
+    # ╨▒╨╡╨╖╨╛╨┐╨░╤Б╨╜╨╛ ╨╜╨╡ ╨┐╨╛╨┤╨╝╨╡╨╜╤П╨╡╨╝ egress'╨╛╨╝ MAIN ╨╕ ╨╛╤Б╤В╨░╨▓╨╗╤П╨╡╨╝ UNKNOWN.
     case "$HG_REDMI_CONFIG_STATE" in
         DOWN)
             HG_REDMI_STATE='DOWN'
