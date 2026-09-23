@@ -69,3 +69,20 @@ Journal является persistent source of truth. Активные incidents 
 Начиная с `0.5.3`, egress adapters используют adaptive confirmation: secondary provider вызывается только после неуспешного primary probe. Incident State получает уже подтверждённую observation и не зависит от конкретного HTTP provider.
 
 Следующий слой — persistent notification queue, подписанная на journal transitions.
+
+## Notification Projection
+
+Incident Engine не отправляет уведомления напрямую.
+
+После формирования события:
+
+OPEN
+STATE_CHANGED
+RECOVERED
+
+создаётся notification record.
+
+Это позволяет:
+- повторять доставку;
+- менять транспорт уведомлений;
+- не связывать state machine с Telegram.
