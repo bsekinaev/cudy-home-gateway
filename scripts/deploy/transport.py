@@ -13,8 +13,8 @@ from verify import verify
 
 PATHS = ['etc/init.d/home-gateway-telegram', 'usr/bin/gateway', 'usr/bin/home-gateway-ci-smoke'] + [
     'usr/lib/home-gateway/' + n for n in (
-        'asata.sh', 'common.sh', 'dns.sh', 'doctor.sh', 'health.sh', 'incidents.uc', 'notifications.uc',
-        'network.sh', 'redmi.sh', 'selftest.sh', 'status.sh', 'tailscale.sh',
+        'asata.sh', 'common.sh', 'dns.sh', 'doctor.sh', 'health.sh', 'incidents.uc',
+        'network.sh','notifications.uc', 'redmi.sh', 'selftest.sh', 'status.sh', 'tailscale.sh',
         'telegram-poller.uc', 'telegram.sh', 'torrent.sh', 'vpn.sh')]
 
 
