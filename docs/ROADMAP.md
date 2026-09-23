@@ -2,88 +2,122 @@
 
 ## 0.1 — Foundation ✅
 
-- read-only preflight целевого роутера;
-- фиксация runtime и ограничений;
-- структура проекта;
-- базовые правила безопасности и хранения секретов.
+* read-only preflight целевого роутера;
+* фиксация runtime и ограничений;
+* структура проекта;
+* базовые правила безопасности и хранения секретов.
 
 **Статус:** завершён 21.09.2026. Data plane не изменялся.
 
+---
+
 ## 0.2 — Gateway CLI ✅
 
-- `gateway status`;
-- `gateway status --json`;
-- `gateway doctor`;
-- `gateway selftest`.
+* `gateway status`;
+* `gateway status --json`;
+* `gateway doctor`;
+* `gateway selftest`.
 
 **Статус:** завершён 21.09.2026. Regression-test: `version`, `status`, `status --json`, `doctor`, `selftest` — успешно; data plane не изменялся.
 
+---
+
 ## 0.3 — Status & System ✅
 
-- WAN, DNS, MAIN, egress;
-- Torrent, Redmi, ASATA, Tailscale;
-- uptime, load, RAM, flash, time sync;
-- состояния OK/DEGRADED/DOWN/UNKNOWN/MAINTENANCE.
+* WAN, DNS, MAIN, egress;
+* Torrent, Redmi, ASATA, Tailscale;
+* uptime, load, RAM, flash, time sync;
+* состояния OK/DEGRADED/DOWN/UNKNOWN/MAINTENANCE.
 
 **Статус:** завершён 21.09.2026. Human/JSON status, fault-injection negative-tests, `doctor` и `selftest` проверены на целевом CUDY; data plane не изменялся.
 
+---
+
 ## 0.4 — Telegram read-only ✅
 
-- BotFather и secrets provisioning;
-- long polling;
-- русский inline dashboard;
-- whitelist user/chat;
-- защита от replay и устаревших callbacks.
+* BotFather и secrets provisioning;
+* long polling;
+* русский inline dashboard;
+* whitelist user/chat;
+* защита от replay и устаревших callbacks.
 
 **Статус:** завершён 22.09.2026. На целевом CUDY проверены long polling, inline refresh через `editMessageText`, whitelist, stale/replay/TTL callbacks, singleton lock, procd respawn и autostart. Data plane не изменялся.
 
-## 0.5 — Health & Alerts ← текущий этап
+---
 
-- Health Core: нормализованные local/service observations ✅;
-- incident journal + hysteresis/debounce ✅;
-- freshness-aware и адаптивные внешние проверки ← текущая итерация;
-- persistent notification queue и queued recovery summary;
-- Telegram delivery: MAIN SOCKS → Torrent SOCKS fallback;
-- mute и категории уведомлений;
-- hardening до релиза: sysupgrade persistence и ASATA keeper semantics;
-- CI checkpoint: GitHub Actions static/runtime-contract checks ✅;
-- CD checkpoint: read-only Tailscale router smoke проверен;
-- release bundle: сборщик, manifest/SHA256, строгая проверка и CI artifact проверены;
-- controlled install/rollback и workflow CD реализованы; активация и приёмка на CUDY ожидаются (docs/DEPLOYMENT.md).
+# 0.5 — Health & Alerts ← текущий этап
+
+## Реализовано ✅
+
+* Health Core: нормализованные local/service observations;
+* incident journal + hysteresis/debounce;
+* freshness-aware и адаптивные внешние проверки;
+* persistent notification queue;
+* queued notification projection из incident events;
+* CI checkpoint: GitHub Actions static/runtime-contract checks;
+* CD checkpoint: read-only Tailscale router smoke проверен;
+* release bundle: сборщик, manifest/SHA256, строгая проверка и CI artifact проверены;
+* controlled install/rollback и workflow CD реализованы.
+
+## В работе
+
+* notification dispatcher;
+* Telegram delivery adapters;
+* MAIN SOCKS → Torrent SOCKS fallback;
+* queued recovery summary;
+* mute и категории уведомлений;
+* hardening до релиза:
+
+  * sysupgrade persistence;
+  * ASATA keeper semantics.
+
+## Приёмка
+
+* активация и финальная приёмка на CUDY ожидаются (`docs/DEPLOYMENT.md`).
+
+---
 
 ## 0.6 — vtest
 
-- чтение текущего cron-run;
-- история результатов;
-- quick/full/capability запуск;
-- уведомления без автоматической смены MAIN.
+* чтение текущего cron-run;
+* история результатов;
+* quick/full/capability запуск;
+* уведомления без автоматической смены MAIN.
+
+---
 
 ## 0.7 — Safe Actions
 
-- подтверждения;
-- action locks;
-- безопасные restart отдельных компонентов;
-- MAINTENANCE-state.
+* подтверждения;
+* action locks;
+* безопасные restart отдельных компонентов;
+* MAINTENANCE-state.
+
+---
 
 ## 0.8 — Transactions
 
-- preflight ноды;
-- snapshot;
-- смена MAIN;
-- post-check;
-- transaction journal;
-- rollback после ошибки/crash.
+* preflight ноды;
+* snapshot;
+* смена MAIN;
+* post-check;
+* transaction journal;
+* rollback после ошибки/crash.
+
+---
 
 ## 0.9 — Backup & Hardening
 
-- sysupgrade backup;
-- SHA256 и проверка архива;
-- ротация последних 5 архивов;
-- audit log;
-- release rollback самого control plane.
+* sysupgrade backup;
+* SHA256 и проверка архива;
+* ротация последних 5 архивов;
+* audit log;
+* release rollback самого control plane.
+
+---
 
 ## 1.0 — Stable
 
-- soak-test без функциональных изменений;
-- документация установки и восстановления;
-- демонстрационный сценарий для портфолио.
+* soak-test без функциональных изменений;
+* документация установки и восстановления;
+* демонстрационный сценарий для портфолио.
