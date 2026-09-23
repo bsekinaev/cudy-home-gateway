@@ -19,9 +19,12 @@ hg_redmi_is_mac() {
     value="$1"
 
     printf '%s\n' "$value" | awk '
-        BEGIN { IGNORECASE = 1 }
-        $0 ~ /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/ { exit 0 }
-        { exit 1 }
+        /^[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]$/ {
+            exit 0
+        }
+        {
+            exit 1
+        }
     '
 }
 
