@@ -88,3 +88,21 @@ jobs:
 
       - name: Run repository CI checks
         run: ./scripts/ci/check.sh
+
+      - name: Test release bundle builder
+        run: python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
+
+      - name: Build release bundle
+        run: python3 scripts/release/build.py --ref HEAD --output dist
+
+      - name: Verify release archive checksum
+        working-directory: dist
+        run: sha256sum -c *.sha256
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: home-gateway-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

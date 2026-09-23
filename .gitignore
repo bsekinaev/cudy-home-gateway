@@ -30,3 +30,8 @@ preflight-*.txt
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Release output and Python caches
+dist/
+__pycache__/
+*.pyc

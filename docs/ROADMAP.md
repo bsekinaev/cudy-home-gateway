@@ -47,7 +47,9 @@
 - mute и категории уведомлений;
 - hardening до релиза: sysupgrade persistence и ASATA keeper semantics;
 - CI checkpoint: GitHub Actions static/runtime-contract checks ✅;
-- CD checkpoint: read-only Tailscale router smoke → atomic deploy/rollback later.
+- CD checkpoint: read-only Tailscale router smoke проверен;
+- release bundle: сборщик, manifest/SHA256 и CI artifact добавлены; проверка CI после push;
+- controlled install и rollback — следующий CD checkpoint.
 
 ## 0.6 — vtest
 
