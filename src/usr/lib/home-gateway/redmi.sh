@@ -18,22 +18,26 @@ hg_redmi_is_ipv4() {
 hg_redmi_is_mac() {
     value="$1"
 
-    printf '%s\n' "$value" | awk -F: '
-        NF != 6 {
-            exit 1
-        }
+    case "$value" in
+        ??\:??\:??\:??\:??\:??)
+            oldifs="$IFS"
+            IFS=:
+            set -- $value
+            IFS="$oldifs"
 
-        {
-            for (i = 1; i <= 6; i++) {
-                if ($i !~ /^[0-9A-Fa-f][0-9A-Fa-f]$/)
-                    exit 1
-            }
-        }
+            for octet do
+                case "$octet" in
+                    [0-9a-fA-F][0-9a-fA-F]) ;;
+                    *) return 1 ;;
+                esac
+            done
 
-        END {
-            exit 0
-        }
-    '
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 hg_redmi_process_running() {
