@@ -92,6 +92,15 @@ ucode \
     grep -q '^incidents-selftest: PASS$' ||
     fail 'Incident Engine deterministic selftest'
 pass 'Incident Engine deterministic selftest'
+# Deterministic notification projection contract.
+ucode \
+    src/usr/lib/home-gateway/notifications.uc \
+    src/usr/bin/gateway \
+    selftest |
+    grep -q '^notifications-selftest: PASS$' ||
+    fail 'Notification Engine deterministic selftest'
+
+pass 'Notification Engine deterministic selftest'
 
 # Ensure public runtime never contains universal remote shell primitives.
 if git grep -n -I -E \

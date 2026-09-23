@@ -103,6 +103,32 @@ main() {
                 return "$HG_EXIT_USAGE"
             fi
             ;;
+        notifications)
+            notifications_engine="${HG_LIBDIR}/notifications.uc"
+
+            if [ ! -r "$notifications_engine" ]; then
+                hg_error "не найден модуль: $notifications_engine"
+                return "$HG_EXIT_SOFTWARE"
+            fi
+
+            if ! command -v ucode >/dev/null 2>&1; then
+                hg_error 'ucode не найден'
+                return "$HG_EXIT_SOFTWARE"
+            fi
+
+            if [ "$#" -eq 1 ]; then
+                ucode "$notifications_engine" "$0" show
+            elif [ "$#" -eq 2 ] && [ "$2" = '--json' ]; then
+                ucode "$notifications_engine" "$0" json
+            elif [ "$#" -eq 2 ] && [ "$2" = 'sync' ]; then
+                ucode "$notifications_engine" "$0" sync
+            elif [ "$#" -eq 2 ] && [ "$2" = 'selftest' ]; then
+                ucode "$notifications_engine" "$0" selftest
+            else
+                hg_error 'использование: gateway notifications [--json|sync|selftest]'
+                return "$HG_EXIT_USAGE"
+            fi
+            ;;
         telegram)
             hg_load_module telegram
 
