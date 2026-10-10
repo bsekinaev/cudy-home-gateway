@@ -144,10 +144,11 @@ hg_doctor_tailscale() {
 }
 
 hg_doctor_asata() {
-    if nft -a list chain inet passwall2 PSW2_MANGLE 2>/dev/null | grep -q 'ASATA-UDP-DIRECT'; then
-        hg_doctor_result OK 'ASATA UDP DIRECT' 'правило присутствует'
+    hg_load_module asata
+    if hg_asata_keeper check >/dev/null 2>&1; then
+        hg_doctor_result OK 'ASATA UDP DIRECT' 'точное правило первым в цепочке'
     else
-        hg_doctor_result FAIL 'ASATA UDP DIRECT' 'правило не найдено'
+        hg_doctor_result FAIL 'ASATA UDP DIRECT' 'семантика или порядок правила не подтверждены'
     fi
 }
 

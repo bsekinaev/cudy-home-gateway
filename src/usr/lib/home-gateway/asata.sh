@@ -83,6 +83,7 @@ hg_asata_collect() {
         set -- $(
             nft -a list chain inet passwall2 PSW2_MANGLE 2>/dev/null |
                 awk -v ip="$HG_ASATA_CLIENT_IPV4" -v comment="$HG_ASATA_RULE_COMMENT" '
+                    /# handle [0-9]+[ \t]*$/ && $1 != "chain" && $1 != "table" { rule_position++ }
                     index($0, "comment \"" comment "\"") {
                         comment_rules++
                         # Exact canonical nft expression, not substring matches.
@@ -99,12 +100,13 @@ hg_asata_collect() {
                             fields[11] ~ /^[0-9]+$/ && fields[12] == "return" &&
                             fields[13] == "comment" && fields[14] == "\"" comment "\"") {
                             valid_rules++
+                            if (rule_position == 1) valid_first=1
                             packets += fields[9]
                             bytes += fields[11]
                         }
                     }
                     END {
-                        print comment_rules + 0, valid_rules + 0, packets + 0, bytes + 0
+                        print comment_rules + 0, valid_rules + 0, packets + 0, bytes + 0, valid_first + 0
                     }
                 '
         )
@@ -114,7 +116,7 @@ hg_asata_collect() {
         HG_ASATA_RULE_PACKETS="${3:-}"
         HG_ASATA_RULE_BYTES="${4:-}"
 
-        if [ "$HG_ASATA_RULES" = '1' ] && [ "$HG_ASATA_VALID_RULES" = '1' ]; then
+        if [ "$HG_ASATA_RULES" = '1' ] && [ "$HG_ASATA_VALID_RULES" = '1' ] && [ "${5:-0}" = 1 ]; then
             HG_ASATA_RULE_STATE='OK'
         elif [ "$HG_ASATA_VALID_RULES" = '0' ]; then
             HG_ASATA_RULE_STATE='DOWN'
@@ -156,3 +158,107 @@ hg_asata_collect() {
         HG_ASATA_STATE='OK'
     fi
 }
+
+# Independent keeper implementation. Repair is local opt-in, never exposed by Telegram.
+# Replaces the old worker only after owner approval; running both is unsupported.
+hg_asata_keeper() (
+    mode="$1"
+    case "$mode" in check|repair) ;; *) exit 2 ;; esac
+    if [ "$mode" = repair ] && [ "${HG_ASATA_KEEPER_AUTHORIZED:-0}" != 1 ]; then
+        printf 'ASATA_KEEPER=DISABLED\n'
+        exit 70
+    fi
+    umask 077
+    runtime="${HG_ASATA_KEEPER_RUNTIME_DIR:-/tmp/home-gateway}"
+    mkdir -p "$runtime" || exit 70
+    [ ! -L "$runtime" ] && [ -d "$runtime" ] || exit 70
+    chmod 700 "$runtime" || exit 70
+    # Kernel lock has no PID file to become stale. Child nft is bounded to 5 seconds.
+    [ ! -L "$runtime/asata-keeper.lock" ] || exit 70
+    exec 9>"$runtime/asata-keeper.lock" || exit 70
+    chmod 600 "$runtime/asata-keeper.lock" || exit 70
+    flock -n 9 || exit 73
+    work="$(mktemp -d "$runtime/asata-keeper.XXXXXX")" || exit 70
+    trap 'rm -rf "$work"' EXIT
+    trap 'exit 70' INT TERM
+    set -o pipefail
+    hg_asata_keeper_capture "$work/chain" || exit 70
+    # Only marked rules may be removed. Invalid handles or missing chain abort.
+    hg_asata_keeper_plan "$work/chain" > "$work/batch" || exit 70
+    if [ "$(head -n 1 "$work/batch")" = OK ]; then
+        printf 'ASATA_KEEPER=OK\n'
+        exit 0
+    fi
+    if [ "$mode" = check ]; then
+        printf 'ASATA_KEEPER=NEEDS_REPAIR\n'
+        exit 1
+    fi
+    # Concurrent chain recreation/deletion makes the batch fail, without partial deletion.
+    timeout 5 nft -f "$work/batch" >/dev/null 2>&1 || exit 70
+    hg_asata_keeper_capture "$work/verified" || exit 70
+    hg_asata_keeper_plan "$work/verified" > "$work/postcheck" || exit 70
+    [ "$(cat "$work/postcheck")" = OK ] || exit 70
+    logger -t home-gateway-asata 'atomic rule repair completed' 2>/dev/null || true
+    printf 'ASATA_KEEPER=REPAIRED\n'
+)
+
+# Helpers used only with private generated paths from the locked keeper.
+hg_asata_keeper_capture() {
+    timeout 5 nft -a list chain inet passwall2 PSW2_MANGLE 2>/dev/null |
+        head -c 65537 > "$1" || return 70
+    captured_size="$(stat -c %s "$1")" || return 70
+    [ "$captured_size" -le 65536 ]
+}
+
+hg_asata_keeper_plan() {
+    awk '
+        /^[ \t]*table inet passwall2[ \t]*\{/ { tables++; next }
+        /^[ \t]*}[ \t]*$/ { closes++; next }
+        /^[ \t]*chain PSW2_MANGLE[ \t]*\{/ { chains++; next }
+        /# handle [0-9]+[ \t]*$/ {
+            if ($1 == "table" || $1 == "chain") next
+            position++
+            if (!index($0, "comment \"ASATA-UDP-DIRECT\"")) next
+            marked++
+            line=$0; sub(/^[ \t]+/, "", line)
+            handle=$NF
+            if (handle !~ /^[0-9]+$/ || length(handle)>10 || seen[handle]++) { bad=1; next }
+            sub(/[ \t]+# handle [0-9]+[ \t]*$/, "", line)
+            n=split(line,f,/[ \t]+/)
+            if (position == 1 && n == 14 && f[1] == "ip" && f[2] == "saddr" &&
+                f[3] == "192.168.1.140" && f[4] == "meta" && f[5] == "l4proto" &&
+                f[6] == "udp" && f[7] == "counter" && f[8] == "packets" &&
+                f[9] ~ /^[0-9]+$/ && f[10] == "bytes" && f[11] ~ /^[0-9]+$/ &&
+                f[12] == "return" && f[13] == "comment" && f[14] == "\"ASATA-UDP-DIRECT\"") valid++
+            deletes=deletes "delete rule inet passwall2 PSW2_MANGLE handle " handle "\n"
+        }
+        index($0,"comment \"ASATA-UDP-DIRECT\"") && $0 !~ /# handle [0-9]+[ \t]*$/ { bad=1 }
+        $0 !~ /# handle [0-9]+[ \t]*$/ && $0 !~ /^[ \t]*(type |policy |$)/ { bad=1 }
+        END {
+            if (tables != 1 || chains != 1 || closes != 2 || bad || marked > 32) exit 1
+            if (marked == 1 && valid == 1) { print "OK"; exit }
+            # nft -f applies the entire batch atomically, including delete failures.
+            printf "%sinsert rule inet passwall2 PSW2_MANGLE ip saddr 192.168.1.140 meta l4proto udp counter return comment \"ASATA-UDP-DIRECT\"\n", deletes
+        }
+    ' "$1"
+
+}
+
+# Owner may use this fixed worker in a separately approved procd replacement.
+hg_asata_keeper_loop() (
+    [ "${HG_ASATA_KEEPER_AUTHORIZED:-0}" = 1 ] || exit 70
+    umask 077
+    runtime="${HG_ASATA_KEEPER_RUNTIME_DIR:-/tmp/home-gateway}"
+    mkdir -p "$runtime" || exit 70
+    [ ! -L "$runtime" ] && [ -d "$runtime" ] || exit 70
+    chmod 700 "$runtime" || exit 70
+    [ ! -L "$runtime/asata-keeper-loop.lock" ] || exit 70
+    exec 8>"$runtime/asata-keeper-loop.lock" || exit 70
+    chmod 600 "$runtime/asata-keeper-loop.lock" || exit 70
+    flock -n 8 || exit 73
+    trap 'exit 0' INT TERM
+    while :; do
+        hg_asata_keeper repair || true
+        sleep 10
+    done
+)
