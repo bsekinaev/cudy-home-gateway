@@ -1,6 +1,6 @@
 # Notification Dispatcher — checkpoint 0.5
 
-PR #6 объединён после успешного GitHub CI. Compaction проверена локально; CI её PR и приёмка на CUDY учитываются отдельно.
+PR #6 объединён после успешного GitHub CI. Compaction объединена через PR #8 после CI SUCCESS. Приёмка на CUDY остаётся отдельной.
 Версия остаётся `0.5.0-dev`. Диспетчер изменяет только control-plane state.
 
 ## Модель доставки
@@ -33,7 +33,9 @@ policy или incident journal останавливают обработку, и
 ## Транспорт и retry
 
 MAIN SOCKS `127.0.0.1:1082`; fallback Torrent SOCKS `127.0.0.1:1081` только когда
-HTTP-код 0 и curl сообщает нулевой размер отправленного тела. При неоднозначной ошибке
+HTTP-код 0, curl завершился с ошибкой и сообщает нулевой размер отправленного тела.
+Проверяется только последний transport suffix; разделитель внутри повреждённого HTTP body
+не может разрешить fallback. Malformed metadata откладывает доставку без fallback. При неоднозначной ошибке
 после передачи тела fallback не выполняется; событие остаётся для позднего retry.
 Прямой WAN не используется, ambient NO_PROXY отключён. MAIN не переключается.
 
@@ -136,7 +138,7 @@ sysupgrade -l
 ## Проверки
 
 Production ucode revision `85922056ef7abeace3cca3ab28bc1ac2d88e31b1`, BusyBox ash/awk.
-43 tests: queue/transport faults, restart/reboot simulation, SIGKILL, backoff, 429,
+46 tests: queue/transport faults, restart/reboot simulation, SIGKILL, backoff, 429,
 HTTP errors, corruption, failed write, orphan `.new`, legacy IDs, recovery, mute,
 category, bounded batch, size cap, persistence, exact ASATA collector semantics, compaction bounds, every redo
 publication boundary, producer lock, recovery duration, missing/corrupt dedup and backlog backpressure.
