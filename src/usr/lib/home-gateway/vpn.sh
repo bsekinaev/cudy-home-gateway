@@ -238,3 +238,62 @@ hg_vpn_collect() {
     HG_VPN_EGRESS_STATE='UNKNOWN'
     HG_VPN_MAIN_STATE='DEGRADED'
 }
+
+# Stage 0.8 read-only planning boundary. This is not a candidate network preflight.
+# The private PassWall helper contract and writer coordination must be audited
+# before any MAIN mutation can be implemented. No UCI set/commit or restart here.
+hg_main_transaction_plan() (
+    candidate="$1"
+    case "$candidate" in ''|*[!a-zA-Z0-9_]* )
+        printf '{"schema_version":1,"status":"INVALID_CANDIDATE","apply_supported":false}\n'
+        exit 2 ;;
+    esac
+    [ "${#candidate}" -le 64 ] || {
+        printf '{"schema_version":1,"status":"INVALID_CANDIDATE","apply_supported":false}\n'
+        exit 2
+    }
+    set -o pipefail
+    hg_main_plan_blocked() {
+        printf '{"schema_version":1,"status":"%s","apply_supported":false,"preflight_passed":false,"snapshot_ready":false}\n' "$1"
+        exit 70
+    }
+    # Each observation is bounded and private; neither config nor node IDs are
+    # returned. Independent reads are explicitly not a transaction snapshot.
+    hg_main_plan_get() {
+        # Sentinel preserves LF bytes across command substitution so truncation
+        # cannot turn an oversized multiline value into a valid short scalar.
+        value="$(timeout -k 1 5 uci -q get "$1" 2>/dev/null | head -c 66
+            read_rc="$?"
+            [ "$read_rc" -eq 0 ] || exit 1
+            printf '.')" || return 1
+        value="${value%?}"
+        [ "${#value}" -le 65 ] || return 1
+        newline="$(printf '\n.')"; newline="${newline%.}"
+        case "$value" in *"$newline") value="${value%"$newline"}" ;; *) return 1 ;; esac
+        case "$value" in *"$newline"*) return 1 ;; esac
+        printf '%s' "$value"
+    }
+    command -v uci >/dev/null 2>&1 || hg_main_plan_blocked UCI_UNAVAILABLE
+    pending="$(timeout -k 1 5 uci -q changes passwall2 2>/dev/null | head -c 65)" || hg_main_plan_blocked UCI_READ_FAILED
+    [ -z "$pending" ] || hg_main_plan_blocked UNCOMMITTED_CONFIG
+    enabled="$(hg_main_plan_get 'passwall2.@global[0].enabled')" || hg_main_plan_blocked UCI_READ_FAILED
+    profile="$(hg_main_plan_get passwall2.rulenode.default_node)" || hg_main_plan_blocked UCI_READ_FAILED
+    [ "$enabled" = 1 ] && [ "$profile" = socks_P8ART ] || hg_main_plan_blocked UNSUPPORTED_MAIN_PROFILE
+    profile_type="$(hg_main_plan_get passwall2.socks_P8ART)" || hg_main_plan_blocked UCI_READ_FAILED
+    active="$(hg_main_plan_get passwall2.socks_P8ART.enabled)" || hg_main_plan_blocked UCI_READ_FAILED
+    port="$(hg_main_plan_get passwall2.socks_P8ART.port)" || hg_main_plan_blocked UCI_READ_FAILED
+    [ "$profile_type" = socks ] && [ "$active" = 1 ] && [ "$port" = 1082 ] || hg_main_plan_blocked UNSUPPORTED_MAIN_PROFILE
+    autoswitch="$(hg_main_plan_get passwall2.socks_P8ART.enable_autoswitch)" || hg_main_plan_blocked UCI_READ_FAILED
+    [ "$autoswitch" = 0 ] || hg_main_plan_blocked AUTOSWITCH_REQUIRES_OWNER
+    current="$(hg_main_plan_get passwall2.socks_P8ART.node)" || hg_main_plan_blocked UCI_READ_FAILED
+    case "$current" in ''|*[!a-zA-Z0-9_]* ) hg_main_plan_blocked INVALID_CURRENT_NODE ;; esac
+    candidate_type="$(hg_main_plan_get "passwall2.$candidate")" || hg_main_plan_blocked CANDIDATE_UNAVAILABLE
+    [ "$candidate_type" = nodes ] || hg_main_plan_blocked INVALID_CANDIDATE_TYPE
+    # Re-observe pending edits; still no claim of generation-consistent reads.
+    pending="$(timeout -k 1 5 uci -q changes passwall2 2>/dev/null | head -c 65)" || hg_main_plan_blocked UCI_READ_FAILED
+    [ -z "$pending" ] || hg_main_plan_blocked UNCOMMITTED_CONFIG
+    same=false
+    [ "$candidate" != "$current" ] || same=true
+    printf '{"schema_version":1,"status":"PREFLIGHT_ADAPTER_REQUIRED","candidate_exists":true,"same_as_configured_main":%s,"observation_only":true,"apply_supported":false,"preflight_passed":false,"snapshot_ready":false,"blockers":["AUDITED_PASSWALL_HELPERS","WRITER_COORDINATION","LAN_TAILSCALE_RECOVERY","TRANSACTION_SNAPSHOT_JOURNAL"]}\n' "$same"
+    exit 70
+)

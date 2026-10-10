@@ -112,6 +112,9 @@ Provider `status` не вызывается, поскольку выполняе
 
 ## 0.8 — Transactions
 
+**Статус:** разработан только read-only UCI planner; preflight/snapshot/apply/
+rollback/recovery ещё blocked. См. [MAIN_TRANSACTIONS.md](MAIN_TRANSACTIONS.md).
+
 * preflight ноды;
 * snapshot;
 * смена MAIN;
