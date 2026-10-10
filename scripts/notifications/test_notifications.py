@@ -53,6 +53,8 @@ if (base / 'pause').exists():
 plans = json.loads((base / 'responses').read_text())
 item = plans.pop(0) if plans else {'http': 200, 'body': {'ok': True, 'result': {'message_id': 42}}}
 (base / 'responses').write_text(json.dumps(plans))
+if item.get('receipt_failure'):
+    (base / 'state/notifications.jsonl.new').mkdir()
 print(json.dumps(item.get('body', {})), end='')
 print('\\nHG_TRANSPORT %s %s' % (item.get('http', 200), item.get('uploaded', 100)))
 sys.exit(item.get('code', 0))
@@ -303,6 +305,17 @@ sys.exit(item.get('code', 0))
         (self.base / 'state/notifications.jsonl.new').mkdir()
         self.assertNotEqual(self.run_cli('dispatch', ok=False).returncode, 0)
         self.assertEqual(len(self.calls()), 0)
+
+    def test_receipt_write_failure_preserves_inflight(self):
+        self.journal([self.event()])
+        self.responses([dict(http=200, body={'ok': True, 'result': {'message_id': 42}},
+                             receipt_failure=True)])
+        self.assertEqual(self.run_cli('dispatch', ok=False).returncode, 70)
+        self.assertEqual(self.queue()[0]['status'], 'INFLIGHT')
+        self.assertEqual(len(self.calls()), 1)
+        (self.base / 'state/notifications.jsonl.new').rmdir()
+        self.run_cli('dispatch')
+        self.assertEqual(len(self.calls()), 1)
 
     def test_orphan_new_file_not_used_as_receipt(self):
         self.journal([self.event()])
