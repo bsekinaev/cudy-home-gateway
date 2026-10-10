@@ -33,6 +33,7 @@ CUDY Home Gateway
   gateway notifications configure enable|disable
   gateway notifications configure mute SECONDS
   gateway notifications configure category COMPONENT on|off
+  gateway vtest [--json]   Проверить наличие и fingerprint внешнего vtest
   gateway doctor           Проверить окружение и зависимости
   gateway selftest         Проверить установку Gateway CLI
   gateway telegram get-me  Проверить Telegram Bot API
@@ -81,6 +82,23 @@ main() {
                 hg_health_print_json
             else
                 hg_error 'использование: gateway health [--json]'
+                return "$HG_EXIT_USAGE"
+            fi
+            ;;
+        vtest)
+            hg_load_module doctor
+            if [ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && [ "$2" = '--json' ]; }; then
+                hg_vtest_inspect_json
+            elif [ "$#" -eq 3 ] && [ "$2" = 'run' ]; then
+                case "$3" in
+                    quick|full|capability)
+                        hg_error 'vtest run заблокирован: требуется аудит исходника и контракта внешнего vtest'
+                        return "$HG_EXIT_SOFTWARE"
+                        ;;
+                    *) return "$HG_EXIT_USAGE" ;;
+                esac
+            else
+                hg_error 'использование: gateway vtest [--json]'
                 return "$HG_EXIT_USAGE"
             fi
             ;;

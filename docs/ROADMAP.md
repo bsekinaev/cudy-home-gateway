@@ -73,7 +73,7 @@
 ## Остаётся до закрытия 0.5
 
 * PR #6: CI SUCCESS, review выполнен, merge `93586f1`;
-* compaction/dedup: реализованы, 43 notification/ASATA tests PASS; CI новой ветки ожидается;
+* compaction/dedup: PR #8 объединён (`3339492`), CI SUCCESS; 43 notification/ASATA tests PASS;
 * LIVE delivery/reboot/procd/sysupgrade inventory, только после разрешения владельца;
 * внешний ASATA keeper: его исходник отсутствует в репозитории;
 * разбор target-only ошибки redmi.sh в последнем CD plan;
@@ -86,6 +86,10 @@
 ---
 
 ## 0.6 — vtest
+
+Частично: `gateway vtest --json`, SHA256/cron metadata и Telegram audit view.
+10 tests PASS. Provider не вызывается до аудита отсутствующего исходника; реальные
+results/history/run/progress остаются BLOCKED. См. `docs/VTEST.md`. Этап не принят.
 
 * чтение текущего cron-run;
 * история результатов;
