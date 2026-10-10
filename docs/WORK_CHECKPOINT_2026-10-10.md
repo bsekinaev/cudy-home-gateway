@@ -69,18 +69,38 @@ subshell pipefail для hash/cron; partial reader и failed hasher fault tests 
 GitHub CI этой ветки проверяется отдельно перед merge; связанный thread #9 закрывается
 только после публикации исправления. Версия/блокеры не меняются.
 
+## Новая контрольная точка: исходники и offline результаты
+
+Baseline main: `b718f950e77b1c50f29be99552b1b9836de7fc32`, PR #11 уже merged,
+CI SUCCESS (run 38077047424). Предыдущая команда публикации #11 выполнена.
+Все три предоставленных SHA256 подтверждены; приватные оригиналы не публикуются.
+
+Ветка `feature/0.6-vtest-results`: bounded parser реальных speed/summary/capability
+TSV, история до 20, числовая Telegram сводка, exact symlink target/fingerprint
+подтверждение оригинала. Runner disabled: PassWall dependencies и cleanup ownership
+не прошли аудит. Нет изменения версии, CUDY, MAIN, tags.
+
+Локально: 46 notification/ASATA + 23 vtest PASS; CI script/ash/ucode PASS,
+13 release + 29 deployment PASS (итого 111). GitHub HEAD CI проверяется при публикации.
+Никакая старая проверка не считается LIVE-проверкой нового adapter.
+
 ## Точное продолжение
 
-Опубликовать PR `feature/0.6-bounded-inspection`, проверить HEAD/CI/review, merge только
-после SUCCESS и закрыть связанное замечание #9. Затем:
+Завершить PR `feature/0.6-vtest-results`: проверить актуальные HEAD CI и review,
+исправить findings, merge только после SUCCESS. Затем отдельная ветка:
 
 ```sh
 git fetch origin
-git switch -c feature/0.6-vtest-runner origin/main
+git switch -c feature/0.5-asata-keeper-hardening origin/main
 ```
 
-Получить внешний vtest без секретов, сверить fingerprint через `gateway vtest --json`
-на стороне владельца, прочитать исходник и реализовать run/history/progress/timeout/
-result notifications по его реальному контракту. Снять ASATA/redmi/LIVE блокеры
-0.5 отдельно. Каждый следующий этап — отдельная ветка, Russian commits, PR, CI и
-checkpoint; не создавать v1.0.0 до полной приёмки.
+Написать независимый keeper с exact semantic/order validation, атомарной nft batch,
+crash-safe lock и isolated fault tests. Не публиковать приватный оригинал и не
+устанавливать новый worker на CUDY без разрешения. Для vtest runner требуется
+аудит PassWall utils/app helpers и замена широкого pgrep cleanup. Затем 0.7–1.0
+по Issue #7; version/tag readiness остаётся blocked до полной приёмки.
+
+Review PR #12 выявил три P2: provider trust gating, archive run attribution и
+history traversal до filtering. Исправлены: неподтверждённый provider даёт null,
+архив сверяет все row run IDs с basename, traversal всех entries bounded до
+suffix filtering плюс timeout 2 секунды. Добавлены 3 regression tests.

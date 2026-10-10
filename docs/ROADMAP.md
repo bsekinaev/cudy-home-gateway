@@ -87,9 +87,12 @@
 
 ## 0.6 — vtest
 
-Частично: `gateway vtest --json`, SHA256/cron metadata и Telegram audit view.
-PR #9 объединён после CI SUCCESS; 10 tests PASS. Provider не вызывается до аудита отсутствующего исходника; реальные
-results/history/run/progress остаются BLOCKED. См. `docs/VTEST.md`. Этап не принят.
+Частично: `gateway vtest --json`, SHA256/cron metadata, offline TSV сводки,
+история до 20 запусков и Telegram view. Исходник получен, hash подтверждён;
+23 adapter/authorization tests PASS. Runner/progress/alerts остаются BLOCKED:
+нужны аудит PassWall helpers, ограничение cleanup и crash-safe process ownership.
+Provider `status` не вызывается, поскольку выполняет сетевые probes.
+См. `docs/VTEST.md` и `docs/SOURCE_AUDIT_2026-10-10.md`. Этап не принят.
 
 * чтение текущего cron-run;
 * история результатов;
