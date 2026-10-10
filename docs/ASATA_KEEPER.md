@@ -27,16 +27,22 @@ Repair и loop disabled без trusted local `HG_ASATA_KEEPER_AUTHORIZED=1`.
 Repair получает kernel flock и приватный RAM snapshot цепочки, до 64 KiB.
 Парсер требует таблицу/цепочку, завершённую структуру, корректные числовые handles,
 до 32 помеченных правил. При missing/malformed/oversize input ничего не меняется.
-Batch содержит только delete помеченных handles и insert точного правила первым;
-чужие правила не удаляются. Весь batch передаётся одним `nft -f`, без отдельного
-удаления перед вставкой. Race с удалением chain/handle даёт failure всей batch.
+Автоматически разрешена только вставка отсутствующего правила. Если уже есть
+помеченное правило, но его семантика/порядок/уникальность неверны, repair возвращает
+OWNER_COORDINATION_REQUIRED без изменений. Delete по captured handle запрещён:
+другой writer может переиспользовать handle для чужого правила между snapshot
+и apply. Для замены нужны проверенная координация с PassWall2 или generation-aware
+API; они пока отсутствуют. Не считать эту часть полной LIVE-приёмкой keeper.
+Единственный insert передаётся через nft -f, чужие правила не удаляются.
 После применения повторный bounded read обязан показать единственное точное
 первое правило. Только тогда печатается REPAIRED и fixed audit message в syslog.
 Это не заменяет общий persistent action audit этапа 0.7.
 
-Вызовы nft ограничены timeout 5 секунд. Kernel lock не имеет stale PID-directory.
+Вызовы nft используют timeout -k 1 5: TERM через 5 секунд и KILL спустя ещё 1. Kernel lock не имеет stale PID-directory. Runtime и каждый ancestor проверяются:
+root UID, отсутствие symlink, запрет writable non-sticky ancestors; lock file
+не может принадлежать unprivileged UID. Chmod сам по себе не доказывает владельца.
 Владение fd сохраняется у bounded nft child до его завершения; после SIGKILL parent
-оно может удерживаться до 5 секунд. Loop имеет отдельный singleton flock,
+оно может удерживаться до 6 секунд. Loop имеет отдельный singleton flock,
 итерации каждые 10 секунд; после SIGKILL parent sleep child может удерживать loop
 lock до 10 секунд. Это ограниченная задержка recovery, не бесконечный stale lock.
 Процесс group stop предпочтителен; target procd поведение требует LIVE проверки.
@@ -48,6 +54,8 @@ lock до 10 секунд. Это ограниченная задержка reco
 1. Сохранить оригинальные keeper/init и nft chain listing приватно, проверить SHA.
 2. Проверить kernel nft atomic batch и target BusyBox/timeout/flock на изолированном
    стенде. Поведение реального ядра не моделируется boundary tests.
+Doctor сообщает busy как WARN без ложного семантического FAIL.
+
 3. В согласованное окно остановить старый procd keeper. Не запускать оба worker.
 4. Через LAN доступ проверить `check`, отдельно разрешить один repair и проверить
    rule order, ASATA, MAIN/Torrent/DNS/Tailscale. При ошибке восстановить оригинал.

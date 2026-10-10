@@ -23,6 +23,7 @@ class KeeperTests(unittest.TestCase):
         nft = self.base / 'bin/nft'
         nft.write_text('''#!/bin/sh
 if [ "$1" = '-a' ]; then
+    [ "${HG_KEEPER_IGNORE_TERM:-0}" = 0 ] || trap '' TERM
     [ "${HG_KEEPER_LIST_STALL:-0}" = 0 ] || exec sleep 30
     cat "$HG_KEEPER_FIXTURE/rules"
     exit "${HG_KEEPER_LIST_RC:-0}"
@@ -41,6 +42,10 @@ exit 97
         logger = self.base / 'bin/logger'
         logger.write_text('#!/bin/sh\nexit 0\n')
         logger.chmod(0o755)
+        # nft/stat process boundaries emulate root metadata on non-root CI workers.
+        stat = self.base / 'bin/stat'
+        stat.write_text('#!/bin/sh\nif [ "$1" = -c ] && [ "$2" = %u ]; then echo 0; else exec /usr/bin/stat "$@"; fi\n')
+        stat.chmod(0o755)
         self.busybox = os.environ.get('HG_TEST_BUSYBOX', 'busybox')
         self.env = dict(os.environ, PATH=str(self.base / 'bin') + ':' + os.environ['PATH'],
                         HG_LIBDIR=str(ROOT / 'src/usr/lib/home-gateway'),
@@ -76,17 +81,21 @@ exit 97
                 self.assertEqual(self.keeper().returncode, 1)
                 self.assertFalse((self.base / 'applied').exists())
 
-    def test_repair_only_deletes_marked_handles_in_one_batch(self):
+    def test_existing_marked_rule_never_mutated_by_stale_handle(self):
         (self.base / 'rules').write_text(chain('meta l4proto tcp return # handle 2\n' + RULE + RULE.replace('handle 7','handle 8').replace('return ', 'accept ')))
+        result = self.keeper('repair', True)
+        self.assertEqual(result.returncode, 70, result.stderr)
+        self.assertIn('OWNER_COORDINATION_REQUIRED', result.stdout)
+        self.assertFalse((self.base / 'applied').exists())
+
+    def test_missing_rule_insert_preserves_every_existing_handle(self):
+        (self.base / 'rules').write_text(chain('meta l4proto tcp return # handle 2\n'))
         result = self.keeper('repair', True)
         self.assertEqual(result.returncode, 0, result.stderr)
         batch = (self.base / 'applied').read_text()
-        self.assertIn('delete rule inet passwall2 PSW2_MANGLE handle 7\n', batch)
-        self.assertIn('delete rule inet passwall2 PSW2_MANGLE handle 8\n', batch)
-        self.assertNotIn('handle 2', batch)
-        self.assertEqual(batch.count('insert rule'), 1)
-        self.assertEqual(len(batch.splitlines()), 3)
-        self.assertIn('ip saddr 192.168.1.140 meta l4proto udp counter return', batch)
+        self.assertNotIn('delete', batch)
+        self.assertEqual(len(batch.splitlines()), 1)
+        self.assertIn('insert rule inet passwall2 PSW2_MANGLE ip saddr 192.168.1.140 meta l4proto udp counter return', batch)
 
     def test_failed_list_and_apply_do_not_claim_success(self):
         self.env['HG_KEEPER_LIST_RC'] = '1'
@@ -132,6 +141,7 @@ exit 97
 
     def test_hung_nft_is_bounded_and_never_applied(self):
         self.env['HG_KEEPER_LIST_STALL'] = '1'
+        self.env['HG_KEEPER_IGNORE_TERM'] = '1'
         self.assertEqual(self.keeper('repair', True).returncode, 70)
         self.assertFalse((self.base / 'applied').exists())
 
@@ -150,6 +160,39 @@ exit 97
         child.stdout.close()
         child.stderr.close()
         self.assertEqual(self.keeper().returncode, 0)
+
+    def test_untrusted_ancestor_and_symlink_runtime_are_rejected(self):
+        parent = self.base / 'writable'
+        parent.mkdir(mode=0o777)
+        parent.chmod(0o777)
+        self.env['HG_ASATA_KEEPER_RUNTIME_DIR'] = str(parent / 'runtime')
+        self.assertEqual(self.keeper('repair', True).returncode, 70)
+        alias = self.base / 'alias'
+        alias.symlink_to(self.base / 'runtime', target_is_directory=True)
+        self.env['HG_ASATA_KEEPER_RUNTIME_DIR'] = str(alias)
+        self.assertEqual(self.keeper('repair', True).returncode, 70)
+        self.assertFalse((self.base / 'applied').exists())
+
+    def test_nonroot_runtime_owner_is_rejected(self):
+        tools = self.base / 'bin'
+        stat = tools / 'stat'
+        stat.write_text('#!/bin/sh\nif [ "$1" = -c ] && [ "$2" = %u ]; then echo 1000; else exec /usr/bin/stat "$@"; fi\n')
+        stat.chmod(0o755)
+        self.assertEqual(self.keeper('repair', True).returncode, 70)
+        self.assertFalse((self.base / 'applied').exists())
+
+    def test_doctor_distinguishes_busy_from_bad_semantics(self):
+        import fcntl
+        runtime = self.base / 'runtime'
+        runtime.mkdir()
+        with (runtime / 'asata-keeper.lock').open('w') as file:
+            fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            script = '. "$HG_LIBDIR/common.sh"; . "$HG_LIBDIR/doctor.sh"; hg_doctor_asata; printf "FAIL=%s\\n" "$HG_DOCTOR_FAIL"'
+            result = subprocess.run([self.busybox, 'ash', '-c', script], env=self.env,
+                                    text=True, capture_output=True, timeout=8)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('[WARN]', result.stdout)
+            self.assertIn('FAIL=0', result.stdout)
 
     def test_arguments_are_fixed(self):
         self.assertEqual(self.keeper('arbitrary').returncode, 2)

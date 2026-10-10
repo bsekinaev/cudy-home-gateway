@@ -9,12 +9,12 @@ PR #12 merged: `620bfd190394ca601b4dc31b2a7cd354b3edfd77`. Findings исправ
 повторный review завершён без новых замечаний.
 
 Ветка `feature/0.5-asata-keeper-hardening`: самостоятельный local opt-in keeper,
-exact semantics и первое положение, bounded nft capture, atomic batch,
+exact semantics и первое положение, bounded nft capture, missing-rule insert без captured-handle deletes,
 postcheck, kernel single-flight/recovery, fixed loop без автоматического enable.
 Collector и doctor больше не принимают одного наличия comment.
 Новых runtime paths нет. Исходники владельца не публикуются/не исполняются.
 
-Локальные ash/ucode/CI checks PASS; 58 notification/ASATA + 23 vtest tests PASS (81). 13 release + 29 deployment PASS (123 всего после merge свежего main). GitHub HEAD CI
+Локальные ash/ucode/CI checks PASS; 62 notification/ASATA + 23 vtest tests PASS (85). 13 release + 29 deployment PASS (127 всего после merge свежего main). GitHub HEAD CI
 проверяется после публикации.
 Новые тесты выполняют production keeper с isolated nft boundary, а не на CUDY.
 
@@ -30,3 +30,9 @@ allowlist. Production execution остаётся forbidden без отдельн
 
 PR #13: https://github.com/bsekinaev/cudy-home-gateway/pull/13
 Исходный commit: ca975c5084d9ccf4bff0449f4437404222d19e0b.
+
+Review #13: root-owned runtime/ancestors enforced; captured-handle deletion removed
+because writer coordination is unavailable; TERM escalates to KILL; doctor busy
+is WARN. Added ownership/ancestor/missing-insert/no-delete/doctor contention tests,
+TERM-ignoring subprocess timeout fault test. Existing malformed marked rule repair
+remains blocked pending PassWall writer coordination; do not claim full acceptance.

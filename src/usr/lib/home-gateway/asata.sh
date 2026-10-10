@@ -170,11 +170,10 @@ hg_asata_keeper() (
     fi
     umask 077
     runtime="${HG_ASATA_KEEPER_RUNTIME_DIR:-/tmp/home-gateway}"
-    mkdir -p "$runtime" || exit 70
-    [ ! -L "$runtime" ] && [ -d "$runtime" ] || exit 70
-    chmod 700 "$runtime" || exit 70
+    hg_asata_runtime_prepare "$runtime" || exit 70
     # Kernel lock has no PID file to become stale. Child nft is bounded to 5 seconds.
     [ ! -L "$runtime/asata-keeper.lock" ] || exit 70
+    [ ! -e "$runtime/asata-keeper.lock" ] || [ "$(stat -c %u "$runtime/asata-keeper.lock")" = 0 ] || exit 70
     exec 9>"$runtime/asata-keeper.lock" || exit 70
     chmod 600 "$runtime/asata-keeper.lock" || exit 70
     flock -n 9 || exit 73
@@ -193,8 +192,12 @@ hg_asata_keeper() (
         printf 'ASATA_KEEPER=NEEDS_REPAIR\n'
         exit 1
     fi
-    # Concurrent chain recreation/deletion makes the batch fail, without partial deletion.
-    timeout 5 nft -f "$work/batch" >/dev/null 2>&1 || exit 70
+    # Never delete captured handles: another writer can replace a rule using the same handle.
+    if [ "$(head -n 1 "$work/batch")" = BLOCKED_MARKED_RULE ]; then
+        printf 'ASATA_KEEPER=OWNER_COORDINATION_REQUIRED\n'
+        exit 70
+    fi
+    timeout -k 1 5 nft -f "$work/batch" >/dev/null 2>&1 || exit 70
     hg_asata_keeper_capture "$work/verified" || exit 70
     hg_asata_keeper_plan "$work/verified" > "$work/postcheck" || exit 70
     [ "$(cat "$work/postcheck")" = OK ] || exit 70
@@ -204,7 +207,7 @@ hg_asata_keeper() (
 
 # Helpers used only with private generated paths from the locked keeper.
 hg_asata_keeper_capture() {
-    timeout 5 nft -a list chain inet passwall2 PSW2_MANGLE 2>/dev/null |
+    timeout -k 1 5 nft -a list chain inet passwall2 PSW2_MANGLE 2>/dev/null |
         head -c 65537 > "$1" || return 70
     captured_size="$(stat -c %s "$1")" || return 70
     [ "$captured_size" -le 65536 ]
@@ -230,15 +233,15 @@ hg_asata_keeper_plan() {
                 f[6] == "udp" && f[7] == "counter" && f[8] == "packets" &&
                 f[9] ~ /^[0-9]+$/ && f[10] == "bytes" && f[11] ~ /^[0-9]+$/ &&
                 f[12] == "return" && f[13] == "comment" && f[14] == "\"ASATA-UDP-DIRECT\"") valid++
-            deletes=deletes "delete rule inet passwall2 PSW2_MANGLE handle " handle "\n"
+            # Captured handles are validated, but never used for mutation.
         }
         index($0,"comment \"ASATA-UDP-DIRECT\"") && $0 !~ /# handle [0-9]+[ \t]*$/ { bad=1 }
         $0 !~ /# handle [0-9]+[ \t]*$/ && $0 !~ /^[ \t]*(type |policy |$)/ { bad=1 }
         END {
             if (tables != 1 || chains != 1 || closes != 2 || bad || marked > 32) exit 1
             if (marked == 1 && valid == 1) { print "OK"; exit }
-            # nft -f applies the entire batch atomically, including delete failures.
-            printf "%sinsert rule inet passwall2 PSW2_MANGLE ip saddr 192.168.1.140 meta l4proto udp counter return comment \"ASATA-UDP-DIRECT\"\n", deletes
+            if (marked > 0) { print "BLOCKED_MARKED_RULE"; exit }
+            printf "insert rule inet passwall2 PSW2_MANGLE ip saddr 192.168.1.140 meta l4proto udp counter return comment \"ASATA-UDP-DIRECT\"\n"
         }
     ' "$1"
 
@@ -249,10 +252,9 @@ hg_asata_keeper_loop() (
     [ "${HG_ASATA_KEEPER_AUTHORIZED:-0}" = 1 ] || exit 70
     umask 077
     runtime="${HG_ASATA_KEEPER_RUNTIME_DIR:-/tmp/home-gateway}"
-    mkdir -p "$runtime" || exit 70
-    [ ! -L "$runtime" ] && [ -d "$runtime" ] || exit 70
-    chmod 700 "$runtime" || exit 70
+    hg_asata_runtime_prepare "$runtime" || exit 70
     [ ! -L "$runtime/asata-keeper-loop.lock" ] || exit 70
+    [ ! -e "$runtime/asata-keeper-loop.lock" ] || [ "$(stat -c %u "$runtime/asata-keeper-loop.lock")" = 0 ] || exit 70
     exec 8>"$runtime/asata-keeper-loop.lock" || exit 70
     chmod 600 "$runtime/asata-keeper-loop.lock" || exit 70
     flock -n 8 || exit 73
@@ -261,4 +263,28 @@ hg_asata_keeper_loop() (
         hg_asata_keeper repair || true
         sleep 10
     done
+)
+
+# Reject pre-created unprivileged directories and writable non-sticky ancestors.
+hg_asata_runtime_prepare() (
+    candidate="$1"
+    case "$candidate" in /*) ;; *) exit 1 ;; esac
+    case "$candidate" in *[!a-zA-Z0-9_./-]*|*//*|*/) exit 1 ;; esac
+    mkdir -p "$candidate" || exit 1
+    prefix=''
+    IFS=/
+    for segment in $candidate; do
+        [ -n "$segment" ] || continue
+        case "$segment" in .|..) exit 1 ;; esac
+        prefix="$prefix/$segment"
+        [ -d "$prefix" ] && [ ! -L "$prefix" ] || exit 1
+        [ "$(stat -c %u "$prefix")" = 0 ] || exit 1
+        permission="$(stat -c %a "$prefix")" || exit 1
+        case "$permission" in ''|*[!0-7]*) exit 1 ;; esac
+        [ "${#permission}" -le 4 ] || exit 1
+        if [ "$prefix" != "$candidate" ] && [ $((0$permission & 0022)) -ne 0 ]; then
+            [ $((0$permission & 01000)) -ne 0 ] || exit 1
+        fi
+    done
+    chmod 700 "$candidate"
 )

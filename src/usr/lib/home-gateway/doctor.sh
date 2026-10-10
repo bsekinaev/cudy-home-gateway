@@ -145,11 +145,13 @@ hg_doctor_tailscale() {
 
 hg_doctor_asata() {
     hg_load_module asata
-    if hg_asata_keeper check >/dev/null 2>&1; then
-        hg_doctor_result OK 'ASATA UDP DIRECT' 'точное правило первым в цепочке'
-    else
-        hg_doctor_result FAIL 'ASATA UDP DIRECT' 'семантика или порядок правила не подтверждены'
-    fi
+    keeper_rc=0
+    hg_asata_keeper check >/dev/null 2>&1 || keeper_rc=$?
+    case "$keeper_rc" in
+        0) hg_doctor_result OK 'ASATA UDP DIRECT' 'точное правило первым в цепочке' ;;
+        73) hg_doctor_result WARN 'ASATA UDP DIRECT' 'keeper busy; семантика пока не проверена' ;;
+        *) hg_doctor_result FAIL 'ASATA UDP DIRECT' 'семантика или порядок правила не подтверждены' ;;
+    esac
 }
 
 hg_doctor_run() {
