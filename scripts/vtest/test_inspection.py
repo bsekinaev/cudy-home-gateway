@@ -102,6 +102,29 @@ else:
             out.truncate(100 * 1024 * 1024)  # Sparse; no large test payload allocation.
         self.assertEqual(self.inspect()['reason'], 'PROVIDER_TOO_LARGE')
 
+    def test_partial_reader_failure_discards_digest_and_cron(self):
+        tools = self.base / 'bin'
+        tools.mkdir()
+        head = tools / 'head'
+        head.write_text('#!/bin/sh\nprintf "0 4 * * 0 /usr/bin/vtest\\n"\nexit 97\n')
+        head.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        data = self.inspect()
+        self.assertIsNone(data['provider']['sha256'])
+        self.assertEqual(data['reason'], 'PROVIDER_UNREADABLE')
+        self.assertFalse(data['cron_configured'])
+
+    def test_hasher_failure_discards_plausible_partial_digest(self):
+        tools = self.base / 'bin'
+        tools.mkdir()
+        hasher = tools / 'sha256sum'
+        hasher.write_text('#!/bin/sh\nprintf "' + 'a' * 64 + '  -\\n"\nexit 97\n')
+        hasher.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        data = self.inspect()
+        self.assertIsNone(data['provider']['sha256'])
+        self.assertEqual(data['reason'], 'PROVIDER_UNREADABLE')
+
     def test_missing_provider_not_reported_as_idle(self):
         self.provider.unlink()
         data = self.inspect()

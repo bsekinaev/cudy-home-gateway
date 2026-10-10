@@ -206,7 +206,12 @@ hg_vtest_inspect_json() {
         installed=true
         [ ! -x "$vtest_path" ] || executable=true
         if hg_vtest_size_within "$vtest_path" 262144; then
-            digest="$(head -c 262144 "$vtest_path" 2>/dev/null | sha256sum | awk '{ print $1 }')"
+            # BusyBox ash pipefail is scoped to this subshell. Any failed reader,
+            # hasher or parser discards its output, including a partial digest.
+            if ! digest="$(set -o pipefail; head -c 262144 "$vtest_path" 2>/dev/null | sha256sum | awk '{ print $1 }')"; then
+                digest=''
+                audit_reason='PROVIDER_UNREADABLE'
+            fi
             case "$digest" in *[!0-9a-f]*|'') digest=''; audit_reason='PROVIDER_UNREADABLE';; esac
             if [ "${#digest}" -ne 64 ]; then digest=''; audit_reason='PROVIDER_UNREADABLE'; fi
         else
@@ -217,8 +222,8 @@ hg_vtest_inspect_json() {
     fi
     if [ -f "$cron_path" ] && [ ! -L "$cron_path" ] && [ -r "$cron_path" ] &&
        hg_vtest_size_within "$cron_path" 65536; then
-        if head -c 65536 "$cron_path" 2>/dev/null | awk 'NF >= 6 && $1 !~ /^#/ && ($6 == "/usr/bin/vtest" || $6 == "vtest") { found = 1 }
-                END { exit(found ? 0 : 1) }'; then scheduled=true; fi
+        if (set -o pipefail; head -c 65536 "$cron_path" 2>/dev/null | awk 'NF >= 6 && $1 !~ /^#/ && ($6 == "/usr/bin/vtest" || $6 == "vtest") { found = 1 }
+                END { exit(found ? 0 : 1) }'); then scheduled=true; fi
     fi
     printf '{"schema_version":1,"integration":"BLOCKED","state":"UNKNOWN","reason":'
     hg_json_string "$audit_reason"
