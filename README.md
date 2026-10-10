@@ -34,10 +34,10 @@
 
 Health Core нормализует WAN, DNS, MAIN и service/policy observations. Incident State добавляет debounce/hysteresis и persistent journal. Adaptive external confirmation вызывает secondary egress provider только после неуспешного primary probe. Data plane не изменяется.
 
-Notification Dispatcher реализован в `feature/0.5-notification-dispatcher`: retry,
+Notification Dispatcher объединён в main через PR #6 после успешного CI: retry,
 MAIN/Torrent delivery, recovery summary, CLI mute/categories и sysupgrade allowlist.
-Доставка выключена по умолчанию. Локальные тесты пройдены; GitHub CI нового commit и
-приёмка на CUDY ожидаются. `0.5.0-dev` пока не является стабильным релизом.
+Доставка выключена по умолчанию. Добавлена crash-safe compaction с dedup receipts. Приёмка на CUDY ожидается;
+CI каждой новой ветки проверяется отдельно. `0.5.0-dev` пока не является стабильным релизом.
 
 [Установка и ограничения диспетчера](docs/NOTIFICATIONS.md).
 

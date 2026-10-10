@@ -28,7 +28,7 @@ CUDY Home Gateway
   gateway incidents        Показать подтверждённые incidents и candidates
   gateway incidents --json Вывести incident state в JSON
   gateway incidents tick   Выполнить одну итерацию incident state machine
-  gateway notifications [--json|sync|dispatch]
+  gateway notifications [--json|sync|dispatch|compact|recover]
                            Очередь и однократная доставка уведомлений
   gateway notifications configure enable|disable
   gateway notifications configure mute SECONDS
@@ -129,6 +129,8 @@ main() {
                 ucode "$notifications_engine" "$0" sync
             elif [ "$#" -eq 2 ] && [ "$2" = 'persistence' ]; then
                 ucode "$notifications_engine" "$0" persistence
+            elif [ "$#" -eq 2 ] && { [ "$2" = 'compact' ] || [ "$2" = 'recover' ]; }; then
+                ucode "$notifications_engine" "$0" "$2"
             elif [ "$#" -eq 2 ] && [ "$2" = 'dispatch' ]; then
                 ucode "$notifications_engine" "$0" dispatch
             elif [ "${2:-}" = 'configure' ] && [ "$#" -ge 3 ] && [ "$#" -le 5 ]; then

@@ -9,6 +9,10 @@ const STATE_DIR = getenv('HG_NOTIFICATION_STATE_DIR') || '/etc/home-gateway/stat
 const RUNTIME_DIR = getenv('HG_NOTIFICATION_RUNTIME_DIR') || '/tmp/home-gateway';
 const SECRETS_DIR = getenv('HG_NOTIFICATION_SECRETS_DIR') || '/etc/home-gateway/secrets';
 const QUEUE = STATE_DIR + '/notifications.jsonl';
+const COMPACTION = STATE_DIR + '/notification-compaction.json';
+const COMMITTED = STATE_DIR + '/notification-compaction.snapshot.json';
+const DEDUP = STATE_DIR + '/notification-dedup.json';
+const JOURNAL = STATE_DIR + '/incidents.jsonl';
 const POLICY = STATE_DIR + '/notification-policy.json';
 const COMPONENTS = [ 'wan', 'dns', 'main', 'torrent', 'redmi', 'asata', 'tailscale' ];
 const STATUSES = [ 'PENDING', 'INFLIGHT', 'SENT', 'FAILED', 'COALESCED' ];
@@ -54,8 +58,7 @@ function raw_file(path) {
         die('notifications: unreadable state\n');
     return raw;
 }
-function read_lines(path) {
-    let raw = raw_file(path);
+function parse_lines(raw) {
     let items = [];
     for (let line in split(raw ?? '', '\n')) {
         if (!length(trim(line)))
@@ -68,6 +71,9 @@ function read_lines(path) {
         push(items, value);
     }
     return items;
+}
+function read_lines(path) {
+    return parse_lines(raw_file(path));
 }
 function atomic_write(path, raw) {
     if (length(raw) > MAX_BYTES)
@@ -106,8 +112,7 @@ function valid_event(event) {
 function notification_id(event) {
     return `${event.incident_id}-${event.event}-${event.at}`;
 }
-function load_queue() {
-    let items = read_lines(QUEUE);
+function validate_queue(items) {
     let seen = {};
     for (let item in items) {
         if (!valid_event({ ...item, at: item.created_at }) ||
@@ -121,6 +126,9 @@ function load_queue() {
         seen[item.notification_id] = true;
     }
     return items;
+}
+function load_queue() {
+    return validate_queue(read_lines(QUEUE));
 }
 function default_policy() {
     return { schema_version: 1, enabled: false, mute_until: 0, delivery_not_before: 0, categories: {} };
@@ -141,9 +149,130 @@ function load_policy() {
             die('notifications: invalid category; delivery paused\n');
     return policy;
 }
+// A redo journal commits the three snapshots as one logical transaction. Producers
+// refuse to append while it exists; recovery always runs under both CLOEXEC locks.
+function lines(items) {
+    let raw = '';
+    for (let item in items) raw += sprintf('%J\n', item);
+    return raw;
+}
+function validate_dedup(value) {
+    if (value?.schema_version != 1 || type(value.ids) != 'array' || length(value.ids) > 1024)
+        die('notifications: invalid dedup index; delivery paused\n');
+    let seen = {};
+    for (let id in value.ids) {
+        if (type(id) != 'string' || seen[id] ||
+            match(id, /^(wan|dns|main|torrent|redmi|asata|tailscale)-[0-9]+-(OPEN|STATE_CHANGED|RECOVERED)(-[0-9]+)?$/) == null)
+            die('notifications: invalid dedup receipt; delivery paused\n');
+        seen[id] = true;
+    }
+    return value.ids;
+}
+function load_dedup() {
+    let raw = raw_file(DEDUP);
+    if (raw == null) {
+        let snapshot = raw_file(COMMITTED);
+        if (snapshot != null) {
+            let plan;
+            try { plan = json(snapshot); }
+            catch (e) { die('notifications: corrupt receipt snapshot; delivery paused\n'); }
+            if (plan?.schema_version != 1) die('notifications: invalid receipt snapshot\n');
+            return validate_dedup(plan.dedup);
+        }
+        for (let item in load_queue())
+            if (item.dedup_required == true) die('notifications: missing dedup receipts; delivery paused\n');
+        return [];
+    }
+    let value;
+    try { value = json(raw); }
+    catch (e) { die('notifications: corrupt dedup index; delivery paused\n'); }
+    return validate_dedup(value);
+}
+function recover_compaction() {
+    let raw = raw_file(COMPACTION);
+    if (raw == null) return true;
+    let plan;
+    try { plan = json(raw); }
+    catch (e) { die('notifications: corrupt compaction journal; delivery paused\n'); }
+    if (plan?.schema_version != 1 || type(plan.queue) != 'string' ||
+        type(plan.journal) != 'string' || type(plan.dedup) != 'object')
+        die('notifications: invalid compaction journal; delivery paused\n');
+    validate_queue(parse_lines(plan.queue));
+    validate_dedup(plan.dedup);
+    for (let event in parse_lines(plan.journal))
+        if (!valid_event(event)) die('notifications: invalid compacted event\n');
+    if (!atomic_write(DEDUP, sprintf('%J\n', plan.dedup)) ||
+        !atomic_write(QUEUE, plan.queue) || !atomic_write(JOURNAL, plan.journal) ||
+        !atomic_write(COMMITTED, raw)) return false;
+    if (!fs.unlink(COMPACTION)) return false;
+    return command([ '/bin/sync' ]).code == 0;
+}
+function compact(items, force) {
+    let events = read_lines(JOURNAL);
+    if (!force && length(items) <= 512 && length(events) <= 512) return true;
+    let outstanding = {};
+    let terminal = [];
+    let known = {};
+    for (let id in load_dedup()) known[id] = true;
+    for (let item in items) {
+        known[item.notification_id] = true;
+        if (contains([ 'PENDING', 'INFLIGHT' ], item.status)) outstanding[item.notification_id] = true;
+        else push(terminal, item);
+    }
+    let recent = {};
+    let closed = [];
+    let seen_closed = {};
+    let latest = {};
+    // Preserve OPEN, latest STATE_CHANGED and RECOVERED for each recent/active
+    // incident, plus every source event still awaiting delivery.
+    for (let event in events) {
+        if (!valid_event(event)) die('notifications: invalid incident event\n');
+        latest[`${event.incident_id}-${event.event}`] = notification_id(event);
+        if (event.event == 'RECOVERED' && !seen_closed[event.incident_id]) {
+            push(closed, event.incident_id);
+            seen_closed[event.incident_id] = true;
+        }
+    }
+    for (let i = max(0, length(closed) - 128); i < length(closed); i++) recent[closed[i]] = true;
+    let kept_events = [];
+    for (let event in events) {
+        let id = notification_id(event);
+        if (outstanding[id] || ((!seen_closed[event.incident_id] || recent[event.incident_id]) &&
+            latest[`${event.incident_id}-${event.event}`] == id)) push(kept_events, event);
+    }
+    let kept = [];
+    let kept_ids = {};
+    let retain_from = max(0, length(terminal) - 256);
+    for (let i = retain_from; i < length(terminal); i++) kept_ids[terminal[i].notification_id] = true;
+    for (let item in items) {
+        if (outstanding[item.notification_id] || kept_ids[item.notification_id]) {
+            item.dedup_required = true;
+            push(kept, item);
+            kept_ids[item.notification_id] = true;
+        }
+    }
+    let receipts = [];
+    let receipt_ids = {};
+    for (let event in kept_events) {
+        let id = notification_id(event);
+        let legacy = `${event.incident_id}-${event.event}`;
+        if (!kept_ids[id] && !kept_ids[legacy] && !receipt_ids[id] && (known[id] || known[legacy])) {
+            push(receipts, id);
+            receipt_ids[id] = true;
+        }
+    }
+    // Backpressure, never eviction of undelivered work. Input and transaction
+    // byte limits also bound RAM/flash; capacity failures preserve all old files.
+    if (length(kept) > 1024 || length(kept_events) > 1024 || length(receipts) > 1024) return false;
+    let plan = { schema_version: 1, queue: lines(kept), journal: lines(kept_events),
+        dedup: { schema_version: 1, ids: receipts } };
+    if (!atomic_write(COMPACTION, sprintf('%J\n', plan))) return false;
+    return recover_compaction();
+}
 function sync_queue(items) {
     let known = {};
     let legacy = {};
+    for (let id in load_dedup()) known[id] = true;
     for (let item in items) {
         known[item.notification_id] = true;
         // Only genuinely legacy IDs suppress old events. Modern IDs include at.
@@ -152,7 +281,13 @@ function sync_queue(items) {
             legacy[old_id] = true;
     }
     let changed = false;
-    for (let event in read_lines(STATE_DIR + '/incidents.jsonl')) {
+    let events = read_lines(JOURNAL);
+    let opened_at = {};
+    for (let event in events) {
+        if (!valid_event(event)) die('notifications: invalid incident event; projection paused\n');
+        if (event.event == 'OPEN') opened_at[event.incident_id] = event.opened_at ?? event.at;
+    }
+    for (let event in events) {
         if (!valid_event(event))
             die('notifications: invalid incident event; projection paused\n');
         let id = notification_id(event);
@@ -163,7 +298,7 @@ function sync_queue(items) {
             source_event: event.event, incident_id: event.incident_id,
             component: event.component, role: event.role ?? 'unknown',
             state: event.state ?? 'UNKNOWN', reason: event.reason ?? 'unknown',
-            created_at: event.at, opened_at: event.opened_at ?? event.at, status: 'PENDING', attempts: 0, next_attempt_at: 0
+            created_at: event.at, opened_at: event.opened_at ?? opened_at[event.incident_id] ?? event.at, status: 'PENDING', attempts: 0, next_attempt_at: 0
         });
         known[id] = true;
         changed = true;
@@ -172,7 +307,7 @@ function sync_queue(items) {
     for (let recovery in items) {
         if (recovery.event != 'RECOVERED' || recovery.status != 'PENDING')
             continue;
-        let opened = recovery.created_at;
+        let opened = opened_at[recovery.incident_id] ?? recovery.opened_at ?? recovery.created_at;
         for (let item in items) {
             if (item.incident_id != recovery.incident_id || item.created_at > recovery.created_at || item == recovery)
                 continue;
@@ -325,16 +460,21 @@ function iteration(mode) {
     let lock = lock_queue();
     if (!lock)
         return 73;
+    let source_lock = fs.open(RUNTIME_DIR + '/incidents.lock', 'ae');
+    if (!source_lock || source_lock.lock('xn') == null) { lock.close(); return 73; }
+    if (!recover_compaction()) { source_lock.close(); lock.close(); return 70; }
     let rc = 0;
-    if (mode == 'configure')
+    if (mode == 'recover') rc = 0;
+    else if (mode == 'configure')
         rc = configure();
     else if (mode == 'persistence')
         rc = persistence();
     else {
         let items = load_queue();
-        if (mode == 'sync' || mode == 'dispatch') {
+        if (mode == 'sync' || mode == 'dispatch' || mode == 'compact') {
             if (!sync_queue(items)) rc = 70;
-            else if (mode == 'dispatch') rc = dispatch(items, load_policy());
+            else if (!compact(items, mode == 'compact')) rc = 70;
+            else if (mode == 'dispatch') rc = dispatch(load_queue(), load_policy());
         }
         else if (mode == 'json')
             print({ schema_version: 1, count: length(items), notifications: items, policy: load_policy() }, '\n');
@@ -345,6 +485,7 @@ function iteration(mode) {
         }
         else rc = 2;
     }
+    source_lock.close();
     lock.close();
     return rc;
 }
@@ -361,7 +502,7 @@ if (MODE == 'loop') {
     while (true) {
         let policy = load_policy();
         if (policy.enabled) {
-            if (gateway([ 'incidents', 'tick' ]).code == 0)
+            if (iteration('recover') == 0 && gateway([ 'incidents', 'tick' ]).code == 0)
                 iteration('dispatch');
         }
         command([ '/bin/sleep', '30' ]);
