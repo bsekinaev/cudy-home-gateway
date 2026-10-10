@@ -9,8 +9,7 @@ PR #12 merged: `620bfd190394ca601b4dc31b2a7cd354b3edfd77`. Findings исправ
 повторный review завершён без новых замечаний.
 
 Ветка `feature/0.5-asata-keeper-hardening`: самостоятельный local opt-in keeper,
-exact semantics и первое положение, bounded nft capture, missing-rule insert без captured-handle deletes,
-postcheck, kernel single-flight/recovery, fixed loop без автоматического enable.
+exact semantics и первое положение, bounded nft capture, fail-closed отказ от mutations без writer coordination, kernel single-flight/recovery, fixed loop без автоматического enable.
 Collector и doctor больше не принимают одного наличия comment.
 Новых runtime paths нет. Исходники владельца не публикуются/не исполняются.
 
@@ -36,3 +35,9 @@ because writer coordination is unavailable; TERM escalates to KILL; doctor busy
 is WARN. Added ownership/ancestor/missing-insert/no-delete/doctor contention tests,
 TERM-ignoring subprocess timeout fault test. Existing malformed marked rule repair
 remains blocked pending PassWall writer coordination; do not claim full acceptance.
+
+Повторный review 749d7a4: исправлены runtime pathname race и duplicate-insert race.
+Metadata uid/type/mode проверяется одним lstat-backed stat lookup на компонент;
+родитель проверяется до создания child. Любой необходимый repair заблокирован
+OWNER_COORDINATION_REQUIRED до координации всех external writers. Re-read не
+заменяет generation guard. Stage 0.5 repair не завершён/не принят.

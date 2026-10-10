@@ -44,7 +44,7 @@ exit 97
         logger.chmod(0o755)
         # nft/stat process boundaries emulate root metadata on non-root CI workers.
         stat = self.base / 'bin/stat'
-        stat.write_text('#!/bin/sh\nif [ "$1" = -c ] && [ "$2" = %u ]; then echo 0; else exec /usr/bin/stat "$@"; fi\n')
+        stat.write_text("#!/bin/sh\nif [ \"$1\" = -c ] && [ \"$2\" = '%u %a %F' ]; then /usr/bin/stat -c '%a %F' \"$3\" | sed 's/^/0 /'; else exec /usr/bin/stat \"$@\"; fi\n")
         stat.chmod(0o755)
         self.busybox = os.environ.get('HG_TEST_BUSYBOX', 'busybox')
         self.env = dict(os.environ, PATH=str(self.base / 'bin') + ':' + os.environ['PATH'],
@@ -88,16 +88,22 @@ exit 97
         self.assertIn('OWNER_COORDINATION_REQUIRED', result.stdout)
         self.assertFalse((self.base / 'applied').exists())
 
-    def test_missing_rule_insert_preserves_every_existing_handle(self):
+    def test_missing_rule_also_requires_writer_coordination(self):
         (self.base / 'rules').write_text(chain('meta l4proto tcp return # handle 2\n'))
         result = self.keeper('repair', True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        batch = (self.base / 'applied').read_text()
-        self.assertNotIn('delete', batch)
-        self.assertEqual(len(batch.splitlines()), 1)
-        self.assertIn('insert rule inet passwall2 PSW2_MANGLE ip saddr 192.168.1.140 meta l4proto udp counter return', batch)
+        self.assertEqual(result.returncode, 70, result.stderr)
+        self.assertIn('OWNER_COORDINATION_REQUIRED', result.stdout)
+        self.assertFalse((self.base / 'applied').exists())
 
-    def test_failed_list_and_apply_do_not_claim_success(self):
+    def test_atomic_metadata_rejects_root_owned_symlink_to_directory(self):
+        target = self.base / 'target'
+        target.mkdir()
+        (self.base / 'runtime').symlink_to(target, target_is_directory=True)
+        self.assertEqual(self.keeper('repair', True).returncode, 70)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+        self.assertFalse((self.base / 'applied').exists())
+
+    def test_failed_list_and_blocked_mutation_do_not_claim_success(self):
         self.env['HG_KEEPER_LIST_RC'] = '1'
         self.assertEqual(self.keeper('repair', True).returncode, 70)
         self.assertFalse((self.base / 'applied').exists())
@@ -132,7 +138,7 @@ exit 97
         child.stdout.close()
         self.assertEqual(self.keeper().returncode, 0)
 
-    def test_zero_exit_without_valid_postcheck_is_failure(self):
+    def test_legacy_apply_boundary_is_never_reached(self):
         (self.base / 'rules').write_text(chain(''))
         self.env['HG_KEEPER_POST_INVALID'] = '1'
         result = self.keeper('repair', True)
@@ -176,7 +182,7 @@ exit 97
     def test_nonroot_runtime_owner_is_rejected(self):
         tools = self.base / 'bin'
         stat = tools / 'stat'
-        stat.write_text('#!/bin/sh\nif [ "$1" = -c ] && [ "$2" = %u ]; then echo 1000; else exec /usr/bin/stat "$@"; fi\n')
+        stat.write_text("#!/bin/sh\nif [ \"$1\" = -c ] && [ \"$2\" = '%u %a %F' ]; then echo '1000 755 directory'; else exec /usr/bin/stat \"$@\"; fi\n")
         stat.chmod(0o755)
         self.assertEqual(self.keeper('repair', True).returncode, 70)
         self.assertFalse((self.base / 'applied').exists())

@@ -182,7 +182,7 @@ hg_asata_keeper() (
     trap 'exit 70' INT TERM
     set -o pipefail
     hg_asata_keeper_capture "$work/chain" || exit 70
-    # Only marked rules may be removed. Invalid handles or missing chain abort.
+    # Inspect exact semantics; malformed handles or missing chain abort.
     hg_asata_keeper_plan "$work/chain" > "$work/batch" || exit 70
     if [ "$(head -n 1 "$work/batch")" = OK ]; then
         printf 'ASATA_KEEPER=OK\n'
@@ -192,17 +192,10 @@ hg_asata_keeper() (
         printf 'ASATA_KEEPER=NEEDS_REPAIR\n'
         exit 1
     fi
-    # Never delete captured handles: another writer can replace a rule using the same handle.
-    if [ "$(head -n 1 "$work/batch")" = BLOCKED_MARKED_RULE ]; then
-        printf 'ASATA_KEEPER=OWNER_COORDINATION_REQUIRED\n'
-        exit 70
-    fi
-    timeout -k 1 5 nft -f "$work/batch" >/dev/null 2>&1 || exit 70
-    hg_asata_keeper_capture "$work/verified" || exit 70
-    hg_asata_keeper_plan "$work/verified" > "$work/postcheck" || exit 70
-    [ "$(cat "$work/postcheck")" = OK ] || exit 70
-    logger -t home-gateway-asata 'atomic rule repair completed' 2>/dev/null || true
-    printf 'ASATA_KEEPER=REPAIRED\n'
+    # No mutation without coordination with every external chain writer.
+    # Even a missing-rule insert can race another writer and leave duplicates.
+    printf 'ASATA_KEEPER=OWNER_COORDINATION_REQUIRED\n'
+    exit 70
 )
 
 # Helpers used only with private generated paths from the locked keeper.
@@ -241,7 +234,7 @@ hg_asata_keeper_plan() {
             if (tables != 1 || chains != 1 || closes != 2 || bad || marked > 32) exit 1
             if (marked == 1 && valid == 1) { print "OK"; exit }
             if (marked > 0) { print "BLOCKED_MARKED_RULE"; exit }
-            printf "insert rule inet passwall2 PSW2_MANGLE ip saddr 192.168.1.140 meta l4proto udp counter return comment \"ASATA-UDP-DIRECT\"\n"
+            print "MISSING_RULE"
         }
     ' "$1"
 
@@ -265,31 +258,34 @@ hg_asata_keeper_loop() (
     done
 )
 
-# Reject pre-created unprivileged directories and writable non-sticky ancestors.
+# Each component is inspected in one lstat-backed stat call: type, uid, mode
+# belong to the same inode. Once accepted under a trusted (possibly sticky)
+# parent, an unprivileged user cannot rename this root-owned directory.
 hg_asata_runtime_prepare() (
     candidate="$1"
     case "$candidate" in /*) ;; *) exit 1 ;; esac
     case "$candidate" in *[!a-zA-Z0-9_./-]*|*//*|*/) exit 1 ;; esac
-    [ "$(stat -c %u /)" = 0 ] || exit 1
-    root_mode="$(stat -c %a /)" || exit 1
-    case "$root_mode" in ''|*[!0-7]*) exit 1 ;; esac
-    [ "${#root_mode}" -le 4 ] || exit 1
-    [ $((0$root_mode & 0022)) -eq 0 ] || [ $((0$root_mode & 01000)) -ne 0 ] || exit 1
-    mkdir -p "$candidate" || exit 1
     prefix=''
-    IFS=/
-    for segment in $candidate; do
-        [ -n "$segment" ] || continue
-        case "$segment" in .|..) exit 1 ;; esac
-        prefix="$prefix/$segment"
-        [ -d "$prefix" ] && [ ! -L "$prefix" ] || exit 1
-        [ "$(stat -c %u "$prefix")" = 0 ] || exit 1
-        permission="$(stat -c %a "$prefix")" || exit 1
+    remaining="$candidate"
+    while :; do
+        # BusyBox stat defaults to lstat (no -L); symlinks cannot pass as directory.
+        set -- $(LC_ALL=C stat -c '%u %a %F' "${prefix:-/}") || exit 1
+        [ "$#" -eq 3 ] && [ "$1" = 0 ] && [ "$3" = directory ] || exit 1
+        permission="$2"
         case "$permission" in ''|*[!0-7]*) exit 1 ;; esac
         [ "${#permission}" -le 4 ] || exit 1
         if [ "$prefix" != "$candidate" ] && [ $((0$permission & 0022)) -ne 0 ]; then
             [ $((0$permission & 01000)) -ne 0 ] || exit 1
         fi
+        [ "$prefix" != "$candidate" ] || break
+        remaining="${remaining#/}"
+        segment="${remaining%%/*}"
+        case "$segment" in ''|.|..) exit 1 ;; esac
+        prefix="$prefix/$segment"
+        remaining="${remaining#"$segment"}"
+        # The parent was validated before this lookup/create. A hostile existing
+        # entry is inspected on the next iteration, never chmodded or descended.
+        [ -e "$prefix" ] || [ -L "$prefix" ] || mkdir "$prefix" || exit 1
     done
     chmod 700 "$candidate"
 )

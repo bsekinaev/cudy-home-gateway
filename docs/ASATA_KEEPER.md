@@ -27,19 +27,21 @@ Repair и loop disabled без trusted local `HG_ASATA_KEEPER_AUTHORIZED=1`.
 Repair получает kernel flock и приватный RAM snapshot цепочки, до 64 KiB.
 Парсер требует таблицу/цепочку, завершённую структуру, корректные числовые handles,
 до 32 помеченных правил. При missing/malformed/oversize input ничего не меняется.
-Автоматически разрешена только вставка отсутствующего правила. Если уже есть
-помеченное правило, но его семантика/порядок/уникальность неверны, repair возвращает
-OWNER_COORDINATION_REQUIRED без изменений. Delete по captured handle запрещён:
-другой writer может переиспользовать handle для чужого правила между snapshot
-и apply. Для замены нужны проверенная координация с PassWall2 или generation-aware
-API; они пока отсутствуют. Не считать эту часть полной LIVE-приёмкой keeper.
-Единственный insert передаётся через nft -f, чужие правила не удаляются.
-После применения повторный bounded read обязан показать единственное точное
-первое правило. Только тогда печатается REPAIRED и fixed audit message в syslog.
-Это не заменяет общий persistent action audit этапа 0.7.
+Любой repair, требующий изменения цепочки, возвращает
+OWNER_COORDINATION_REQUIRED без nft apply. Даже вставка отсутствующего правила
+может одновременно выполняться другим writer и оставить дубликаты. Delete по
+captured handle также небезопасен: чужая замена может переиспользовать handle.
+Нужны проверенная координация с **каждым** writer или conditional generation-aware
+API ядра. Они пока отсутствуют; повторный read перед insert не устраняет гонку.
+Проверка существующего точного правила возвращает OK без mutation.
+Полный repair и LIVE-приёмка keeper остаются заблокированы.
 
 Вызовы nft используют timeout -k 1 5: TERM через 5 секунд и KILL спустя ещё 1. Kernel lock не имеет stale PID-directory. Runtime и каждый ancestor проверяются:
-root UID, отсутствие symlink, запрет writable non-sticky ancestors; lock file
+единый lstat-backed `stat -c '%u %a %F'` на каждый компонент: root UID,
+directory type, permissions из одного inode. Проверенный root-owned child
+не может быть переименован непривилегированным процессом под trusted/sticky
+parent. Создание следующего компонента происходит только после проверки parent;
+symlink не проходит directory type. Запрет writable non-sticky ancestors; lock file
 не может принадлежать unprivileged UID. Chmod сам по себе не доказывает владельца.
 Владение fd сохраняется у bounded nft child до его завершения; после SIGKILL parent
 оно может удерживаться до 6 секунд. Loop имеет отдельный singleton flock,
@@ -57,13 +59,14 @@ lock до 10 секунд. Это ограниченная задержка reco
 Doctor сообщает busy как WARN без ложного семантического FAIL.
 
 3. В согласованное окно остановить старый procd keeper. Не запускать оба worker.
-4. Через LAN доступ проверить `check`, отдельно разрешить один repair и проверить
-   rule order, ASATA, MAIN/Torrent/DNS/Tailscale. При ошибке восстановить оригинал.
+4. Через LAN доступ проверить `check` и rule order, ASATA, MAIN/Torrent/DNS/Tailscale.
+   Repair не включать до реализации координации writers; старый worker не заменять
+   текущим fail-closed loop как полноценным repair. При ошибке восстановить оригинал.
 5. Новый procd worker должен запускать фиксированный `gateway asata-keeper loop`
    с local opt-in. Сохранение нового init/enable link в sysupgrade inventory
    проверяется владельцем до reboot/sysupgrade. Init пока не установлен/не enabled.
 
 Автоматизированные tests используют production ash/module/timeout/flock и
 изолированную nft process boundary. Они проверяют actual OS lock/crash/timeout,
-точный batch, fail-closed и postcheck, но не доказывают Linux nft atomicity,
+точную семантику, отказ от всех mutations без writer coordination, но не доказывают Linux nft atomicity,
 procd/sysupgrade или production rule compatibility. Stage 0.5 остаётся не принят.
