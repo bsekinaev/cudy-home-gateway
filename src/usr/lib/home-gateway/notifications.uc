@@ -1,274 +1,370 @@
 #!/usr/bin/env ucode
 'use strict';
-
 import * as fs from 'fs';
 
 const GATEWAY = ARGV[0] || '/usr/bin/gateway';
 const MODE = ARGV[1] || 'show';
+// Overrides are local CLI/test inputs; never supplied by Telegram.
+const STATE_DIR = getenv('HG_NOTIFICATION_STATE_DIR') || '/etc/home-gateway/state';
+const RUNTIME_DIR = getenv('HG_NOTIFICATION_RUNTIME_DIR') || '/tmp/home-gateway';
+const SECRETS_DIR = getenv('HG_NOTIFICATION_SECRETS_DIR') || '/etc/home-gateway/secrets';
+const QUEUE = STATE_DIR + '/notifications.jsonl';
+const POLICY = STATE_DIR + '/notification-policy.json';
+const COMPONENTS = [ 'wan', 'dns', 'main', 'torrent', 'redmi', 'asata', 'tailscale' ];
+const STATUSES = [ 'PENDING', 'INFLIGHT', 'SENT', 'FAILED', 'COALESCED' ];
+const MAX_BYTES = 2097152;
 
-const STATE_DIR = '/etc/home-gateway/state';
-const INCIDENTS_FILE = STATE_DIR + '/incidents.jsonl';
-const NOTIFICATIONS_FILE = STATE_DIR + '/notifications.jsonl';
-
-
-function ensure_state_dir() {
-    if (fs.stat('/etc/home-gateway') == null)
-        fs.mkdir('/etc/home-gateway');
-
-    if (fs.stat(STATE_DIR) == null)
-        fs.mkdir(STATE_DIR);
+function quote(value) {
+    return `'${replace(`${value}`, "'", "'\\''")}'`;
 }
-
-
-function read_lines(path) {
+function command(args) {
+    let text = '';
+    for (let arg in args)
+        text += (length(text) ? ' ' : '') + quote(arg);
+    let proc = fs.popen(text + ' 2>/dev/null', 'r');
+    if (!proc)
+        return { code: 127, output: '' };
+    let output = proc.read('all') ?? '';
+    return { code: proc.close(), output };
+}
+function gateway(args) {
+    return command([ '/bin/sh', GATEWAY, ...args ]);
+}
+function ensure_dirs() {
+    for (let path in [ STATE_DIR, RUNTIME_DIR ]) {
+        if (command([ '/bin/mkdir', '-p', path ]).code != 0 || !fs.chmod(path, 0700))
+            die('notifications: unable to prepare private directories\n');
+    }
+}
+function lock_queue() {
+    ensure_dirs();
+    let file = fs.open(RUNTIME_DIR + '/notifications.lock', 'ae');
+    if (!file || file.lock('xn') == null)
+        return null;
+    return file;
+}
+function raw_file(path) {
+    let stat = fs.stat(path);
+    if (stat == null)
+        return null;
+    if (stat.size > MAX_BYTES)
+        die('notifications: state size limit exceeded; operator intervention required\n');
     let raw = fs.readfile(path);
-
-    if (raw == null || !length(raw))
-        return [];
-
-    let result = [];
-
-    for (let line in split(raw, '\n')) {
-        line = trim(line);
-
-        if (!length(line))
+    if (raw == null)
+        die('notifications: unreadable state\n');
+    return raw;
+}
+function read_lines(path) {
+    let raw = raw_file(path);
+    let items = [];
+    for (let line in split(raw ?? '', '\n')) {
+        if (!length(trim(line)))
             continue;
-
-        try {
-            let value = json(line);
-
-            if (type(value) == 'object')
-                push(result, value);
-        }
-        catch (e) {
-            // Ignore incomplete/corrupted tail after power loss.
-        }
+        let value;
+        try { value = json(line); }
+        catch (e) { die('notifications: corrupt journal; delivery paused\n'); }
+        if (type(value) != 'object')
+            die('notifications: invalid journal record; delivery paused\n');
+        push(items, value);
     }
-
-    return result;
+    return items;
 }
-
-
-function append_event(event) {
-    ensure_state_dir();
-
-    let file = fs.open(NOTIFICATIONS_FILE, 'a');
-
-    if (!file)
+function atomic_write(path, raw) {
+    if (length(raw) > MAX_BYTES)
         return false;
-
-    if (file.write(event) == null || file.write('\n') == null) {
-        file.close();
+    let tmp = path + '.new';
+    let file = fs.open(tmp, 'w');
+    if (!file || !fs.chmod(tmp, 0600))
         return false;
-    }
-
-    file.close();
-
-    return true;
+    let ok = file.write(raw) == length(raw) && file.flush() != null;
+    if (file.close() == null)
+        ok = false;
+    // ucode target has no fsync binding: sync before and after same-filesystem rename.
+    if (!ok || command([ '/bin/sync' ]).code != 0 || !fs.rename(tmp, path))
+        return false;
+    return command([ '/bin/sync' ]).code == 0;
 }
-
-
+function save_queue(items) {
+    let raw = '';
+    for (let item in items)
+        raw += sprintf('%J\n', item);
+    return atomic_write(QUEUE, raw);
+}
+function contains(values, value) {
+    for (let item in values)
+        if (item == value)
+            return true;
+    return false;
+}
+function valid_event(event) {
+    return event.schema_version == 1 && type(event.incident_id) == 'string' &&
+        match(event.incident_id, /^(wan|dns|main|torrent|redmi|asata|tailscale)-[0-9]+$/) != null &&
+        contains(COMPONENTS, event.component) &&
+        contains([ 'OPEN', 'STATE_CHANGED', 'RECOVERED' ], event.event) &&
+        type(event.at) == 'int' && event.at >= 0;
+}
 function notification_id(event) {
-    /*
-     * Один incident может иметь несколько STATE_CHANGED.
-     * Поэтому event.at является частью идентификатора.
-     *
-     * Пример:
-     * wan-123-STATE_CHANGED-1758660000
-     */
     return `${event.incident_id}-${event.event}-${event.at}`;
 }
-
-
-function existing_notifications() {
-    let result = {};
-
-    for (let item in read_lines(NOTIFICATIONS_FILE)) {
-
-        if (item?.notification_id != null)
-            result[item.notification_id] = true;
-
-        /*
-         * Совместимость со старым форматом:
-         * incident_id-event
-         */
-        if (item?.incident_id != null &&
-            item?.event != null) {
-
-            let legacy_id =
-                `${item.incident_id}-${item.event}`;
-
-            result[legacy_id] = true;
+function load_queue() {
+    let items = read_lines(QUEUE);
+    let seen = {};
+    for (let item in items) {
+        if (!valid_event({ ...item, at: item.created_at }) ||
+            type(item.notification_id) != 'string' || seen[item.notification_id] ||
+            (item.notification_id != notification_id({ ...item, at: item.created_at }) &&
+             item.notification_id != `${item.incident_id}-${item.event}`) ||
+            !contains(STATUSES, item.status) ||
+            (item.attempts != null && (type(item.attempts) != 'int' || item.attempts < 0)) ||
+            (item.next_attempt_at != null && (type(item.next_attempt_at) != 'int' || item.next_attempt_at < 0)))
+            die('notifications: invalid queue; delivery paused\n');
+        seen[item.notification_id] = true;
+    }
+    return items;
+}
+function default_policy() {
+    return { schema_version: 1, enabled: false, mute_until: 0, delivery_not_before: 0, categories: {} };
+}
+function load_policy() {
+    let raw = raw_file(POLICY);
+    if (raw == null)
+        return default_policy();
+    let policy;
+    try { policy = json(raw); }
+    catch (e) { die('notifications: corrupt policy; delivery paused\n'); }
+    if (policy?.schema_version != 1 || type(policy.enabled) != 'bool' ||
+        type(policy.mute_until) != 'int' || policy.mute_until < 0 || type(policy.categories) != 'object' ||
+        (policy.delivery_not_before != null && (type(policy.delivery_not_before) != 'int' || policy.delivery_not_before < 0)))
+        die('notifications: invalid policy; delivery paused\n');
+    for (let key, value in policy.categories)
+        if (!contains(COMPONENTS, key) || type(value) != 'bool')
+            die('notifications: invalid category; delivery paused\n');
+    return policy;
+}
+function sync_queue(items) {
+    let known = {};
+    let legacy = {};
+    for (let item in items) {
+        known[item.notification_id] = true;
+        // Only genuinely legacy IDs suppress old events. Modern IDs include at.
+        let old_id = `${item.incident_id}-${item.event}`;
+        if (item.notification_id == old_id)
+            legacy[old_id] = true;
+    }
+    let changed = false;
+    for (let event in read_lines(STATE_DIR + '/incidents.jsonl')) {
+        if (!valid_event(event))
+            die('notifications: invalid incident event; projection paused\n');
+        let id = notification_id(event);
+        if (known[id] || legacy[`${event.incident_id}-${event.event}`])
+            continue;
+        push(items, {
+            schema_version: 1, notification_id: id, event: event.event,
+            source_event: event.event, incident_id: event.incident_id,
+            component: event.component, role: event.role ?? 'unknown',
+            state: event.state ?? 'UNKNOWN', reason: event.reason ?? 'unknown',
+            created_at: event.at, opened_at: event.opened_at ?? event.at, status: 'PENDING', attempts: 0, next_attempt_at: 0
+        });
+        known[id] = true;
+        changed = true;
+    }
+    // A recovered incident supersedes undelivered transitions; one recovery summary.
+    for (let recovery in items) {
+        if (recovery.event != 'RECOVERED' || recovery.status != 'PENDING')
+            continue;
+        let opened = recovery.created_at;
+        for (let item in items) {
+            if (item.incident_id != recovery.incident_id || item.created_at > recovery.created_at || item == recovery)
+                continue;
+            if (item.event == 'OPEN')
+                opened = item.opened_at ?? item.created_at;
+            if (item.status == 'INFLIGHT' && (item.next_attempt_at ?? 0) > time()) {
+                if ((recovery.next_attempt_at ?? 0) < item.next_attempt_at) {
+                    recovery.next_attempt_at = item.next_attempt_at;
+                    changed = true;
+                }
+            }
+            if (item.status == 'PENDING' ||
+                (item.status == 'INFLIGHT' && (item.next_attempt_at ?? 0) <= time())) {
+                item.status = 'COALESCED';
+                item.summary_id = recovery.notification_id;
+                changed = true;
+            }
+        }
+        if (recovery.duration_seconds == null) {
+            recovery.duration_seconds = recovery.created_at - opened;
+            changed = true;
         }
     }
-
-    return result;
+    return !changed || save_queue(items);
 }
-
-
-function build_notification(event) {
-    return {
-    schema_version: 1,
-
-    notification_id: notification_id(event),
-
-    event: event.event,
-    source_event: event.event,
-
-    incident_id: event.incident_id,
-
-    component: event.component,
-
-    role: event.role ?? 'unknown',
-
-    state: event.state ?? 'UNKNOWN',
-
-    reason: event.reason ?? 'unknown',
-
-    created_at: event.at,
-
-    status: 'PENDING'
-    };
-}
-
-
-function sync() {
-    let known = existing_notifications();
-    let created = 0;
-
-    for (let event in read_lines(INCIDENTS_FILE)) {
-
-        if (event?.schema_version != 1)
-            continue;
-
-        if (event?.event != 'OPEN' &&
-            event?.event != 'STATE_CHANGED' &&
-            event?.event != 'RECOVERED')
-            continue;
-
-        let notification = build_notification(event);
-
-        let legacy_id =
-            `${event.incident_id}-${event.event}`;
-
-        if (known[notification.notification_id] ||
-            known[legacy_id])
-            continue;
-
-        if (!append_event(notification))
-            return 70;
-
-        known[notification.notification_id] = true;
-        created++;
+function delivery(item, proxy, chat) {
+    // Only component/state/event IDs appear in messages; raw reasons may contain secrets.
+    let text = item.event == 'RECOVERED'
+        ? `✅ CUDY: ${item.component} восстановлен. Длительность: ${item.duration_seconds ?? 0} с.`
+        : `⚠️ CUDY: ${item.component} — ${contains([ 'DOWN', 'DEGRADED' ], item.state) ? item.state : 'UNKNOWN'}.`;
+    text += `\nСобытие: ${item.notification_id}`;
+    let path = RUNTIME_DIR + '/notification-payload.json';
+    let file = fs.open(path, 'w');
+    if (!file || !fs.chmod(path, 0600))
+        return { kind: 'RETRY', error: 'PAYLOAD_IO' };
+    let payload = sprintf('%J', { chat_id: chat, text });
+    let ok = file.write(payload) == length(payload) && file.flush() != null;
+    if (file.close() == null)
+        ok = false;
+    if (!ok)
+        return { kind: 'RETRY', error: 'PAYLOAD_IO' };
+    let result = gateway([ 'telegram', 'deliver-notification', path, proxy ]);
+    fs.unlink(path);
+    let parts = split(result.output, '\nHG_TRANSPORT ');
+    let meta = split(trim(parts[1] ?? ''), ' ');
+    let http = int(meta[0] ?? '0');
+    let uploaded = int(meta[1] ?? '-1');
+    if (http == 0) {
+        // Fallback only when no request body left curl. Ambiguous delivery retries later.
+        return { kind: 'RETRY', error: 'TRANSPORT', safe_fallback: http == 0 && uploaded == 0 };
     }
-
-    print(`notifications: sync created=${created}\n`);
-
-    return 0;
+    let response;
+    try { response = json(parts[0]); }
+    catch (e) { return { kind: 'RETRY', error: 'INVALID_RESPONSE' }; }
+    if (http == 200 && response?.ok == true && type(response?.result?.message_id) == 'int')
+        return { kind: 'SENT', message_id: response.result.message_id };
+    if (http == 429 || response?.error_code == 429) {
+        let after = response?.parameters?.retry_after;
+        return { kind: 'RETRY', error: 'RATE_LIMIT', retry_after: type(after) == 'int' ? min(86400, max(1, after)) : 60 };
+    }
+    if (contains([ 400, 401, 403, 404 ], http) || contains([ 400, 401, 403, 404 ], response?.error_code))
+        return { kind: 'FAILED', error: 'TELEGRAM_REJECTED' };
+    return { kind: 'RETRY', error: 'TELEGRAM_UNAVAILABLE' };
 }
-
-
-function show() {
-    let items = read_lines(NOTIFICATIONS_FILE);
-
-    print('CUDY Home Gateway — notifications\n\n');
-    print(`Count: ${length(items)}\n\n`);
-
+function dispatch(items, policy) {
+    let now = time();
+    if (!policy.enabled || policy.mute_until > now || (policy.delivery_not_before ?? 0) > now)
+        return 0;
+    // Queue receipt also enforces the global pause if a crash preceded policy write.
+    for (let item in items)
+        if (item.last_error == 'RATE_LIMIT' && (item.next_attempt_at ?? 0) > now) return 0;
+    let chat = trim(fs.readfile(SECRETS_DIR + '/telegram.chat_id') ?? '');
+    if (match(chat, /^-?[0-9]+$/) == null)
+        return 70;
+    let sent = 0;
+    let processed = 0;
     for (let item in items) {
-        print(
-            `${item.source_event ?? item.event} ` +
-            `${item.component} ` +
-            `${item.state} ` +
-            `[${item.notification_id}]\n`
-        );
+        if (!contains([ 'PENDING', 'INFLIGHT' ], item.status) ||
+            (item.next_attempt_at ?? 0) > now || policy.categories[item.component] == false)
+            continue;
+        if (++processed > 4)
+            break;
+        item.status = 'INFLIGHT';
+        item.attempts = (item.attempts ?? 0) + 1;
+        item.next_attempt_at = now + 60;
+        if (!save_queue(items))
+            return 70;
+        let result = delivery(item, '127.0.0.1:1082', chat);
+        let route = 'MAIN';
+        if (result.safe_fallback) {
+            result = delivery(item, '127.0.0.1:1081', chat);
+            route = 'TORRENT';
+        }
+        let finished = time();
+        item.status = result.kind == 'RETRY' ? 'PENDING' : result.kind;
+        item.last_error = result.error ?? null;
+        if (item.status == 'SENT') {
+            item.sent_at = finished;
+            item.message_id = result.message_id;
+            item.route = route;
+            sent++;
+        }
+        else {
+            item.next_attempt_at = finished + max(result.retry_after ?? 0, min(3600, 15 * (2 ** min(item.attempts - 1, 8))));
+        }
+        if (!save_queue(items))
+            return 70;
+        // Global Telegram retry_after: do not send the rest of this batch immediately.
+        if (result.error == 'RATE_LIMIT') {
+            policy.delivery_not_before = item.next_attempt_at;
+            if (!atomic_write(POLICY, sprintf('%J\n', policy))) return 70;
+            break;
+        }
     }
-
+    print(`notifications: processed=${min(processed, 4)} sent=${sent}\n`);
     return 0;
 }
-
-
-function show_json() {
-    let items = read_lines(NOTIFICATIONS_FILE);
-
-    let output = {
-        schema_version: 1,
-        count: length(items),
-        notifications: items
-    };
-
-    print(output, '\n');
-
-    return 0;
+function persistence() {
+    let path = getenv('HG_SYSUPGRADE_FILE') || '/etc/sysupgrade.conf';
+    let raw = raw_file(path) ?? '';
+    if (length(raw) && substr(raw, -1) != '\n') raw += '\n';
+    for (let entry in [ '/etc/home-gateway/', '/usr/bin/gateway',
+        '/usr/lib/home-gateway/', '/etc/init.d/home-gateway-telegram',
+        '/etc/rc.d/S95home-gateway-telegram' ]) {
+        if (!contains(split(raw, '\n'), entry)) raw += entry + '\n';
+    }
+    return atomic_write(path, raw) ? 0 : 70;
 }
-
-
-function selftest() {
-
-    let event_one = {
-        schema_version: 1,
-        incident_id: 'test-1',
-        event: 'STATE_CHANGED',
-        component: 'main',
-        role: 'core',
-        state: 'DOWN',
-        reason: 'test',
-        at: 100
-    };
-
-    let event_two = {
-        schema_version: 1,
-        incident_id: 'test-1',
-        event: 'STATE_CHANGED',
-        component: 'main',
-        role: 'core',
-        state: 'DEGRADED',
-        reason: 'test',
-        at: 101
-    };
-
-    let notification_one = build_notification(event_one);
-    let notification_two = build_notification(event_two);
-
-    if (notification_one.notification_id ==
-        notification_two.notification_id)
-        return 1;
-
-    if (notification_one.status != 'PENDING')
-        return 1;
-
-    if (notification_one.source_event != 'STATE_CHANGED')
-        return 1;
-
+function configure() {
+    let policy = load_policy();
+    let value = ARGV[3] ?? '';
+    switch (ARGV[2]) {
+    case 'enable': policy.enabled = true; break;
+    case 'disable': policy.enabled = false; break;
+    case 'mute':
+        if (match(value, /^[0-9]+$/) == null || int(value) > 86400)
+            return 2;
+        policy.mute_until = int(value) ? time() + int(value) : 0;
+        break;
+    case 'category':
+        if (!contains(COMPONENTS, value) || !contains([ 'on', 'off' ], ARGV[4]))
+            return 2;
+        policy.categories[value] = ARGV[4] == 'on';
+        break;
+    default: return 2;
+    }
+    return atomic_write(POLICY, sprintf('%J\n', policy)) ? 0 : 70;
+}
+function iteration(mode) {
+    let lock = lock_queue();
+    if (!lock)
+        return 73;
+    let rc = 0;
+    if (mode == 'configure')
+        rc = configure();
+    else if (mode == 'persistence')
+        rc = persistence();
+    else {
+        let items = load_queue();
+        if (mode == 'sync' || mode == 'dispatch') {
+            if (!sync_queue(items)) rc = 70;
+            else if (mode == 'dispatch') rc = dispatch(items, load_policy());
+        }
+        else if (mode == 'json')
+            print({ schema_version: 1, count: length(items), notifications: items, policy: load_policy() }, '\n');
+        else if (mode == 'show') {
+            print('CUDY Home Gateway — notifications\n');
+            for (let item in items)
+                print(`${item.status} ${item.component} ${item.event} [${item.notification_id}]\n`);
+        }
+        else rc = 2;
+    }
+    lock.close();
+    return rc;
+}
+if (MODE == 'selftest') {
+    if (notification_id({ incident_id: 'test', event: 'STATE_CHANGED', at: 100 }) ==
+        notification_id({ incident_id: 'test', event: 'STATE_CHANGED', at: 101 })) exit(1);
     print('notifications-selftest: PASS\n');
-
-    return 0;
+    exit(0);
 }
-
-
-let rc;
-
-switch (MODE) {
-
-case 'show':
-    rc = show();
-    break;
-
-case 'json':
-    rc = show_json();
-    break;
-
-case 'sync':
-    rc = sync();
-    break;
-
-case 'selftest':
-    rc = selftest();
-    break;
-
-default:
-    print('usage: notifications.uc [gateway] [show|json|sync|selftest]\n');
-    rc = 2;
-    break;
+if (MODE == 'loop') {
+    ensure_dirs();
+    let loop_lock = fs.open(RUNTIME_DIR + '/notifications-loop.lock', 'ae');
+    if (!loop_lock || loop_lock.lock('xn') == null) exit(73);
+    while (true) {
+        let policy = load_policy();
+        if (policy.enabled) {
+            if (gateway([ 'incidents', 'tick' ]).code == 0)
+                iteration('dispatch');
+        }
+        command([ '/bin/sleep', '30' ]);
+    }
 }
-
-exit(rc);
+exit(iteration(MODE));

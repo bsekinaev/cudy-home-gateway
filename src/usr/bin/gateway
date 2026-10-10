@@ -28,6 +28,11 @@ CUDY Home Gateway
   gateway incidents        Показать подтверждённые incidents и candidates
   gateway incidents --json Вывести incident state в JSON
   gateway incidents tick   Выполнить одну итерацию incident state machine
+  gateway notifications [--json|sync|dispatch]
+                           Очередь и однократная доставка уведомлений
+  gateway notifications configure enable|disable
+  gateway notifications configure mute SECONDS
+  gateway notifications configure category COMPONENT on|off
   gateway doctor           Проверить окружение и зависимости
   gateway selftest         Проверить установку Gateway CLI
   gateway telegram get-me  Проверить Telegram Bot API
@@ -122,6 +127,13 @@ main() {
                 ucode "$notifications_engine" "$0" json
             elif [ "$#" -eq 2 ] && [ "$2" = 'sync' ]; then
                 ucode "$notifications_engine" "$0" sync
+            elif [ "$#" -eq 2 ] && [ "$2" = 'persistence' ]; then
+                ucode "$notifications_engine" "$0" persistence
+            elif [ "$#" -eq 2 ] && [ "$2" = 'dispatch' ]; then
+                ucode "$notifications_engine" "$0" dispatch
+            elif [ "${2:-}" = 'configure' ] && [ "$#" -ge 3 ] && [ "$#" -le 5 ]; then
+                shift 2
+                ucode "$notifications_engine" "$0" configure "$@"
             elif [ "$#" -eq 2 ] && [ "$2" = 'selftest' ]; then
                 ucode "$notifications_engine" "$0" selftest
             else
@@ -148,6 +160,10 @@ main() {
                         return "$HG_EXIT_USAGE"
                     fi
                     hg_telegram_get_updates "${3:-}" "${4:-0}"
+                    ;;
+                deliver-notification)
+                    [ "$#" -eq 4 ] || return "$HG_EXIT_USAGE"
+                    hg_telegram_deliver_notification "$3" "$4"
                     ;;
                 send-message)
                     if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
