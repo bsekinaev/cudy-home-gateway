@@ -87,6 +87,60 @@ else:
         self.assertIsNone(data['latest'])
         self.assertIsNone(data['history'])
 
+    def test_inspection_never_counts_unbounded_file_streams(self):
+        tools = self.base / 'bin'
+        tools.mkdir()
+        wc = tools / 'wc'
+        wc.write_text('#!/bin/sh\ntouch "$HG_VTEST_SENTINEL"\nexit 97\n')
+        wc.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        data = self.inspect()
+        self.assertTrue(data['cron_configured'])
+        self.assertIsNotNone(data['provider']['sha256'])
+        self.provider.write_bytes(b'')
+        with self.provider.open('r+b') as out:
+            out.truncate(100 * 1024 * 1024)  # Sparse; no large test payload allocation.
+        self.assertEqual(self.inspect()['reason'], 'PROVIDER_TOO_LARGE')
+
+    def test_partial_reader_failure_discards_digest_and_cron(self):
+        tools = self.base / 'bin'
+        tools.mkdir()
+        head = tools / 'head'
+        head.write_text('#!/bin/sh\nprintf "0 4 * * 0 /usr/bin/vtest\\n"\nexit 97\n')
+        head.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        data = self.inspect()
+        self.assertIsNone(data['provider']['sha256'])
+        self.assertEqual(data['reason'], 'PROVIDER_UNREADABLE')
+        self.assertFalse(data['cron_configured'])
+
+    def test_hasher_failure_discards_plausible_partial_digest(self):
+        tools = self.base / 'bin'
+        tools.mkdir()
+        hasher = tools / 'sha256sum'
+        hasher.write_text('#!/bin/sh\nprintf "' + 'a' * 64 + '  -\\n"\nexit 97\n')
+        hasher.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        data = self.inspect()
+        self.assertIsNone(data['provider']['sha256'])
+        self.assertEqual(data['reason'], 'PROVIDER_UNREADABLE')
+
+    def test_provider_growth_after_stat_never_publishes_prefix_hash(self):
+        tools = self.base / 'bin'
+        tools.mkdir()
+        head = tools / 'head'
+        head.write_text("""#!/usr/bin/env python3
+import os, pathlib, sys
+if sys.argv[-1] == os.environ['HG_VTEST_PATH']:
+    pathlib.Path(sys.argv[-1]).write_bytes(b'x' * 262145)
+os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBOX'], 'head', *sys.argv[1:]])
+""")
+        head.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        data = self.inspect()
+        self.assertIsNone(data['provider']['sha256'])
+        self.assertEqual(data['reason'], 'PROVIDER_UNREADABLE')
+
     def test_missing_provider_not_reported_as_idle(self):
         self.provider.unlink()
         data = self.inspect()

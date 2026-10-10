@@ -26,12 +26,12 @@ MAIN не переключался, stable tag не создавался.
   строгое чтение последнего transport suffix, malformed body/metadata не разрешает
   ложный fallback; message_id=0 не считается подтверждением.
   Runtime commit: https://github.com/bsekinaev/cudy-home-gateway/commit/dd5f6fefe8a161013a2b9d45855a10421e902b61
-  CI этого commit выполнялся на момент записи. Следующий docs commit также требует
-  проверки CI HEAD перед merge. Итоговый результат сохраняется комментарием Issue #7.
+  PR #10 объединён после CI SUCCESS: https://github.com/bsekinaev/cudy-home-gateway/actions/runs/38076049798
+  Merge: https://github.com/bsekinaev/cudy-home-gateway/commit/ca22d5160d2b45a556d7e7348ab337f8e9607f8e
 
 ## Проверки объединённого кода
 
-98 PASS: 46 notification/ASATA + 10 vtest CLI/Telegram + 13 release + 29 deployment
+102 PASS: 46 notification/ASATA + 14 vtest CLI/Telegram + 13 release + 29 deployment
 под BusyBox ash. CI script PASS; target-revision ucode compile, ash syntax,
 whitespace/secret scan PASS. Runtime inventory остаётся 19 файлов. Production не
 содержит тестовых заглушек. HTTP/Telegram boundaries и faults изолированы в tests.
@@ -56,9 +56,23 @@ Exactly-once sendMessage недостижим: потеря ответа/receipt
 5. 0.7 Safe Actions, 0.8 MAIN transactions, 0.9 backup/restore и 1.0 regression/soak
    остаются следующими этапами. Их критерии не объявлены выполненными.
 
+## Исправление позднего review PR #9
+
+Review P2 появился после merge #9: BusyBox `wc -c` читает весь поток, поэтому не
+ограничивает чтение oversized provider/cron. Ветка `feature/0.6-bounded-inspection`
+от main `ca22d51`: `stat` проверяет размер до чтения, `head -c` ограничивает hash/cron
+input. Новый test запрещает `wc` и проверяет 100 MiB sparse provider без его чтения.
+Review #11 также потребовал не принимать digest после ошибки head. Добавлен
+subshell pipefail для hash/cron; partial reader и failed hasher fault tests PASS.
+Повторный review #11 выявил рост provider после stat: bounded private snapshot
+читает limit+1, проверяет размер и success до hash; race test PASS.
+GitHub CI этой ветки проверяется отдельно перед merge; связанный thread #9 закрывается
+только после публикации исправления. Версия/блокеры не меняются.
+
 ## Точное продолжение
 
-Проверить актуальный HEAD/CI/review PR #10 и merge только после SUCCESS. Затем:
+Опубликовать PR `feature/0.6-bounded-inspection`, проверить HEAD/CI/review, merge только
+после SUCCESS и закрыть связанное замечание #9. Затем:
 
 ```sh
 git fetch origin
