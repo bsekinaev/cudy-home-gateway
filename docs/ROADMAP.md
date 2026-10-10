@@ -123,6 +123,9 @@ Provider `status` не вызывается, поскольку выполняе
 
 ## 0.9 — Backup & Hardening
 
+**Статус:** разработан host-only private archive verifier, runtime collector/
+rotation/restore ещё отсутствуют. См. [BACKUP.md](BACKUP.md); LIVE не принят.
+
 * sysupgrade backup;
 * SHA256 и проверка архива;
 * ротация последних 5 архивов;

@@ -110,6 +110,10 @@ HG_TEST_BUSYBOX=busybox python3 -m unittest discover -s scripts/vtest -p 'test_*
     fail 'vtest inspection/Telegram authorization contracts'
 pass 'vtest inspection/Telegram authorization contracts'
 
+python3 -m unittest discover -s scripts/backup -p 'test_*.py' -v ||
+    fail 'Private backup offline validation contracts'
+pass 'Private backup offline validation contracts'
+
 # Ensure public runtime never contains universal remote shell primitives.
 if git grep -n -I -E \
     -- '/exec|gateway[[:space:]]+exec|shell-console|arbitrary[[:space:]]+uci' \
