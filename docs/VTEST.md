@@ -8,6 +8,9 @@ CLI-контракта и формата результатов нет в это
 gateway vtest --json
 ```
 
+Размер проверяется через `stat` до чтения; hash/cron input дополнительно ограничен
+`head -c`. `wc -c` для этой проверки не используется.
+
 Команда читает только metadata и SHA256 regular файла `/usr/bin/vtest` размером
 до 256 KiB. Она проверяет наличие vtest-команды в root crontab до 64 KiB, не выводя
 аргументы или содержимое cron/script. Symlink не считается проверенным provider.
@@ -44,6 +47,6 @@ crash recovery, Telegram progress/result notifications и автоматизир
 Не заменять node VPN tests проверкой наличия curl или успешным запуском gateway doctor.
 LIVE только после отдельного разрешения владельца. Stage 0.6/release tag не считать готовыми.
 
-10 автоматизированных tests выполняют production CLI/poller с изолированной Telegram
+11 автоматизированных tests выполняют production CLI/poller с изолированной Telegram
 границей. Они проверяют отсутствие вызова provider, fingerprint/bounds, privacy,
 whitelist, stale message, nonce и TTL. Они не доказывают работоспособность внешнего vtest.

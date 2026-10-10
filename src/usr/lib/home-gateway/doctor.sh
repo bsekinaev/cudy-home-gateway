@@ -184,6 +184,12 @@ hg_doctor_run() {
     return 0
 }
 
+hg_vtest_size_within() {
+    file_size="$(stat -c %s "$1" 2>/dev/null)" || return 1
+    case "$file_size" in ''|*[!0-9]*) return 1 ;; esac
+    [ "${#file_size}" -le 9 ] && [ "$file_size" -le "$2" ]
+}
+
 # Metadata only: an unaudited external vtest is never executed, even for status.
 # Local path overrides support inspection/tests; Telegram cannot supply them.
 hg_vtest_inspect_json() {
@@ -199,9 +205,8 @@ hg_vtest_inspect_json() {
     elif [ -f "$vtest_path" ] && [ -r "$vtest_path" ]; then
         installed=true
         [ ! -x "$vtest_path" ] || executable=true
-        size="$(wc -c < "$vtest_path")"
-        if [ "$size" -le 262144 ]; then
-            digest="$(sha256sum "$vtest_path" 2>/dev/null | awk '{ print $1 }')"
+        if hg_vtest_size_within "$vtest_path" 262144; then
+            digest="$(head -c 262144 "$vtest_path" 2>/dev/null | sha256sum | awk '{ print $1 }')"
             case "$digest" in *[!0-9a-f]*|'') digest=''; audit_reason='PROVIDER_UNREADABLE';; esac
             if [ "${#digest}" -ne 64 ]; then digest=''; audit_reason='PROVIDER_UNREADABLE'; fi
         else
@@ -211,9 +216,9 @@ hg_vtest_inspect_json() {
         audit_reason='PROVIDER_MISSING'
     fi
     if [ -f "$cron_path" ] && [ ! -L "$cron_path" ] && [ -r "$cron_path" ] &&
-       [ "$(wc -c < "$cron_path")" -le 65536 ]; then
-        if awk 'NF >= 6 && $1 !~ /^#/ && ($6 == "/usr/bin/vtest" || $6 == "vtest") { found = 1 }
-                END { exit(found ? 0 : 1) }' "$cron_path"; then scheduled=true; fi
+       hg_vtest_size_within "$cron_path" 65536; then
+        if head -c 65536 "$cron_path" 2>/dev/null | awk 'NF >= 6 && $1 !~ /^#/ && ($6 == "/usr/bin/vtest" || $6 == "vtest") { found = 1 }
+                END { exit(found ? 0 : 1) }'; then scheduled=true; fi
     fi
     printf '{"schema_version":1,"integration":"BLOCKED","state":"UNKNOWN","reason":'
     hg_json_string "$audit_reason"

@@ -87,6 +87,21 @@ else:
         self.assertIsNone(data['latest'])
         self.assertIsNone(data['history'])
 
+    def test_inspection_never_counts_unbounded_file_streams(self):
+        tools = self.base / 'bin'
+        tools.mkdir()
+        wc = tools / 'wc'
+        wc.write_text('#!/bin/sh\ntouch "$HG_VTEST_SENTINEL"\nexit 97\n')
+        wc.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        data = self.inspect()
+        self.assertTrue(data['cron_configured'])
+        self.assertIsNotNone(data['provider']['sha256'])
+        self.provider.write_bytes(b'')
+        with self.provider.open('r+b') as out:
+            out.truncate(100 * 1024 * 1024)  # Sparse; no large test payload allocation.
+        self.assertEqual(self.inspect()['reason'], 'PROVIDER_TOO_LARGE')
+
     def test_missing_provider_not_reported_as_idle(self):
         self.provider.unlink()
         data = self.inspect()
