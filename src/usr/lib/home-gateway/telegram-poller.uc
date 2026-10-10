@@ -6,9 +6,10 @@ import * as fs from 'fs';
 const GATEWAY = ARGV[0] || '/usr/bin/gateway';
 const MODE = ARGV[1] || 'loop';
 
-const USER_FILE = '/etc/home-gateway/secrets/telegram.user_id';
-const CHAT_FILE = '/etc/home-gateway/secrets/telegram.chat_id';
-const RUNTIME_DIR = '/tmp/home-gateway';
+const SECRETS_DIR = getenv('HG_TELEGRAM_SECRETS_DIR') || '/etc/home-gateway/secrets';
+const USER_FILE = SECRETS_DIR + '/telegram.user_id';
+const CHAT_FILE = SECRETS_DIR + '/telegram.chat_id';
+const RUNTIME_DIR = getenv('HG_TELEGRAM_RUNTIME_DIR') || '/tmp/home-gateway';
 const OFFSET_FILE = RUNTIME_DIR + '/telegram.offset';
 const CALLBACK_FILE = RUNTIME_DIR + '/telegram.callback';
 const LOCK_FILE = RUNTIME_DIR + '/telegram-poller.lock';
@@ -198,7 +199,7 @@ function load_callback_state() {
 }
 
 function dashboard_markup(issued_at, nonce) {
-	return `{"inline_keyboard":[[{"text":"🔄 Обновить","callback_data":"refresh:${issued_at}:${nonce}"}]]}`;
+	return `{"inline_keyboard":[[{"text":"🔄 Обновить","callback_data":"refresh:${issued_at}:${nonce}"},{"text":"🧪 vtest","callback_data":"vtest:${issued_at}:${nonce}"}]]}`;
 }
 
 function answer_callback(callback_id, text) {
@@ -265,7 +266,23 @@ Torrent egress: ${torrent_ip} (${state(data?.torrent?.egress?.state)})
 Версия: ${value_or(data?.gateway_version, 'unknown')}`;
 }
 
-function send_dashboard(chat_id) {
+function build_vtest() {
+    let response = run_gateway([ 'vtest', '--json' ]);
+    let data;
+    try { data = json(response.output); }
+    catch (e) { return '🧪 vtest: аудит временно недоступен.'; }
+    if (response.code != 0 || data?.schema_version != 1 || data?.integration != 'BLOCKED')
+        return '🧪 vtest: аудит временно недоступен.';
+    // Fixed presentation never forwards external script/cron contents or output.
+    return `🧪 vtest — интеграция ожидает аудита
+Наличие: ${data?.provider?.installed == true ? 'найден' : 'не подтверждено'}
+Cron: ${data?.cron_configured == true ? 'настроен' : 'не подтверждён'}
+Текущий запуск и результаты: UNKNOWN
+Запуск quick/full/capability заблокирован до проверки исходника.
+Автоматическая смена MAIN запрещена.`;
+}
+
+function send_dashboard(chat_id, view) {
 	let issued_at = time();
 	let nonce = make_nonce();
 	let markup = dashboard_markup(issued_at, nonce);
@@ -274,7 +291,7 @@ function send_dashboard(chat_id) {
 		'telegram',
 		'send-message',
 		`${chat_id}`,
-		build_status(),
+		view == 'vtest' ? build_vtest() : build_status(),
 		markup
 	]);
 
@@ -291,7 +308,7 @@ function send_dashboard(chat_id) {
 	return save_callback_state(issued_at, nonce, message_id);
 }
 
-function edit_dashboard(chat_id, message_id) {
+function edit_dashboard(chat_id, message_id, view) {
 	let issued_at = time();
 	let nonce = make_nonce();
 	let markup = dashboard_markup(issued_at, nonce);
@@ -301,7 +318,7 @@ function edit_dashboard(chat_id, message_id) {
 		'edit-message',
 		`${chat_id}`,
 		`${message_id}`,
-		build_status(),
+		view == 'vtest' ? build_vtest() : build_status(),
 		markup
 	]);
 
@@ -334,6 +351,10 @@ function handle_message(message, allowed_user, allowed_chat) {
 	let text = message?.text ?? '';
 
 	switch (text) {
+	case '/vtest':
+		send_dashboard(chat_id, 'vtest');
+		break;
+
 	case '/start':
 	case '/status':
 		send_dashboard(chat_id);
@@ -345,7 +366,7 @@ function handle_message(message, allowed_user, allowed_chat) {
 				'telegram',
 				'send-message',
 				`${chat_id}`,
-				'Доступные команды:\n/start\n/status'
+				'Доступные команды:\n/start\n/status\n/vtest'
 			]);
 		break;
 	}
@@ -377,7 +398,7 @@ function handle_callback(callback, allowed_user, allowed_chat) {
 	let state = load_callback_state();
 	let parts = split(data, ':');
 
-	if (state == null || length(parts) != 3 || parts[0] != 'refresh' ||
+	if (state == null || length(parts) != 3 || (parts[0] != 'refresh' && parts[0] != 'vtest') ||
 	    parts[1] != `${state.issued_at}` || parts[2] != state.nonce ||
 	    `${message_id}` != state.message_id) {
 		reject_callback(callback_id, 'Кнопка устарела — отправьте /status');
@@ -392,7 +413,7 @@ function handle_callback(callback, allowed_user, allowed_chat) {
 	// Telegram-клиент показывает progress bar до answerCallbackQuery.
 	answer_callback(`${callback_id}`, '');
 
-	if (!edit_dashboard(chat_id, message_id))
+	if (!edit_dashboard(chat_id, message_id, parts[0]))
 		warn('telegram-poller: dashboard refresh failed\n');
 }
 

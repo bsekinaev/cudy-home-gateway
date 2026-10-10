@@ -23,8 +23,8 @@ receipt snapshot; durable redo для нескольких файлов; вос�
 
 Проверки текущей итерации: 43 notification/ASATA tests PASS, 13 release tests PASS,
 29 deployment tests PASS под BusyBox ash — всего 85. CI script PASS, ash syntax,
-target-revision ucode compile, whitespace/secret scan PASS. Новый GitHub CI надо
-проверить после публикации PR. Runtime inventory остаётся 19 файлов.
+target-revision ucode compile, whitespace/secret scan PASS. GitHub CI PR #8 SUCCESS: https://github.com/bsekinaev/cudy-home-gateway/actions/runs/38075242934
+PR #8 объединён: https://github.com/bsekinaev/cudy-home-gateway/commit/33394920fb5094bf768321c31dd11c90cdfb9a81. Runtime inventory остаётся 19 файлов.
 
 ## Незавершённое и блокеры
 
@@ -42,9 +42,20 @@ target-revision ucode compile, whitespace/secret scan PASS. Новый GitHub CI
   пути результатов, cron и cancellation. Запрещено угадывать API или автоматически менять MAIN.
 - 0.6–1.0 ещё не завершены; soak/приёмка стабильной версии не выполнены.
 
+## Частичная разработка 0.6
+
+Ветка `feature/0.6-vtest-inspection` от нового main `3339492`.
+Реальный read-only CLI читает наличие/SHA256 внешнего vtest и наличие cron,
+Telegram `/vtest`/кнопка показывают readiness с whitelist/nonce/TTL. State/results/history
+явно UNKNOWN/null; запуск fail-closed без выполнения внешнего скрипта. 10 новых tests
+PASS, CI script PASS; всего текущая регрессия 95 PASS (43 + 10 + 13 + 29).
+README/ROADMAP/VTEST описывают частичную готовность. Stage 0.6 не завершён.
+
 ## Точное следующее действие
 
-Опубликовать commit/PR ветки `feature/0.5-state-compaction`, проверить CI её HEAD,
-провести итоговый review и merge после SUCCESS. Затем отдельная ветка 0.6; доступные
-read-only части разрабатывать, неизвестное поведение внешнего vtest помечать BLOCKED.
-Версию 0.5 и тем более 1.0 не объявлять принятой до снятия соответствующих блокеров.
+Опубликовать commit/PR `feature/0.6-vtest-inspection`, проверить CI текущего HEAD,
+провести review/merge после SUCCESS. Получить точный внешний vtest, сверить SHA256
+через `gateway vtest --json` на стороне владельца, аудит side effects/API; затем
+реализовать run/history/progress/timeout/notifications по фактическому контракту.
+Отдельно снять LIVE/ASATA/redmi staging блокеры 0.5. После завершения доступной 0.6 —
+отдельные ветки 0.7–1.0. Версия остаётся 0.5.0-dev; v1.0.0 не создавать до приёмки.

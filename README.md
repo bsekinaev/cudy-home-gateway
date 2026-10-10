@@ -48,6 +48,7 @@ CI каждой новой ветки проверяется отдельно. `
 - [План релизов](docs/ROADMAP.md)
 - [Health Core](docs/HEALTH.md)
 - [Incident State](docs/INCIDENTS.md)
+- [Аудит vtest и блокеры 0.6](docs/VTEST.md)
 - [Adaptive External Probes](docs/ADAPTIVE_PROBES.md)
 - [CI/CD](docs/CI_CD.md)
 - [Telegram read-only](docs/TELEGRAM.md)
