@@ -1,6 +1,6 @@
 # Notification Dispatcher — checkpoint 0.5
 
-Статус: реализован и проверен локально; приёмка на CUDY и GitHub CI нового commit ожидаются.
+PR #6 объединён после успешного GitHub CI. Compaction проверена локально; CI её PR и приёмка на CUDY учитываются отдельно.
 Версия остаётся `0.5.0-dev`. Диспетчер изменяет только control-plane state.
 
 ## Модель доставки
@@ -45,10 +45,37 @@ Token читается из штатного secrets-файла, URL перед�
 Payload — приватный RAM-файл 0600, удаляется после вызова. Curl stderr не журналируется;
 из ошибок сохраняются только фиксированные коды. Raw `reason` не включается в сообщения.
 
-Очередь и incident journal имеют лимит чтения 2 MiB каждый. При превышении обработка
-останавливается до вмешательства владельца. Автоматическая ротация с сохранением
-дедупликации пока не реализована; запрещено просто удалять SENT-записи: projection
-может восстановить старые события и отправить их снова.
+## Ограничение истории и dedup
+
+`sync`/`dispatch` автоматически запускают compaction после 512 queue/journal records.
+Ручной запуск: `gateway notifications compact`. Сохраняются все PENDING/INFLIGHT,
+последние 256 terminal receipts, OPEN/latest STATE_CHANGED активных инцидентов и
+OPEN/latest STATE_CHANGED/RECOVERED последних 128 закрытых инцидентов. Источник любого
+неотправленного события сохраняется независимо от возраста. OPEN в journal сохраняет
+длительность будущего recovery даже после удаления его полной notification receipt.
+
+`notification-dedup.json` хранит IDs подтверждённых событий, оставшихся в journal без
+полной queue receipt. Удаление SENT из queue само по себе недопустимо. Compaction берёт
+notification lock, затем incident lock; concurrent tick возвращает 73. Результаты
+сначала сохраняются в `notification-compaction.json` (redo journal), затем публикуются
+dedup, queue, incidents и `notification-compaction.snapshot.json`. Только после sync
+удаляется redo journal. Incident producer не добавляет события при незавершённой
+compaction. Worker сначала восстанавливает redo, затем запускает tick.
+
+`gateway notifications recover` завершает прерванную операцию без доставки. Это также
+выполняется перед обычными notification-командами. Если dedup index потерян, IDs читаются
+из последнего committed snapshot. Если потеряны оба файла, marker в компактированной
+queue останавливает доставку. Corrupt index/redo не сбрасываются автоматически.
+Snapshot используется для восстановления dedup, **не для отката новой queue**: там могут
+быть более свежие SENT. Все state файлы приватны (0600). Backup/restore должен сохранять
+весь state согласованно; смешивать snapshots разных моментов нельзя.
+
+Лимит чтения каждого файла и размера redo — 2 MiB. Успешная compaction ограничена 1024
+queue records и 1024 journal records; превышение из-за неотправленной работы вызывает
+backpressure, а не eviction. Ни PENDING, ни INFLIGHT не удаляются ради лимита. При
+длительной недоступности/выключенной доставке оператор должен разобрать backlog до
+достижения byte cap. Это не бессрочное хранение всей истории: старые завершённые
+инциденты удаляются согласованно с их квитанциями.
 
 ## Recovery, mute, категории
 
@@ -62,6 +89,8 @@ gateway notifications
 gateway notifications --json
 gateway notifications sync
 gateway notifications dispatch
+gateway notifications compact
+gateway notifications recover
 gateway notifications configure enable
 gateway notifications configure disable
 gateway notifications configure mute 3600
@@ -107,9 +136,10 @@ sysupgrade -l
 ## Проверки
 
 Production ucode revision `85922056ef7abeace3cca3ab28bc1ac2d88e31b1`, BusyBox ash/awk.
-32 tests: queue/transport faults, restart/reboot simulation, SIGKILL, backoff, 429,
+43 tests: queue/transport faults, restart/reboot simulation, SIGKILL, backoff, 429,
 HTTP errors, corruption, failed write, orphan `.new`, legacy IDs, recovery, mute,
-category, bounded batch, size cap, persistence, exact ASATA collector semantics.
+category, bounded batch, size cap, persistence, exact ASATA collector semantics, compaction bounds, every redo
+publication boundary, producer lock, recovery duration, missing/corrupt dedup and backlog backpressure.
 HTTP boundary в автоматизированных тестах — test curl fixture; настоящий Telegram,
 SOCKS/Xray и flash power loss этим не подтверждены. Production не содержит test stub.
 

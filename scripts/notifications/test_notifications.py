@@ -344,5 +344,151 @@ sys.exit(item.get('code', 0))
             self.assertEqual(self.run_cli('configure', *args, ok=False).returncode, 2)
 
 
+# Additional contracts exercise actual multi-file commit/recovery boundaries.
+    def seeded_history(self):
+        events = [self.event(at=10, incident='main-10')]
+        for n in range(300):
+            at = 100 + 2 * n
+            events += [self.event(at=at, incident=f'main-{at}'),
+                       self.event('RECOVERED', at + 1, incident=f'main-{at}')]
+        events.append(self.event('STATE_CHANGED', 9999, incident='main-10'))
+        self.journal(events)
+        items = []
+        for event in events:
+            item = dict(event, notification_id=f"{event['incident_id']}-{event['event']}-{event['at']}",
+                        created_at=event['at'], status='SENT', attempts=1, next_attempt_at=0,
+                        message_id=42, sent_at=10000)
+            items.append(item)
+        (self.base / 'state/notifications.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in items))
+        return events
+
+    def test_compaction_bounds_history_without_replaying_sent(self):
+        self.seeded_history()
+        self.run_cli('compact')
+        self.assertEqual(len(self.queue()), 256)
+        events = [json.loads(x) for x in (self.base / 'state/incidents.jsonl').read_text().splitlines()]
+        self.assertEqual(len(events), 258)  # 128 closed + active OPEN/latest change
+        ids = json.loads((self.base / 'state/notification-dedup.json').read_text())['ids']
+        self.assertIn('main-10-OPEN-10', ids)
+        self.run_cli('dispatch')
+        self.assertEqual(self.calls(), [])
+        self.run_cli('compact')
+        self.run_cli('dispatch')
+        self.assertEqual(self.calls(), [])
+        self.assertEqual((self.base / 'state/notification-dedup.json').stat().st_mode & 0o777, 0o600)
+
+    def test_compaction_preserves_open_for_recovery_duration(self):
+        self.seeded_history()
+        self.run_cli('compact')
+        path = self.base / 'state/incidents.jsonl'
+        with path.open('a') as out:
+            out.write(json.dumps(self.event('RECOVERED', 10000, incident='main-10')) + '\n')
+        self.run_cli('dispatch')
+        self.assertEqual(len(self.calls()), 1)
+        self.assertIn('9990', self.calls()[0]['payload']['text'])
+
+    def test_compaction_preserves_pending_and_inflight(self):
+        self.seeded_history()
+        items = self.queue()
+        items[0]['status'] = 'INFLIGHT'
+        items[0]['next_attempt_at'] = int(time.time()) + 600
+        items[1]['status'] = 'PENDING'
+        items[2]['status'] = 'PENDING'
+        (self.base / 'state/notifications.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in items))
+        self.run_cli('compact')
+        queue = {x['notification_id']: x for x in self.queue()}
+        self.assertEqual(queue['main-10-OPEN-10']['status'], 'INFLIGHT')
+        self.assertEqual(queue['main-100-RECOVERED-101']['status'], 'PENDING')
+        self.assertTrue(any(json.loads(x)['incident_id'] == 'main-100' for x in
+                            (self.base / 'state/incidents.jsonl').read_text().splitlines()))
+
+    def test_compaction_redo_after_each_failed_snapshot_and_runtime_loss(self):
+        for boundary in ('notification-dedup.json', 'notifications.jsonl', 'incidents.jsonl',
+                         'notification-compaction.snapshot.json'):
+            with self.subTest(boundary=boundary):
+                self.seeded_history()
+                obstruction = self.base / f'state/{boundary}.new'
+                obstruction.mkdir()
+                self.assertEqual(self.run_cli('compact', ok=False).returncode, 70)
+                self.assertTrue((self.base / 'state/notification-compaction.json').exists())
+                result = subprocess.run(['ucode', str(ENGINE.parent / 'incidents.uc'), str(GATEWAY), 'tick'],
+                                        env=self.env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 70)
+                self.assertIn('compaction recovery required', result.stderr)
+                obstruction.rmdir()
+                shutil.rmtree(self.base / 'runtime')
+                (self.base / 'runtime').mkdir()
+                self.run_cli('recover')
+                self.assertFalse((self.base / 'state/notification-compaction.json').exists())
+                self.run_cli('dispatch')
+                self.assertEqual(self.calls(), [])
+
+    def test_corrupt_compaction_and_dedup_fail_closed(self):
+        self.journal([self.event()])
+        self.run_cli('sync')
+        before = (self.base / 'state/notifications.jsonl').read_bytes()
+        for name in ('notification-compaction.json', 'notification-dedup.json'):
+            path = self.base / 'state' / name
+            path.write_text('{broken')
+            self.assertNotEqual(self.run_cli('dispatch', ok=False).returncode, 0)
+            self.assertEqual((self.base / 'state/notifications.jsonl').read_bytes(), before)
+            self.assertEqual(self.calls(), [])
+            path.unlink()
+
+    def test_invalid_redo_does_not_publish_partial_data(self):
+        self.seeded_history()
+        before = (self.base / 'state/incidents.jsonl').read_bytes()
+        plan = dict(schema_version=1, queue='', journal=json.dumps(self.event()),
+                    dedup=dict(schema_version=1, ids=['invalid']))
+        (self.base / 'state/notification-compaction.json').write_text(json.dumps(plan))
+        self.assertNotEqual(self.run_cli('recover', ok=False).returncode, 0)
+        self.assertEqual((self.base / 'state/incidents.jsonl').read_bytes(), before)
+        self.assertFalse((self.base / 'state/notification-dedup.json').exists())
+
+    def test_compaction_excludes_concurrent_incident_producer(self):
+        self.seeded_history()
+        with (self.base / 'runtime/incidents.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(self.run_cli('compact', ok=False).returncode, 73)
+        self.run_cli('compact')
+
+    def test_automatic_compaction_on_projection(self):
+        self.seeded_history()
+        self.run_cli('sync')
+        self.assertEqual(len(self.queue()), 256)
+        self.run_cli('dispatch')
+        self.assertEqual(self.calls(), [])
+
+    def test_missing_index_reconstructed_from_committed_receipt_snapshot(self):
+        self.seeded_history()
+        self.run_cli('compact')
+        (self.base / 'state/notification-dedup.json').unlink()
+        self.run_cli('dispatch')
+        self.assertEqual(self.calls(), [])
+        self.run_cli('compact')
+        self.assertTrue((self.base / 'state/notification-dedup.json').exists())
+        self.run_cli('dispatch')
+        self.assertEqual(self.calls(), [])
+
+    def test_missing_all_dedup_receipts_pauses_delivery(self):
+        self.seeded_history()
+        self.run_cli('compact')
+        (self.base / 'state/notification-dedup.json').unlink()
+        (self.base / 'state/notification-compaction.snapshot.json').unlink()
+        self.assertNotEqual(self.run_cli('dispatch', ok=False).returncode, 0)
+        self.assertEqual(self.calls(), [])
+
+    def test_compaction_backpressure_never_drops_undelivered_work(self):
+        events = [self.event(at=100 + n, incident=f'main-{100 + n}') for n in range(1025)]
+        self.journal(events)
+        self.assertEqual(self.run_cli('sync', ok=False).returncode, 70)
+        self.assertEqual(len(self.queue()), 1025)
+        before = (self.base / 'state/notifications.jsonl').read_bytes()
+        self.assertEqual(self.run_cli('compact', ok=False).returncode, 70)
+        self.assertEqual((self.base / 'state/notifications.jsonl').read_bytes(), before)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse((self.base / 'state/notification-compaction.json').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

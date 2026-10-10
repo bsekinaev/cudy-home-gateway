@@ -72,11 +72,12 @@
 
 ## Остаётся до закрытия 0.5
 
-* GitHub CI опубликованной ветки и review PR;
+* PR #6: CI SUCCESS, review выполнен, merge `93586f1`;
+* compaction/dedup: реализованы, 43 notification/ASATA tests PASS; CI новой ветки ожидается;
 * LIVE delivery/reboot/procd/sysupgrade inventory, только после разрешения владельца;
 * внешний ASATA keeper: его исходник отсутствует в репозитории;
 * разбор target-only ошибки redmi.sh в последнем CD plan;
-* политика ротации очереди без потери дедупликации (сейчас bounded fail-closed);
+* окончательная LIVE-приёмка ротации/persistence; backlog capacity остаётся fail-closed;
 
 ## Приёмка
 

@@ -6,11 +6,11 @@ import * as fs from 'fs';
 const GATEWAY = ARGV[0] || '/usr/bin/gateway';
 const MODE = ARGV[1] || 'show';
 
-const RUNTIME_DIR = '/tmp/home-gateway';
+const RUNTIME_DIR = getenv('HG_NOTIFICATION_RUNTIME_DIR') || '/tmp/home-gateway';
 const RUNTIME_FILE = RUNTIME_DIR + '/incidents.runtime.json';
 const LOCK_FILE = RUNTIME_DIR + '/incidents.lock';
 
-const STATE_DIR = '/etc/home-gateway/state';
+const STATE_DIR = getenv('HG_NOTIFICATION_STATE_DIR') || '/etc/home-gateway/state';
 const JOURNAL_FILE = STATE_DIR + '/incidents.jsonl';
 
 const OPEN_THRESHOLD = 3;
@@ -467,6 +467,13 @@ function tick() {
 
     if (lock == null)
         return 73;
+
+    // Compaction recovery belongs to notifications and must finish before any append.
+    if (fs.stat(STATE_DIR + '/notification-compaction.json') != null) {
+        lock.close();
+        warn('incidents: notification compaction recovery required\n');
+        return 70;
+    }
 
     let health = fetch_health();
 
