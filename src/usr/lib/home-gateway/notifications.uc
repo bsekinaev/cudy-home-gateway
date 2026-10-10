@@ -352,17 +352,22 @@ function delivery(item, proxy, chat) {
     let result = gateway([ 'telegram', 'deliver-notification', path, proxy ]);
     fs.unlink(path);
     let parts = split(result.output, '\nHG_TRANSPORT ');
-    let meta = split(trim(parts[1] ?? ''), ' ');
-    let http = int(meta[0] ?? '0');
-    let uploaded = int(meta[1] ?? '-1');
+    if (length(parts) < 2) return { kind: 'RETRY', error: 'INVALID_TRANSPORT' };
+    // Body can contain the delimiter. Only curl's final suffix is authoritative.
+    let suffix = trim(pop(parts));
+    if (match(suffix, /^[0-9]{1,3} [0-9]+$/) == null)
+        return { kind: 'RETRY', error: 'INVALID_TRANSPORT' };
+    let meta = split(suffix, ' ');
+    let http = int(meta[0]);
+    let uploaded = int(meta[1]);
     if (http == 0) {
         // Fallback only when no request body left curl. Ambiguous delivery retries later.
-        return { kind: 'RETRY', error: 'TRANSPORT', safe_fallback: http == 0 && uploaded == 0 };
+        return { kind: 'RETRY', error: 'TRANSPORT', safe_fallback: result.code != 0 && uploaded == 0 };
     }
     let response;
-    try { response = json(parts[0]); }
+    try { response = json(join('\nHG_TRANSPORT ', parts)); }
     catch (e) { return { kind: 'RETRY', error: 'INVALID_RESPONSE' }; }
-    if (http == 200 && response?.ok == true && type(response?.result?.message_id) == 'int')
+    if (http == 200 && response?.ok == true && type(response?.result?.message_id) == 'int' && response.result.message_id > 0)
         return { kind: 'SENT', message_id: response.result.message_id };
     if (http == 429 || response?.error_code == 429) {
         let after = response?.parameters?.retry_after;

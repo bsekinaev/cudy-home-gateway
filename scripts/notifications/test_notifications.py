@@ -55,8 +55,8 @@ item = plans.pop(0) if plans else {'http': 200, 'body': {'ok': True, 'result': {
 (base / 'responses').write_text(json.dumps(plans))
 if item.get('receipt_failure'):
     (base / 'state/notifications.jsonl.new').mkdir()
-print(json.dumps(item.get('body', {})), end='')
-print('\\nHG_TRANSPORT %s %s' % (item.get('http', 200), item.get('uploaded', 100)))
+print(item.get('raw_body', json.dumps(item.get('body', {}))), end='')
+print('\\nHG_TRANSPORT ' + item.get('metadata', '%s %s' % (item.get('http', 200), item.get('uploaded', 100))))
 sys.exit(item.get('code', 0))
 ''')
         curl.chmod(0o755)
@@ -109,6 +109,30 @@ sys.exit(item.get('code', 0))
         self.run_cli('sync')
         self.run_cli('sync')
         self.assertEqual(len(self.queue()), 3)
+
+    def test_response_delimiter_cannot_authorize_fallback(self):
+        self.journal([self.event()])
+        self.responses([dict(http=200, uploaded=100, raw_body='invalid\nHG_TRANSPORT 0 0')])
+        self.run_cli('dispatch')
+        self.assertEqual(len(self.calls()), 1)
+        self.assertEqual(self.queue()[0]['status'], 'PENDING')
+        self.assertEqual(self.queue()[0]['last_error'], 'INVALID_RESPONSE')
+
+    def test_malformed_transport_never_falls_back(self):
+        self.journal([self.event()])
+        for suffix in ('invalid 0', '0 invalid', '0 0 extra', '-1 0'):
+            self.responses([dict(code=7, metadata=suffix)])
+            self.due() if self.queue() else None
+            before = len(self.calls())
+            self.run_cli('dispatch')
+            self.assertEqual(len(self.calls()), before + 1)
+            self.assertEqual(self.queue()[0]['last_error'], 'INVALID_TRANSPORT')
+
+    def test_zero_message_id_not_confirmed(self):
+        self.journal([self.event()])
+        self.responses([dict(body={'ok': True, 'result': {'message_id': 0}})])
+        self.run_cli('dispatch')
+        self.assertEqual(self.queue()[0]['status'], 'PENDING')
 
     def test_main_unreachable_falls_back(self):
         self.journal([self.event()])

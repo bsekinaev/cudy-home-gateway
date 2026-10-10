@@ -67,7 +67,7 @@
 * recovery summary, CLI mute/categories, opt-in procd worker;
 * идемпотентный Gateway sysupgrade persistence allowlist;
 * строгая проверка канонической семантики ASATA nft rule в status collector;
-* 32 новых автоматизированный test, включая SIGKILL и corrupt state;
+* 46 notification/ASATA tests, включая SIGKILL, corrupt state, compaction/redo и transport parser;
 * подробности: `docs/NOTIFICATIONS.md`.
 
 ## Остаётся до закрытия 0.5
@@ -88,7 +88,7 @@
 ## 0.6 — vtest
 
 Частично: `gateway vtest --json`, SHA256/cron metadata и Telegram audit view.
-10 tests PASS. Provider не вызывается до аудита отсутствующего исходника; реальные
+PR #9 объединён после CI SUCCESS; 10 tests PASS. Provider не вызывается до аудита отсутствующего исходника; реальные
 results/history/run/progress остаются BLOCKED. См. `docs/VTEST.md`. Этап не принят.
 
 * чтение текущего cron-run;
