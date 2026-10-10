@@ -59,17 +59,24 @@
 * release bundle: сборщик, manifest/SHA256, строгая проверка и CI artifact проверены;
 * controlled install/rollback и workflow CD реализованы.
 
-## В работе
+## Реализовано в отдельной ветке; приёмка ожидается
 
-* notification dispatcher;
-* Telegram delivery adapters;
-* MAIN SOCKS → Torrent SOCKS fallback;
-* queued recovery summary;
-* mute и категории уведомлений;
-* hardening до релиза:
+* notification dispatcher: durable attempt/receipt, bounded batch, flock/CLOEXEC;
+* Telegram adapter с MAIN SOCKS и безопасным Torrent fallback;
+* retry/backoff и глобальная пауза Telegram retry_after;
+* recovery summary, CLI mute/categories, opt-in procd worker;
+* идемпотентный Gateway sysupgrade persistence allowlist;
+* строгая проверка канонической семантики ASATA nft rule в status collector;
+* 32 новых автоматизированный test, включая SIGKILL и corrupt state;
+* подробности: `docs/NOTIFICATIONS.md`.
 
-  * sysupgrade persistence;
-  * ASATA keeper semantics.
+## Остаётся до закрытия 0.5
+
+* GitHub CI опубликованной ветки и review PR;
+* LIVE delivery/reboot/procd/sysupgrade inventory, только после разрешения владельца;
+* внешний ASATA keeper: его исходник отсутствует в репозитории;
+* разбор target-only ошибки redmi.sh в последнем CD plan;
+* политика ротации очереди без потери дедупликации (сейчас bounded fail-closed);
 
 ## Приёмка
 
