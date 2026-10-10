@@ -34,6 +34,8 @@ CUDY Home Gateway
   gateway notifications configure mute SECONDS
   gateway notifications configure category COMPONENT on|off
   gateway vtest [--json]   Проверить наличие и fingerprint внешнего vtest
+  gateway actions [show|prepare ACTION USER CHAT MESSAGE|confirm TOKEN USER CHAT MESSAGE]
+                           Подтверждения для ограниченного списка сервисов
   gateway doctor           Проверить окружение и зависимости
   gateway selftest         Проверить установку Gateway CLI
   gateway telegram get-me  Проверить Telegram Bot API
@@ -47,7 +49,7 @@ CUDY Home Gateway
                            Завершить Telegram callback query
 
 Health и Telegram работают только как control plane.
-Команды изменения сетевой конфигурации на этапе 0.5 не реализованы.
+Safe Actions отключены без local owner opt-in; произвольные команды запрещены.
 EOF_HELP
 }
 
@@ -125,6 +127,10 @@ main() {
                 hg_error 'использование: gateway incidents [--json|tick]'
                 return "$HG_EXIT_USAGE"
             fi
+            ;;
+        actions)
+            shift
+            ucode "${HG_LIBDIR}/actions.uc" "$@"
             ;;
         notifications)
             notifications_engine="${HG_LIBDIR}/notifications.uc"

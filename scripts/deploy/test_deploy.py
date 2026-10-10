@@ -66,7 +66,7 @@ esac
 
     def wire(self, data=None):
         data = data or self.new
-        lines = [f'HGDEPLOY1 {COMMIT}\n'.encode()]
+        lines = [f'HGDEPLOY2 {COMMIT}\n'.encode()]
         for name in PATHS:
             content = data[name]
             mode = '0755' if name in PATHS[:3] else '0644'
@@ -93,6 +93,13 @@ esac
         self.assertIn(b'CHANGED=1', result.stdout)
         self.assert_old()
         self.assertFalse(list(self.base.iterdir()))
+
+    def test_previous_wire_protocol_is_rejected_before_apply(self):
+        wire = self.wire().replace(b'HGDEPLOY2 ', b'HGDEPLOY1 ', 1)
+        result = self.run_engine('apply', wire)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'bad header', result.stdout)
+        self.assert_old()
 
     def test_apply_noop_and_manual_rollback(self):
         result = self.run_engine('apply')

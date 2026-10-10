@@ -22,6 +22,7 @@ files() {
 etc/init.d/home-gateway-telegram
 usr/bin/gateway
 usr/bin/home-gateway-ci-smoke
+usr/lib/home-gateway/actions.uc
 usr/lib/home-gateway/asata.sh
 usr/lib/home-gateway/common.sh
 usr/lib/home-gateway/dns.sh
@@ -182,7 +183,7 @@ timeout 60 head -c 1048577 > "$WORK/request"
 [ "$(sha256sum "$WORK/request" | cut -d ' ' -f1)" = "$request_hash" ] || fail 'request checksum mismatch'
 exec 3< "$WORK/request"
 IFS= read -r header <&3 || fail 'missing header'
-[ "$header" = "HGDEPLOY1 $commit" ] || fail 'bad header'
+[ "$header" = "HGDEPLOY2 $commit" ] || fail 'bad header'
 for rel in $(files); do
     IFS=' ' read -r mode size digest extra <&3 || fail 'truncated metadata'
     [ -z "$extra" ] && hex "$digest" 64 || fail 'bad metadata'

@@ -299,3 +299,10 @@ CI выполняет тесты сборщика, сборку и sha256sum -c 
 Проверки на изолированном стенде не означают, что production CD уже активирован.
 
 Границы проведённых проверок: [CD_ACCEPTANCE.md](CD_ACCEPTANCE.md).
+
+## Safe Actions inventory migration
+
+С добавлением `actions.uc` trusted inventory — 20 файлов, wire version HGDEPLOY2.
+Старый HGDEPLOY1 отвергается до apply. Receiver bootstrap и provisioning нового
+regular module на CUDY требуют отдельного разрешения; safe_live не обходит эту
+проверку. Порядок, rollback и opt-in описаны в [SAFE_ACTIONS.md](SAFE_ACTIONS.md).

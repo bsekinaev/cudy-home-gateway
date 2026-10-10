@@ -103,6 +103,11 @@ Provider `status` не вызывается, поскольку выполняе
 
 ## 0.7 — Safe Actions
 
+Разработаны disabled-by-default allowlist, durable TTL/nonce/message/boot confirmations,
+replay protection, kernel locks/CLOEXEC, UNKNOWN crash recovery, bounded audit,
+Tailscale-only MAINTENANCE и Telegram /actions. LIVE и HGDEPLOY2 bootstrap не приняты;
+подробности `docs/SAFE_ACTIONS.md`.
+
 * подтверждения;
 * action locks;
 * безопасные restart отдельных компонентов;

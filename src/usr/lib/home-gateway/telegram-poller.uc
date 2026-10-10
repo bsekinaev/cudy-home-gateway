@@ -199,7 +199,7 @@ function load_callback_state() {
 }
 
 function dashboard_markup(issued_at, nonce) {
-	return `{"inline_keyboard":[[{"text":"🔄 Обновить","callback_data":"refresh:${issued_at}:${nonce}"},{"text":"🧪 vtest","callback_data":"vtest:${issued_at}:${nonce}"}]]}`;
+	return `{"inline_keyboard":[[{"text":"🔄 Обновить","callback_data":"refresh:${issued_at}:${nonce}"},{"text":"🧪 vtest","callback_data":"vtest:${issued_at}:${nonce}"},{"text":"⚙️ Действия","callback_data":"actions:${issued_at}:${nonce}"}]]}`;
 }
 
 function answer_callback(callback_id, text) {
@@ -292,16 +292,58 @@ Capability: ${count(cap?.nodes)}, eligible: ${count(cap?.eligible)}
 Автоматическая смена MAIN запрещена.`;
 }
 
+function action_payload(response) {
+    let value;
+    try { value = json(response.output); } catch (e) { return null; }
+    return value?.schema_version == 1 ? value : null;
+}
+function actions_view(issued, nonce) {
+    let response = run_gateway([ 'actions', 'show' ]);
+    let value = action_payload(response);
+    let enabled = response.code == 0 && value?.enabled == true && match(nonce, /^[0-9a-f]{16}$/) != null;
+    let markup = dashboard_markup(issued, nonce);
+    if (enabled) markup = sprintf('%J', { inline_keyboard: [
+        [ { text: 'Restart Tailscale', callback_data: `prepare-tailscale:${issued}:${nonce}` },
+          { text: 'Restart uhttpd', callback_data: `prepare-uhttpd:${issued}:${nonce}` } ],
+        [ { text: 'Обновить', callback_data: `actions:${issued}:${nonce}` } ] ] });
+    return { text: `⚙️ Safe Actions
+${enabled ? 'Выберите действие; затем подтвердите в течение 120 секунд.' : 'Выполнение отключено или недоступно.'}
+Restart Tailscale прерывает удалённый доступ; требуется доступ по LAN.
+Нельзя перезапускать WAN, DNS, PassWall2, firewall или менять MAIN.`, markup };
+}
+function action_confirmation(callback, action) {
+    let chat = `${callback.message.chat.id}`, message = `${callback.message.message_id}`;
+    let response = run_gateway([ 'actions', 'prepare', action, `${callback.from.id}`, chat, message ]);
+    let value = action_payload(response);
+    let ok = response.code == 0 && value?.status == 'CONFIRM_REQUIRED' && match(value?.token || '', /^[0-9a-f]{32}$/) != null;
+    let markup = ok ? sprintf('%J', { inline_keyboard: [ [ { text: 'Подтвердить restart', callback_data: `confirm:${value.token}` } ] ] }) : '{"inline_keyboard":[]}';
+    let text = ok ? `Подтвердить ${action == 'restart-tailscale' ? 'restart Tailscale (удалённый доступ прервётся)' : 'restart uhttpd'}?
+Подтверждение действует 120 секунд, один раз.
+Для отмены отправьте /status.` : 'Действие недоступно; выполнение не начато.';
+    fs.unlink(CALLBACK_FILE); // Old menu callbacks cannot create another confirmation.
+    run_gateway([ 'telegram', 'edit-message', chat, message, text, markup ]);
+}
+function confirm_action(callback, token) {
+    answer_callback(`${callback.id}`, 'Проверка подтверждения…');
+    let response = run_gateway([ 'actions', 'confirm', token, `${callback.from.id}`, `${callback.message.chat.id}`, `${callback.message.message_id}` ]);
+    let value = action_payload(response);
+    let text = response.code == 0 && value?.status == 'DONE' ? 'Действие завершено; повторное выполнение запрещено.' :
+        value?.status == 'UNKNOWN' ? 'Исход предыдущего выполнения неизвестен. Повторно не запускалось; проверьте сервис по LAN.' :
+        'Действие отклонено или завершилось ошибкой. Повторно не запускайте без проверки состояния сервиса.';
+    run_gateway([ 'telegram', 'edit-message', `${callback.message.chat.id}`, `${callback.message.message_id}`, text, '{"inline_keyboard":[]}' ]);
+}
+
 function send_dashboard(chat_id, view) {
 	let issued_at = time();
 	let nonce = make_nonce();
-	let markup = dashboard_markup(issued_at, nonce);
+	let view_data = view == 'actions' ? actions_view(issued_at, nonce) : null;
+	let markup = view_data?.markup || dashboard_markup(issued_at, nonce);
 
 	let response = run_gateway([
 		'telegram',
 		'send-message',
 		`${chat_id}`,
-		view == 'vtest' ? build_vtest() : build_status(),
+		view == 'actions' ? view_data.text : view == 'vtest' ? build_vtest() : build_status(),
 		markup
 	]);
 
@@ -321,14 +363,15 @@ function send_dashboard(chat_id, view) {
 function edit_dashboard(chat_id, message_id, view) {
 	let issued_at = time();
 	let nonce = make_nonce();
-	let markup = dashboard_markup(issued_at, nonce);
+	let view_data = view == 'actions' ? actions_view(issued_at, nonce) : null;
+	let markup = view_data?.markup || dashboard_markup(issued_at, nonce);
 
 	let response = run_gateway([
 		'telegram',
 		'edit-message',
 		`${chat_id}`,
 		`${message_id}`,
-		view == 'vtest' ? build_vtest() : build_status(),
+		view == 'actions' ? view_data.text : view == 'vtest' ? build_vtest() : build_status(),
 		markup
 	]);
 
@@ -359,8 +402,14 @@ function handle_message(message, allowed_user, allowed_chat) {
 		return;
 
 	let text = message?.text ?? '';
+	if (index([ '/start', '/status', '/vtest', '/actions' ], text) >= 0)
+		run_gateway([ 'actions', 'cancel', `${from_id}`, `${chat_id}` ]);
 
 	switch (text) {
+	case '/actions':
+		send_dashboard(chat_id, 'actions');
+		break;
+
 	case '/vtest':
 		send_dashboard(chat_id, 'vtest');
 		break;
@@ -376,7 +425,7 @@ function handle_message(message, allowed_user, allowed_chat) {
 				'telegram',
 				'send-message',
 				`${chat_id}`,
-				'Доступные команды:\n/start\n/status\n/vtest'
+				'Доступные команды:\n/start\n/status\n/vtest\n/actions'
 			]);
 		break;
 	}
@@ -405,17 +454,21 @@ function handle_callback(callback, allowed_user, allowed_chat) {
 		return;
 	}
 
-	let state = load_callback_state();
 	let parts = split(data, ':');
+	if (length(parts) == 2 && parts[0] == 'confirm' && match(parts[1], /^[0-9a-f]{32}$/) != null) {
+		confirm_action(callback, parts[1]);
+		return;
+	}
+	let state = load_callback_state();
 
-	if (state == null || length(parts) != 3 || (parts[0] != 'refresh' && parts[0] != 'vtest') ||
+	if (state == null || length(parts) != 3 || (index([ 'refresh', 'vtest', 'actions', 'prepare-tailscale', 'prepare-uhttpd' ], parts[0]) < 0) ||
 	    parts[1] != `${state.issued_at}` || parts[2] != state.nonce ||
 	    `${message_id}` != state.message_id) {
 		reject_callback(callback_id, 'Кнопка устарела — отправьте /status');
 		return;
 	}
 
-	if (time() - state.issued_at > CALLBACK_TTL) {
+	if (time() < state.issued_at || time() - state.issued_at >= CALLBACK_TTL) {
 		reject_callback(callback_id, 'Кнопка устарела — отправьте /status');
 		return;
 	}
@@ -423,6 +476,11 @@ function handle_callback(callback, allowed_user, allowed_chat) {
 	// Telegram-клиент показывает progress bar до answerCallbackQuery.
 	answer_callback(`${callback_id}`, '');
 
+	if (parts[0] == 'prepare-tailscale' || parts[0] == 'prepare-uhttpd') {
+		if (match(state.nonce, /^[0-9a-f]{16}$/) == null) return;
+		action_confirmation(callback, parts[0] == 'prepare-tailscale' ? 'restart-tailscale' : 'restart-uhttpd');
+		return;
+	}
 	if (!edit_dashboard(chat_id, message_id, parts[0]))
 		warn('telegram-poller: dashboard refresh failed\n');
 }
