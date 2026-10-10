@@ -274,11 +274,21 @@ function build_vtest() {
     if (response.code != 0 || data?.schema_version != 1 || data?.integration != 'BLOCKED')
         return '🧪 vtest: аудит временно недоступен.';
     // Fixed presentation never forwards external script/cron contents or output.
-    return `🧪 vtest — интеграция ожидает аудита
+    let speed = data?.latest?.speed;
+    let summary = data?.latest?.summary;
+    let cap = data?.latest?.capability;
+    // Numbers only: provider node IDs, names, locations and errors stay local.
+    function count(value) { return type(value) == 'int' && value >= 0 && value <= 4096 ? `${value}` : '?'; }
+    return `🧪 vtest — offline результаты
 Наличие: ${data?.provider?.installed == true ? 'найден' : 'не подтверждено'}
 Cron: ${data?.cron_configured == true ? 'настроен' : 'не подтверждён'}
-Текущий запуск и результаты: UNKNOWN
-Запуск quick/full/capability заблокирован до проверки исходника.
+Текущий запуск: UNKNOWN (lock не доказывает живой процесс)
+Speed samples: ${count(speed?.samples)}, OK: ${count(speed?.success)}, FAIL: ${count(speed?.failed)}
+Summary: ${count(summary?.nodes)}, eligible: ${count(summary?.eligible)}
+Capability: ${count(cap?.nodes)}, eligible: ${count(cap?.eligible)}
+История: ${type(data?.history) == 'array' ? length(data.history) : 'UNKNOWN'}
+Это наблюдения файлов; завершение запуска не подтверждено.
+Запуск заблокирован: требуется аудит зависимостей и cleanup.
 Автоматическая смена MAIN запрещена.`;
 }
 

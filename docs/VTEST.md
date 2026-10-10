@@ -1,57 +1,77 @@
-# vtest — аудит перед интеграцией 0.6
+# vtest — offline adapter и аудит 0.6
 
 Статус: **частичная реализация, этап 0.6 не принят**.
-Внешний `/usr/bin/vtest` был отмечен в preflight и cron, но его исходника,
-CLI-контракта и формата результатов нет в этом репозитории.
+Исходник VLESS Smart Test 3.0.1-final предоставлен владельцем, SHA256 подтверждён:
+`cab3ffda3cdbdff192c3a91729b806c3998f2340418306ce5c4af67573fb6279`.
+Приватный оригинал не публикуется и не выполняется на рабочем хосте.
 
 ```sh
 gateway vtest --json
 ```
 
-Размер проверяется через `stat` до чтения; hash/cron input дополнительно ограничен
-`head -c`. Для provider создаётся приватный (0600) временный RAM snapshot
-лимит+1 byte: oversized/failed capture не получает digest; snapshot удаляется при
-штатном выходе, INT/TERM. SHA256 относится к полностью прочитанному snapshot.
-После SIGKILL может остаться приватный bounded tmp-файл, удаляемый при reboot.
-Ошибки reader/hash/parser передаются через BusyBox ash pipefail в
-subshell; частичный/пустой digest после ошибки не публикуется. `wc -c` для этой проверки не используется.
+Команда никогда не вызывает provider, включая его `status`. Она читает metadata,
+cron и offline TSV observations. `integration=BLOCKED`, `state=UNKNOWN`,
+`run_supported=false` сохраняются: наличие lock directory не доказывает живой
+процесс, наличие результатов не доказывает успешное завершение последнего запуска.
+`null` означает отсутствующие, нечитаемые или неподтверждённые данные.
 
-Команда читает только metadata и SHA256 regular файла `/usr/bin/vtest` размером
-до 256 KiB. Она проверяет наличие vtest-команды в root crontab до 64 KiB, не выводя
-аргументы или содержимое cron/script. Symlink не считается проверенным provider.
-Это fingerprint для сопоставления с предоставленным исходником, не доказательство
-безопасности. Provider не выполняется даже для получения status.
+## Подтверждённый контракт
 
-JSON имеет `integration=BLOCKED`, `state=UNKNOWN`, `latest=null`, `history=null`,
-`run_supported=false`. Null здесь означает **данные недоступны**, а не пустую историю
-или IDLE. Наличие cron не означает успешные cron-runs.
+- `quick [N]`: speed benchmark; лимит N касается числа нод, не времени/трафика.
+- `run [N]` / `test [N]`: полный benchmark; команды `full` у provider нет.
+- `cap` / `capability`: проверки возможностей кандидатов.
+- `status`: выполняет сетевые probes, для offline dashboard запрещён.
+- `watch`: бесконечный tail; не вызывается Gateway.
+- `stop`: завершает процессы и выполняет cleanup; требует отдельного LIVE approval.
+- `recalc`: меняет производные файлы; не является чистым read-only.
+- `apply` / `auto`: provider отвергает; Gateway не меняет MAIN по результатам.
 
-`gateway vtest run quick|full|capability` пока возвращает 70 и не выполняет команду.
-Другие аргументы возвращают 2. Нет автоматической смены MAIN или изменения UCI/nft.
+На CUDY `/usr/bin/vtest` — symlink на `/root/vless-auto.sh`. Для fingerprint
+принимается только эта точная пара путей, без второго symlink. Совпадение digest
+выставляет `provider.source_confirmed=true`; это не разрешает выполнение. Другие
+symlink fail closed. Regular files по-прежнему проверяются как metadata.
 
-Telegram `/vtest` и кнопка показывают эту readiness-информацию. Применяются существующие
-user/chat whitelist, freshness, message ID, callback nonce и TTL 120 секунд. Никакие
-provider/cron contents и raw stdout внешнего vtest не пересылаются. Запускающих кнопок
-пока нет. Trusted overrides `HG_VTEST_PATH`, `HG_VTEST_CRONTAB`,
-`HG_TELEGRAM_SECRETS_DIR`, `HG_TELEGRAM_RUNTIME_DIR` предназначены для local CLI/test;
-Telegram не управляет этими путями.
+## Данные и ограничения
 
-## Для завершения
+Результаты: `/root/vless-auto/latest.tsv`, `latest-summary.tsv`,
+`latest-capability.tsv`; история — `history/YYYYMMDD-HHMMSS.tsv`.
+Адаптер проверяет точные заголовки и число колонок реального provider,
+числовые поля, status OK/FAIL и eligible YES/NO. Отдаёт только счётчики samples,
+success/failed и nodes/eligible. Результаты/история выдаются только при подтверждённом provider SHA256; stale files
+при missing/replaced provider дают null. Имена, node IDs, адреса, location, error и stdout
+не попадают в JSON или Telegram. История содержит до 20 timestamp IDs и счётчиков,
+в обратном порядке; summary/capability archive не выдаются как отдельные запуски.
 
-Нужен точный исходник внешнего vtest, соответствующий полученному SHA256, без секретов.
-Аудит должен установить:
+Каждый входной TSV ограничен 256 KiB и 4096 строками; используются приватные
+0600 RAM snapshots, limit+1 capture и повторная проверка размера. Нет `wc -c`
+для неограниченного чтения. Неоконченная последняя строка, неверная схема,
+ошибка reader/parser и symlink дают null. Snapshot удаляется на EXIT/INT/TERM;
+после SIGKILL приватный bounded файл может остаться до reboot.
+History traversal ограничен timeout 2 секунды и бюджетом 8 KiB для всех entries
+до suffix filtering. Превышение или ошибка даёт null. Archive rows обязаны
+соответствовать run ID имени файла; mixed-run rows отвергаются.
+Файлы читаются независимо: это не транзакционный snapshot нескольких результатов.
+Во время записи можно видеть предыдущую сводку вместе с более свежими samples;
+UI прямо обозначает их как наблюдения, а не завершённый запуск.
 
-- реальные аргументы quick/full/capability/status, exit codes и JSON/text schema;
-- пути current/history/progress, поведение cron и гарантии single-flight;
-- subprocess tree, безопасную отмену/timeout и очистку temporary Xray;
-- отсутствие изменения MAIN/UCI/nft, restart data plane и утечки node credentials;
-- реальные ограничения CPU/RAM/длительности и возможность isolated fault tests.
+Provider fingerprint: stat до чтения, приватный complete snapshot до 256 KiB,
+проверенный SHA256. Cron до 64 KiB; только boolean, без содержимого/аргументов.
+Telegram `/vtest` и кнопка используют существующие user/chat whitelist, freshness,
+message ID, nonce и TTL 120 секунд. Запускающих кнопок пока нет.
+Trusted local overrides: `HG_VTEST_PATH`, `HG_VTEST_CRONTAB`,
+`HG_VTEST_RESULTS_DIR`, `HG_TELEGRAM_SECRETS_DIR`, `HG_TELEGRAM_RUNTIME_DIR`;
+Telegram не управляет путями.
 
-После этого: адаптер результата, bounded persistent history, runner lock/timeout,
-crash recovery, Telegram progress/result notifications и автоматизированная приёмка.
-Не заменять node VPN tests проверкой наличия curl или успешным запуском gateway doctor.
-LIVE только после отдельного разрешения владельца. Stage 0.6/release tag не считать готовыми.
+## Блокеры runner
 
-14 автоматизированных tests выполняют production CLI/poller с изолированной Telegram
-границей. Они проверяют отсутствие вызова provider, fingerprint/bounds, privacy,
-whitelist, stale message, nonce и TTL. Они не доказывают работоспособность внешнего vtest.
+Исходник вызывает привилегированные `/usr/share/passwall2/utils.sh` и
+`/usr/share/passwall2/app.sh run_socks`. Эти зависимости не предоставлены.
+Cleanup использует широкий `busybox pgrep -f` и TERM/KILL; требуется ограничить
+владение процессами и исключить MAIN/Torrent. Lock directory/PID требует защиты
+от stale lock, PID reuse и SIGKILL. До этого quick/full/capability возвращают 70.
+У quick/full значительный трафик; запуск после boot не должен повторять benchmark.
+TLS verification и capability semantics требуют отдельной проверки.
+
+Следующая реализация: безопасное владение process tree, lock/timeout/crash recovery,
+аудит PassWall helpers, progress и delivery результата. Нельзя заменять benchmark
+проверкой наличия curl или успешным doctor. LIVE — только с разрешением владельца.
