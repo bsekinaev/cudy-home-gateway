@@ -270,6 +270,11 @@ hg_asata_runtime_prepare() (
     candidate="$1"
     case "$candidate" in /*) ;; *) exit 1 ;; esac
     case "$candidate" in *[!a-zA-Z0-9_./-]*|*//*|*/) exit 1 ;; esac
+    [ "$(stat -c %u /)" = 0 ] || exit 1
+    root_mode="$(stat -c %a /)" || exit 1
+    case "$root_mode" in ''|*[!0-7]*) exit 1 ;; esac
+    [ "${#root_mode}" -le 4 ] || exit 1
+    [ $((0$root_mode & 0022)) -eq 0 ] || [ $((0$root_mode & 01000)) -ne 0 ] || exit 1
     mkdir -p "$candidate" || exit 1
     prefix=''
     IFS=/
