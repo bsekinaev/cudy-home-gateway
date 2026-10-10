@@ -83,6 +83,7 @@ hg_asata_collect() {
         set -- $(
             nft -a list chain inet passwall2 PSW2_MANGLE 2>/dev/null |
                 awk -v ip="$HG_ASATA_CLIENT_IPV4" -v comment="$HG_ASATA_RULE_COMMENT" '
+                    /# handle [0-9]+[ \t]*$/ && $1 != "chain" && $1 != "table" { rule_position++ }
                     index($0, "comment \"" comment "\"") {
                         comment_rules++
                         # Exact canonical nft expression, not substring matches.
@@ -99,12 +100,13 @@ hg_asata_collect() {
                             fields[11] ~ /^[0-9]+$/ && fields[12] == "return" &&
                             fields[13] == "comment" && fields[14] == "\"" comment "\"") {
                             valid_rules++
+                            if (rule_position == 1) valid_first=1
                             packets += fields[9]
                             bytes += fields[11]
                         }
                     }
                     END {
-                        print comment_rules + 0, valid_rules + 0, packets + 0, bytes + 0
+                        print comment_rules + 0, valid_rules + 0, packets + 0, bytes + 0, valid_first + 0
                     }
                 '
         )
@@ -114,7 +116,7 @@ hg_asata_collect() {
         HG_ASATA_RULE_PACKETS="${3:-}"
         HG_ASATA_RULE_BYTES="${4:-}"
 
-        if [ "$HG_ASATA_RULES" = '1' ] && [ "$HG_ASATA_VALID_RULES" = '1' ]; then
+        if [ "$HG_ASATA_RULES" = '1' ] && [ "$HG_ASATA_VALID_RULES" = '1' ] && [ "${5:-0}" = 1 ]; then
             HG_ASATA_RULE_STATE='OK'
         elif [ "$HG_ASATA_VALID_RULES" = '0' ]; then
             HG_ASATA_RULE_STATE='DOWN'
@@ -156,3 +158,134 @@ hg_asata_collect() {
         HG_ASATA_STATE='OK'
     fi
 }
+
+# Independent keeper implementation. Repair is local opt-in, never exposed by Telegram.
+# Replaces the old worker only after owner approval; running both is unsupported.
+hg_asata_keeper() (
+    mode="$1"
+    case "$mode" in check|repair) ;; *) exit 2 ;; esac
+    if [ "$mode" = repair ] && [ "${HG_ASATA_KEEPER_AUTHORIZED:-0}" != 1 ]; then
+        printf 'ASATA_KEEPER=DISABLED\n'
+        exit 70
+    fi
+    umask 077
+    runtime="${HG_ASATA_KEEPER_RUNTIME_DIR:-/tmp/home-gateway}"
+    hg_asata_runtime_prepare "$runtime" || exit 70
+    # Kernel lock has no PID file to become stale. Child nft is bounded to 5 seconds.
+    [ ! -L "$runtime/asata-keeper.lock" ] || exit 70
+    [ ! -e "$runtime/asata-keeper.lock" ] || [ "$(stat -c %u "$runtime/asata-keeper.lock")" = 0 ] || exit 70
+    exec 9>"$runtime/asata-keeper.lock" || exit 70
+    chmod 600 "$runtime/asata-keeper.lock" || exit 70
+    flock -n 9 || exit 73
+    work="$(mktemp -d "$runtime/asata-keeper.XXXXXX")" || exit 70
+    trap 'rm -rf "$work"' EXIT
+    trap 'exit 70' INT TERM
+    set -o pipefail
+    hg_asata_keeper_capture "$work/chain" || exit 70
+    # Inspect exact semantics; malformed handles or missing chain abort.
+    hg_asata_keeper_plan "$work/chain" > "$work/batch" || exit 70
+    if [ "$(head -n 1 "$work/batch")" = OK ]; then
+        printf 'ASATA_KEEPER=OK\n'
+        exit 0
+    fi
+    if [ "$mode" = check ]; then
+        printf 'ASATA_KEEPER=NEEDS_REPAIR\n'
+        exit 1
+    fi
+    # No mutation without coordination with every external chain writer.
+    # Even a missing-rule insert can race another writer and leave duplicates.
+    printf 'ASATA_KEEPER=OWNER_COORDINATION_REQUIRED\n'
+    exit 70
+)
+
+# Helpers used only with private generated paths from the locked keeper.
+hg_asata_keeper_capture() {
+    timeout -k 1 5 nft -a list chain inet passwall2 PSW2_MANGLE 2>/dev/null |
+        head -c 65537 > "$1" || return 70
+    captured_size="$(stat -c %s "$1")" || return 70
+    [ "$captured_size" -le 65536 ]
+}
+
+hg_asata_keeper_plan() {
+    awk '
+        /^[ \t]*table inet passwall2[ \t]*\{/ { tables++; next }
+        /^[ \t]*}[ \t]*$/ { closes++; next }
+        /^[ \t]*chain PSW2_MANGLE[ \t]*\{/ { chains++; next }
+        /# handle [0-9]+[ \t]*$/ {
+            if ($1 == "table" || $1 == "chain") next
+            position++
+            if (!index($0, "comment \"ASATA-UDP-DIRECT\"")) next
+            marked++
+            line=$0; sub(/^[ \t]+/, "", line)
+            handle=$NF
+            if (handle !~ /^[0-9]+$/ || length(handle)>10 || seen[handle]++) { bad=1; next }
+            sub(/[ \t]+# handle [0-9]+[ \t]*$/, "", line)
+            n=split(line,f,/[ \t]+/)
+            if (position == 1 && n == 14 && f[1] == "ip" && f[2] == "saddr" &&
+                f[3] == "192.168.1.140" && f[4] == "meta" && f[5] == "l4proto" &&
+                f[6] == "udp" && f[7] == "counter" && f[8] == "packets" &&
+                f[9] ~ /^[0-9]+$/ && f[10] == "bytes" && f[11] ~ /^[0-9]+$/ &&
+                f[12] == "return" && f[13] == "comment" && f[14] == "\"ASATA-UDP-DIRECT\"") valid++
+            # Captured handles are validated, but never used for mutation.
+        }
+        index($0,"comment \"ASATA-UDP-DIRECT\"") && $0 !~ /# handle [0-9]+[ \t]*$/ { bad=1 }
+        $0 !~ /# handle [0-9]+[ \t]*$/ && $0 !~ /^[ \t]*(type |policy |$)/ { bad=1 }
+        END {
+            if (tables != 1 || chains != 1 || closes != 2 || bad || marked > 32) exit 1
+            if (marked == 1 && valid == 1) { print "OK"; exit }
+            if (marked > 0) { print "BLOCKED_MARKED_RULE"; exit }
+            print "MISSING_RULE"
+        }
+    ' "$1"
+
+}
+
+# Owner may use this fixed worker in a separately approved procd replacement.
+hg_asata_keeper_loop() (
+    [ "${HG_ASATA_KEEPER_AUTHORIZED:-0}" = 1 ] || exit 70
+    umask 077
+    runtime="${HG_ASATA_KEEPER_RUNTIME_DIR:-/tmp/home-gateway}"
+    hg_asata_runtime_prepare "$runtime" || exit 70
+    [ ! -L "$runtime/asata-keeper-loop.lock" ] || exit 70
+    [ ! -e "$runtime/asata-keeper-loop.lock" ] || [ "$(stat -c %u "$runtime/asata-keeper-loop.lock")" = 0 ] || exit 70
+    exec 8>"$runtime/asata-keeper-loop.lock" || exit 70
+    chmod 600 "$runtime/asata-keeper-loop.lock" || exit 70
+    flock -n 8 || exit 73
+    trap 'exit 0' INT TERM
+    while :; do
+        hg_asata_keeper repair || true
+        sleep 10
+    done
+)
+
+# Each component is inspected in one lstat-backed stat call: type, uid, mode
+# belong to the same inode. Once accepted under a trusted (possibly sticky)
+# parent, an unprivileged user cannot rename this root-owned directory.
+hg_asata_runtime_prepare() (
+    candidate="$1"
+    case "$candidate" in /*) ;; *) exit 1 ;; esac
+    case "$candidate" in *[!a-zA-Z0-9_./-]*|*//*|*/) exit 1 ;; esac
+    prefix=''
+    remaining="$candidate"
+    while :; do
+        # BusyBox stat defaults to lstat (no -L); symlinks cannot pass as directory.
+        set -- $(LC_ALL=C stat -c '%u %a %F' "${prefix:-/}") || exit 1
+        [ "$#" -eq 3 ] && [ "$1" = 0 ] && [ "$3" = directory ] || exit 1
+        permission="$2"
+        case "$permission" in ''|*[!0-7]*) exit 1 ;; esac
+        [ "${#permission}" -le 4 ] || exit 1
+        if [ "$prefix" != "$candidate" ] && [ $((0$permission & 0022)) -ne 0 ]; then
+            [ $((0$permission & 01000)) -ne 0 ] || exit 1
+        fi
+        [ "$prefix" != "$candidate" ] || break
+        remaining="${remaining#/}"
+        segment="${remaining%%/*}"
+        case "$segment" in ''|.|..) exit 1 ;; esac
+        prefix="$prefix/$segment"
+        remaining="${remaining#"$segment"}"
+        # The parent was validated before this lookup/create. A hostile existing
+        # entry is inspected on the next iteration, never chmodded or descended.
+        [ -e "$prefix" ] || [ -L "$prefix" ] || mkdir "$prefix" || exit 1
+    done
+    chmod 700 "$candidate"
+)

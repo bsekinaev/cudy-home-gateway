@@ -5,10 +5,12 @@ reboot/sysupgrade и stable tag не изменялись.
 
 PR #12 merged: `620bfd190394ca601b4dc31b2a7cd354b3edfd77`.
 Offline vtest parser/history/privacy, 3 review fixes; CI run 38081844690 SUCCESS.
-PR #13 ASATA: https://github.com/bsekinaev/cudy-home-gateway/pull/13.
-Review fixes: root ownership/trusted ancestors, запрет stale-handle delete,
-missing-only insert, KILL escalation, busy doctor WARN; existing marked repair
-blocked до writer coordination. HEAD/CI/review проверяются перед merge.
+PR #13 ASATA merged: `136ba4e4db65dab817bd6a1eacb42a92d9d2eca3`.
+https://github.com/bsekinaev/cudy-home-gateway/pull/13; HEAD a04514a264edeb24d4b1db811175d19655922b37,
+CI 38083925353 SUCCESS и review completed без новых findings.
+Единый lstat-backed uid/type/mode, trusted parent до create, kernel locks,
+KILL escalation, busy doctor WARN. Все nft mutations fail closed до writer
+coordination, включая missing insert; полный repair/LIVE не принят.
 
 Ветка `feature/0.7-safe-actions`: allowlist restart Tailscale/uhttpd, disabled by
 policy; UUID token TTL120, user/chat/message/boot binding, cancel, durable EXECUTING,
@@ -20,8 +22,8 @@ Production init вызывается с его rc.common shebang. Никаких
 и Telegram boundaries, настоящий SIGKILL после durable consume, replay/TTL/identity,
 corruption, OS locks, health projection, rc.common invocation. На baseline #12:
 46 notifications/ASATA + 23 vtest + 20 actions + 13 release + 30 deployment = 132.
-После объединения ASATA ожидаемый набор 148; считать только фактически проверенный
-merged tree/HEAD CI. Shell syntax и target ucode compile PASS.
+После объединения ASATA ожидаемый набор 149 (63 + 23 + 20 + 13 + 30);
+считать только фактически проверенный merged tree/HEAD CI. Shell syntax и target ucode compile PASS.
 
 Runtime inventory расширен actions.uc до 20 файлов; wire HGDEPLOY2. Legacy wire
 rejected before apply; safe_live требует existing regular new module. Receiver
@@ -31,9 +33,15 @@ bootstrap на CUDY не выполнялся. Owner migration/LIVE-план: SA
 exact redmi failed staging. 0.8 MAIN transactions, 0.9 backup/restore,
 1.0 target regression/soak и all-critical acceptance не реализованы/не приняты.
 
-Точное продолжение: проверить актуальные HEAD/CI/review #13 и PR ветки 0.7,
+PR #14: https://github.com/bsekinaev/cudy-home-gateway/pull/14; initial HEAD
+c18384b4a5f8f67e6fb93de529b366aea2a2be65, CI 38083489420 SUCCESS, review no findings.
+Теперь требуется CI/review объединённого дерева. PR #15 read-only planner MAIN
+уже открыт, но stage 0.8 остаётся partial (snapshot/apply/recovery отсутствуют).
+
+Точное продолжение: проверить актуальные HEAD/CI/review PR #14,
 исправить findings, merge без bypass, записать ссылки на фактические merge/CI.
-Затем `git fetch origin` и `git switch -c feature/0.8-main-transactions origin/main`:
+Затем `git fetch origin` и обновить существующую `feature/0.8-main-transactions`
+на merged main:
 начать с UCI inventory/dry-run/snapshot/journal/crash recovery; preflight новой
 ноды требует проверенного temporary-SOCKS provider/PassWall helpers. Не реализовывать
 ложный successful preflight заглушкой и не выполнять MAIN apply на CUDY.

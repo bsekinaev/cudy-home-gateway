@@ -75,7 +75,8 @@
 * PR #6: CI SUCCESS, review выполнен, merge `93586f1`;
 * compaction/dedup: PR #8 объединён (`3339492`), CI SUCCESS; 43 notification/ASATA tests PASS;
 * LIVE delivery/reboot/procd/sysupgrade inventory, только после разрешения владельца;
-* внешний ASATA keeper: его исходник отсутствует в репозитории;
+* оригинальный ASATA keeper приватно изучен; независимый checker в PR #13,
+  любой нужный repair заблокирован до координации external nft writers;
 * разбор target-only ошибки redmi.sh в последнем CD plan;
 * окончательная LIVE-приёмка ротации/persistence; backlog capacity остаётся fail-closed;
 
