@@ -227,3 +227,29 @@ hg_telegram_answer_callback() {
             --data-urlencode "callback_query_id=$callback_query_id"
     fi
 }
+
+# Bounded notification adapter. JSON payload is a private RAM file, token stays in stdin.
+hg_telegram_deliver_notification() {
+    payload_file="$1"
+    delivery_proxy="$2"
+    case "$delivery_proxy" in
+        127.0.0.1:1082|127.0.0.1:1081) ;;
+        *) return "$HG_EXIT_USAGE" ;;
+    esac
+    [ -f "$payload_file" ] && [ ! -L "$payload_file" ] || return "$HG_EXIT_USAGE"
+    token="$(hg_telegram_read_token)" || return $?
+    # Suppress curl diagnostics: they can echo URLs containing the token.
+    # Empty noproxy overrides ambient NO_PROXY; there is no direct WAN route.
+    if curl --silent --fail-with-body --noproxy '' \
+        --socks5-hostname "$delivery_proxy" --connect-timeout 5 --max-time 10 \
+        --max-filesize 65536 --request POST --header 'Content-Type: application/json' \
+        --data-binary "@$payload_file" --write-out '\nHG_TRANSPORT %{http_code} %{size_upload}\n' \
+        --config - 2>/dev/null <<EOF_DELIVERY
+url = "https://api.telegram.org/bot${token}/sendMessage"
+EOF_DELIVERY
+    then
+        return 0
+    else
+        return $?
+    fi
+}

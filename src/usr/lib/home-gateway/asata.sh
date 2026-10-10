@@ -85,14 +85,22 @@ hg_asata_collect() {
                 awk -v ip="$HG_ASATA_CLIENT_IPV4" -v comment="$HG_ASATA_RULE_COMMENT" '
                     index($0, "comment \"" comment "\"") {
                         comment_rules++
-                        if (index($0, "ip saddr " ip) && index($0, "meta l4proto udp") && index($0, " return ")) {
+                        # Exact canonical nft expression, not substring matches.
+                        # Reject broader IPs, extra predicates, assignments and verdicts.
+                        line = $0
+                        sub(/^[ \t]+/, "", line)
+                        sub(/[ \t]+# handle [0-9]+[ \t]*$/, "", line)
+                        n = split(line, fields, /[ \t]+/)
+                        if (n == 14 && fields[1] == "ip" && fields[2] == "saddr" &&
+                            fields[3] == ip && fields[4] == "meta" &&
+                            fields[5] == "l4proto" && fields[6] == "udp" &&
+                            fields[7] == "counter" && fields[8] == "packets" &&
+                            fields[9] ~ /^[0-9]+$/ && fields[10] == "bytes" &&
+                            fields[11] ~ /^[0-9]+$/ && fields[12] == "return" &&
+                            fields[13] == "comment" && fields[14] == "\"" comment "\"") {
                             valid_rules++
-                            for (i = 1; i <= NF; i++) {
-                                if ($i == "packets" && (i + 1) <= NF)
-                                    packets += $(i + 1)
-                                else if ($i == "bytes" && (i + 1) <= NF)
-                                    bytes += $(i + 1)
-                            }
+                            packets += fields[9]
+                            bytes += fields[11]
                         }
                     }
                     END {

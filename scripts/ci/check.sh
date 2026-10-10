@@ -69,7 +69,7 @@ for file in \
     src/etc/init.d/home-gateway-telegram \
     src/usr/lib/home-gateway/*.sh
 do
-    sh -n "$file" || fail "shell syntax: $file"
+    busybox ash -n "$file" || fail "BusyBox ash syntax: $file"
 done
 pass 'shell syntax'
 
@@ -101,6 +101,10 @@ ucode \
     fail 'Notification Engine deterministic selftest'
 
 pass 'Notification Engine deterministic selftest'
+
+HG_TEST_BUSYBOX=busybox python3 -m unittest discover -s scripts/notifications -p 'test_*.py' -v ||
+    fail 'Notification delivery/fault-injection contracts'
+pass 'Notification delivery/fault-injection contracts'
 
 # Ensure public runtime never contains universal remote shell primitives.
 if git grep -n -I -E \
