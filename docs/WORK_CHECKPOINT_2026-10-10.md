@@ -31,7 +31,7 @@ MAIN не переключался, stable tag не создавался.
 
 ## Проверки объединённого кода
 
-101 PASS: 46 notification/ASATA + 13 vtest CLI/Telegram + 13 release + 29 deployment
+102 PASS: 46 notification/ASATA + 14 vtest CLI/Telegram + 13 release + 29 deployment
 под BusyBox ash. CI script PASS; target-revision ucode compile, ash syntax,
 whitespace/secret scan PASS. Runtime inventory остаётся 19 файлов. Production не
 содержит тестовых заглушек. HTTP/Telegram boundaries и faults изолированы в tests.
@@ -64,6 +64,8 @@ Review P2 появился после merge #9: BusyBox `wc -c` читает в�
 input. Новый test запрещает `wc` и проверяет 100 MiB sparse provider без его чтения.
 Review #11 также потребовал не принимать digest после ошибки head. Добавлен
 subshell pipefail для hash/cron; partial reader и failed hasher fault tests PASS.
+Повторный review #11 выявил рост provider после stat: bounded private snapshot
+читает limit+1, проверяет размер и success до hash; race test PASS.
 GitHub CI этой ветки проверяется отдельно перед merge; связанный thread #9 закрывается
 только после публикации исправления. Версия/блокеры не меняются.
 

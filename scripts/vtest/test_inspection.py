@@ -125,6 +125,22 @@ else:
         self.assertIsNone(data['provider']['sha256'])
         self.assertEqual(data['reason'], 'PROVIDER_UNREADABLE')
 
+    def test_provider_growth_after_stat_never_publishes_prefix_hash(self):
+        tools = self.base / 'bin'
+        tools.mkdir()
+        head = tools / 'head'
+        head.write_text("""#!/usr/bin/env python3
+import os, pathlib, sys
+if sys.argv[-1] == os.environ['HG_VTEST_PATH']:
+    pathlib.Path(sys.argv[-1]).write_bytes(b'x' * 262145)
+os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBOX'], 'head', *sys.argv[1:]])
+""")
+        head.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        data = self.inspect()
+        self.assertIsNone(data['provider']['sha256'])
+        self.assertEqual(data['reason'], 'PROVIDER_UNREADABLE')
+
     def test_missing_provider_not_reported_as_idle(self):
         self.provider.unlink()
         data = self.inspect()

@@ -190,6 +190,19 @@ hg_vtest_size_within() {
     [ "${#file_size}" -le 9 ] && [ "$file_size" -le "$2" ]
 }
 
+# Capture at most limit+1 bytes in private RAM. The extra byte detects growth
+# after stat; only a complete bounded snapshot receives a fingerprint.
+hg_vtest_fingerprint() (
+    umask 077
+    copy="$(mktemp /tmp/hg-vtest-fingerprint.XXXXXX)" || exit 1
+    trap 'rm -f "$copy"' EXIT
+    trap 'exit 1' INT TERM
+    head -c 262145 "$1" > "$copy" 2>/dev/null || exit 1
+    hg_vtest_size_within "$copy" 262144 || exit 1
+    set -o pipefail
+    sha256sum "$copy" | awk '{ print $1 }'
+)
+
 # Metadata only: an unaudited external vtest is never executed, even for status.
 # Local path overrides support inspection/tests; Telegram cannot supply them.
 hg_vtest_inspect_json() {
@@ -206,9 +219,7 @@ hg_vtest_inspect_json() {
         installed=true
         [ ! -x "$vtest_path" ] || executable=true
         if hg_vtest_size_within "$vtest_path" 262144; then
-            # BusyBox ash pipefail is scoped to this subshell. Any failed reader,
-            # hasher or parser discards its output, including a partial digest.
-            if ! digest="$(set -o pipefail; head -c 262144 "$vtest_path" 2>/dev/null | sha256sum | awk '{ print $1 }')"; then
+            if ! digest="$(hg_vtest_fingerprint "$vtest_path")"; then
                 digest=''
                 audit_reason='PROVIDER_UNREADABLE'
             fi
