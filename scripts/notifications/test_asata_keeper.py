@@ -44,7 +44,7 @@ exit 97
         logger.chmod(0o755)
         # nft/stat process boundaries emulate root metadata on non-root CI workers.
         stat = self.base / 'bin/stat'
-        stat.write_text("#!/bin/sh\nif [ \"$1\" = -c ] && [ \"$2\" = '%u %a %F' ]; then /usr/bin/stat -c '%a %F' \"$3\" | sed 's/^/0 /'; else exec /usr/bin/stat \"$@\"; fi\n")
+        stat.write_text("#!/bin/sh\nif [ \"$1\" = -c ] && [ \"$2\" = %u ]; then echo 0; elif [ \"$1\" = -c ] && [ \"$2\" = '%u %a %F' ]; then /usr/bin/stat -c '%a %F' \"$3\" | sed 's/^/0 /'; else exec /usr/bin/stat \"$@\"; fi\n")
         stat.chmod(0o755)
         self.busybox = os.environ.get('HG_TEST_BUSYBOX', 'busybox')
         self.env = dict(os.environ, PATH=str(self.base / 'bin') + ':' + os.environ['PATH'],
