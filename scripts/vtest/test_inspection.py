@@ -222,6 +222,14 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         directory = self.base / 'results'
         directory.mkdir(exist_ok=True)
         (directory / 'history').mkdir(exist_ok=True)
+        # Isolated hash boundary confirms the schema provider for result projection tests.
+        # Original private scripts never enter public fixtures and are never executed.
+        tools = self.base / 'audit-bin'
+        tools.mkdir(exist_ok=True)
+        hasher = tools / 'sha256sum'
+        hasher.write_text('#!/bin/sh\nprintf "cab3ffda3cdbdff192c3a91729b806c3998f2340418306ce5c4af67573fb6279  -\\n"\n')
+        hasher.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + os.environ['PATH']
         return directory
 
     def test_latest_real_schema_is_redacted_observations(self):
@@ -254,7 +262,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         directory = self.results()
         history = directory / 'history'
         for day in range(1, 26):
-            (history / f'202610{day:02d}-220000.tsv').write_text(self.RAW_HEADER + self.RAW_OK)
+            (history / f'202610{day:02d}-220000.tsv').write_text(self.RAW_HEADER + self.RAW_OK.replace('20261010-220000', f'202610{day:02d}-220000'))
         (history / 'PRIVATE_NAME.tsv').write_text(self.RAW_HEADER + self.RAW_OK)
         data = self.inspect()
         self.assertEqual(len(data['history']), 20)
@@ -266,6 +274,28 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         history = self.results() / 'history'
         for i in range(100):
             (history / (str(i) + 'x' * 140 + '.tsv')).write_text('')
+        self.assertIsNone(self.inspect()['history'])
+
+    def test_unconfirmed_or_missing_provider_hides_stale_results(self):
+        directory = self.results()
+        (directory / 'latest.tsv').write_text(self.RAW_HEADER + self.RAW_OK)
+        (self.base / 'audit-bin/sha256sum').unlink()
+        self.assertIsNone(self.inspect()['latest'])
+        self.provider.unlink()
+        self.assertIsNone(self.inspect()['history'])
+
+    def test_history_run_mismatch_and_mixed_rows_are_rejected(self):
+        history = self.results() / 'history'
+        file = history / '20261011-220000.tsv'
+        file.write_text(self.RAW_HEADER + self.RAW_OK)
+        self.assertIsNone(self.inspect()['history'][0]['speed'])
+        file.write_text(self.RAW_HEADER + self.RAW_OK.replace('20261010','20261011') + self.RAW_OK)
+        self.assertIsNone(self.inspect()['history'][0]['speed'])
+
+    def test_non_tsv_history_entries_are_bounded_before_filtering(self):
+        history = self.results() / 'history'
+        for i in range(100):
+            (history / (str(i) + 'x' * 140 + '.log')).write_text('')
         self.assertIsNone(self.inspect()['history'])
 
     def test_results_directory_symlink_refused(self):

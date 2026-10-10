@@ -37,7 +37,8 @@ symlink fail closed. Regular files по-прежнему проверяются 
 `latest-capability.tsv`; история — `history/YYYYMMDD-HHMMSS.tsv`.
 Адаптер проверяет точные заголовки и число колонок реального provider,
 числовые поля, status OK/FAIL и eligible YES/NO. Отдаёт только счётчики samples,
-success/failed и nodes/eligible. Имена, node IDs, адреса, location, error и stdout
+success/failed и nodes/eligible. Результаты/история выдаются только при подтверждённом provider SHA256; stale files
+при missing/replaced provider дают null. Имена, node IDs, адреса, location, error и stdout
 не попадают в JSON или Telegram. История содержит до 20 timestamp IDs и счётчиков,
 в обратном порядке; summary/capability archive не выдаются как отдельные запуски.
 
@@ -46,7 +47,9 @@ success/failed и nodes/eligible. Имена, node IDs, адреса, location, 
 для неограниченного чтения. Неоконченная последняя строка, неверная схема,
 ошибка reader/parser и symlink дают null. Snapshot удаляется на EXIT/INT/TERM;
 после SIGKILL приватный bounded файл может остаться до reboot.
-History listing имеет бюджет 8 KiB: превышение или ошибка listing даёт null.
+History traversal ограничен timeout 2 секунды и бюджетом 8 KiB для всех entries
+до suffix filtering. Превышение или ошибка даёт null. Archive rows обязаны
+соответствовать run ID имени файла; mixed-run rows отвергаются.
 Файлы читаются независимо: это не транзакционный snapshot нескольких результатов.
 Во время записи можно видеть предыдущую сводку вместе с более свежими samples;
 UI прямо обозначает их как наблюдения, а не завершённый запуск.

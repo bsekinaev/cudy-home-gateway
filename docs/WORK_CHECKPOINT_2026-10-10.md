@@ -80,8 +80,8 @@ TSV, история до 20, числовая Telegram сводка, exact symli
 подтверждение оригинала. Runner disabled: PassWall dependencies и cleanup ownership
 не прошли аудит. Нет изменения версии, CUDY, MAIN, tags.
 
-Локально: 46 notification/ASATA + 20 vtest PASS; CI script/ash/ucode PASS,
-13 release + 29 deployment PASS (итого 108). GitHub HEAD CI проверяется при публикации.
+Локально: 46 notification/ASATA + 23 vtest PASS; CI script/ash/ucode PASS,
+13 release + 29 deployment PASS (итого 111). GitHub HEAD CI проверяется при публикации.
 Никакая старая проверка не считается LIVE-проверкой нового adapter.
 
 ## Точное продолжение
@@ -99,3 +99,8 @@ crash-safe lock и isolated fault tests. Не публиковать прива�
 устанавливать новый worker на CUDY без разрешения. Для vtest runner требуется
 аудит PassWall utils/app helpers и замена широкого pgrep cleanup. Затем 0.7–1.0
 по Issue #7; version/tag readiness остаётся blocked до полной приёмки.
+
+Review PR #12 выявил три P2: provider trust gating, archive run attribution и
+history traversal до filtering. Исправлены: неподтверждённый provider даёт null,
+архив сверяет все row run IDs с basename, traversal всех entries bounded до
+suffix filtering плюс timeout 2 секунды. Добавлены 3 regression tests.

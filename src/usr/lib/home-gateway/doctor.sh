@@ -251,7 +251,8 @@ hg_vtest_inspect_json() {
     printf ',"provider":{"installed":%s,"executable":%s,"sha256":' "$installed" "$executable"
     hg_json_string_or_null "$digest"
     printf ',"source_confirmed":%s},"cron_configured":%s,' "$source_confirmed" "$scheduled"
-    hg_vtest_results_json
+    if [ "$source_confirmed" = true ]; then hg_vtest_results_json
+    else printf '"latest":null,"history":null'; fi
     printf ',"run_supported":false}\n'
 }
 
@@ -270,7 +271,7 @@ hg_vtest_result_json() (
     hg_vtest_size_within "$snapshot" 262144 || exit 1
     # A provider may be halfway through writing the last record.
     [ "$(tail -c 1 "$snapshot" | od -An -tu1 | tr -d ' \n')" = 10 ] || exit 1
-    awk -F '\t' -v kind="$kind" '
+    awk -F '\t' -v kind="$kind" -v expected="${3:-}" '
         BEGIN {
             raw="run_id\tstage\tnode_id\tname\tround\tprovider\tstatus\tcurl_rc\thttp_code\tlatency_ms\tttfb_ms\tspeed_mbps\ttotal_sec\tbytes\terror"
             summary="node_id\tname\tscore\teligible\tmedian_mbps\tmedian_latency_ms\tsuccess_rate_pct\tspread_pct\tfailures\tstalls\tprovider_good\tcapability\tchatgpt_pass\topenai_pass\thttps_pass\tloc\tsource_stage"
@@ -281,6 +282,9 @@ hg_vtest_result_json() (
             if (++rows > 4096 || length($0) > 4096) { bad=1; next }
             if (kind == "raw") {
                 if (NF != 15 || (length($1) != 15 || $1 !~ /^[0-9]+-[0-9]+$/ || substr($1,9,1) != "-") || ($7 != "OK" && $7 != "FAIL")) bad=1
+                if (expected != "" && $1 != expected) bad=1
+                if (row_run != "" && $1 != row_run) bad=1
+                row_run=$1
                 for (i=8;i<=14;i++) if ($i !~ /^[0-9]+([.][0-9]+)?$/) bad=1
                 if ($7 == "OK") success++; else failed++
             } else {
@@ -322,14 +326,14 @@ hg_vtest_history_json() (
     trap 'exit 1' INT TERM
     # Bounded directory capture; fail closed if the history exceeds its budget.
     set -o pipefail
-    find "$1" -maxdepth 1 -type f -name '*.tsv' 2>/dev/null | head -c 8193 > "$listing" || exit 1
+    timeout 2 find "$1" -mindepth 1 -maxdepth 1 2>/dev/null | head -c 8193 > "$listing" || exit 1
     hg_vtest_size_within "$listing" 8192 || exit 1
     # Fixed numeric basenames prevent path/JSON injection. Preserve no node metadata.
     ids="$(sed 's|.*/||' "$listing" | awk '/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9][.]tsv$/ {sub(/[.]tsv$/, "");print}' | sort -r | head -n 20)" || exit 1
     out='['
     separator=''
     for id in $ids; do
-        result="$(hg_vtest_result_json "$1/$id.tsv" raw)" || result=null
+        result="$(hg_vtest_result_json "$1/$id.tsv" raw "$id")" || result=null
         out="$out$separator{\"run_id\":\"$id\",\"speed\":$result}"
         separator=','
     done

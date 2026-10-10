@@ -89,7 +89,7 @@
 
 Частично: `gateway vtest --json`, SHA256/cron metadata, offline TSV сводки,
 история до 20 запусков и Telegram view. Исходник получен, hash подтверждён;
-20 adapter/authorization tests PASS. Runner/progress/alerts остаются BLOCKED:
+23 adapter/authorization tests PASS. Runner/progress/alerts остаются BLOCKED:
 нужны аудит PassWall helpers, ограничение cleanup и crash-safe process ownership.
 Provider `status` не вызывается, поскольку выполняет сетевые probes.
 См. `docs/VTEST.md` и `docs/SOURCE_AUDIT_2026-10-10.md`. Этап не принят.
