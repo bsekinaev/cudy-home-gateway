@@ -238,11 +238,19 @@ class Vault:
         pending = False
         try:
             self.garbage_collect()
+            self.verified_records()
             preserved = self.preserved_unknown()
+            pending = bool(self.pending_retirements())
         except (BackupError, OSError, sqlite3.Error, ValueError):
             # The catalog commit already happened. Do not turn it into a failed
             # import that callers will retry and rotate again. Exact hash+inventory
             # deduplication above also handles retry after a lost response.
+            try:
+                self.verified_records()
+            except (BackupError, OSError, sqlite3.Error, ValueError):
+                return dict(schema_version=1,status='COMMITTED_INTEGRITY_ERROR',committed=True,
+                            integrity_error=True,copies=copies,cleanup_pending=False,
+                            transaction_consistent=False,restore_supported=False)
             pending = True
             preserved = None
         return dict(schema_version=1, status=status + ('_CLEANUP_PENDING' if pending else ''), copies=copies,
@@ -307,7 +315,7 @@ def main():
         print(json.dumps(dict(schema_version=1, status=str(error) if isinstance(error, BackupError) else 'VAULT_UNAVAILABLE')))
         return 1
     print(json.dumps(result, sort_keys=True))
-    return 0
+    return 1 if result.get('integrity_error') else 0
 
 
 if __name__ == '__main__': raise SystemExit(main())

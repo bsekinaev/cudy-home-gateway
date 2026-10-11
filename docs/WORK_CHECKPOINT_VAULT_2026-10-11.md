@@ -8,7 +8,7 @@ deploy/restore/sysupgrade, stable tag не изменены. Исходные п
 private 0700/0600 trusted paths/no chmod shared directories, kernel exclusion,
 fsynced files before SQLite FULL catalog/audit commit, last-five rotation,
 explicit orphan recovery; corruption pauses before deletion/rotation.
-25 actual vault tests PASS (55 вместе с final verifier 30); final verifier #16 HEAD 5ccd9a55b5a042d948d98cd8b0cb8a06f0a455ca
+27 actual vault tests PASS (57 вместе с final verifier 30); final verifier #16 HEAD 5ccd9a55b5a042d948d98cd8b0cb8a06f0a455ca
 проверяется отдельно и должен быть объединён после последнего GitHub CI/review.
 Kernel SIGKILL SQL recovery подтверждён; before/after file/catalog fault boundaries
 проверены на реальной FS, без production fault injection hooks.
@@ -48,9 +48,14 @@ commit; injected archive/manifest storage faults сохраняют старые
 
 Exact archive SHA+canonical inventory hash retry идемпотентен. После commit GC
 errors дают STORED_CLEANUP_PENDING/ALREADY_STORED_CLEANUP_PENDING, без повторной
-rotation и без ложного failed import. 25 vault / 30 verifier = 55 tests.
+rotation и без ложного failed import. 27 vault / 30 verifier = 57 tests.
 
 Review: каждый mkdir fsync parent до descent; новый distinct import блокируется
 до устранения retained cleanup errors, retirement receipts не теряются на ротации.
 show проверяет retired SHA и сообщает CLEANUP_PENDING/QUARANTINED; 105 blocked
 imports не изменяют references/audit. 55 backup tests PASS.
+
+Active post-commit corruption возвращает COMMITTED_INTEGRITY_ERROR (committed
+true, integrity_error true, CLI failure), не cleanup-only success; старые
+archive copies не удаляются. Partial cleanup retries retain cleanup_pending.
+57 backup tests PASS, без router restore claim.

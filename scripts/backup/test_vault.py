@@ -197,6 +197,39 @@ class VaultTests(unittest.TestCase):
         self.assertEqual(len(made),3)
         for i,inode in made: self.assertEqual(events[i+1],('sync',inode))
 
+    def test_post_commit_active_corruption_reports_integrity_not_cleanup(self):
+        for i in range(5): self.make_archive(str(i).encode());self.store()
+        old_files=set(self.path.glob('*.tar.gz'))
+        self.make_archive(b'new-integrity-copy')
+        with vault.Vault(self.path) as store:
+            real=store.commit_copy
+            def corrupt(identifier,digest,manifest_digest):
+                real(identifier,digest,manifest_digest)
+                (self.path/(identifier+'.tar.gz')).write_bytes(b'post-commit-corruption')
+            with patch.object(store,'commit_copy',corrupt):
+                result=store.import_archive(self.archive,self.digest,self.inventory)
+            self.assertEqual(result['status'],'COMMITTED_INTEGRITY_ERROR')
+            self.assertTrue(result['integrity_error'])
+            self.assertTrue(result['committed'])
+            self.assertFalse(result['cleanup_pending'])
+            with self.assertRaises(BackupError):store.show()
+        self.assertTrue(all(path.exists() for path in old_files))
+
+    def test_partial_cleanup_exact_retry_keeps_pending_status(self):
+        for i in range(5):self.make_archive(str(i).encode());self.store()
+        self.make_archive(b'new-partial-cleanup')
+        with vault.Vault(self.path) as store:
+            with self.fail_cleanup_after_new_commit(store,SystemExit('commit')):
+                with self.assertRaises(SystemExit):store.import_archive(self.archive,self.digest,self.inventory)
+            identifier=store.db.execute("SELECT id FROM audit WHERE event='ROTATED'").fetchone()[0]
+            (self.path/(identifier+'.inventory.json')).unlink()
+            before=store.records()
+            result=store.import_archive(self.archive,self.digest,self.inventory)
+            self.assertEqual(result['status'],'ALREADY_STORED_CLEANUP_PENDING')
+            self.assertTrue(result['cleanup_pending'])
+            self.assertEqual(store.records(),before)
+            self.assertTrue(store.show()['cleanup_pending'])
+
     def test_verified_copy_private_files_and_fixed_summary(self):
         result = self.store()
         self.assertEqual(result['status'], 'STORED')
