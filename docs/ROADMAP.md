@@ -145,3 +145,12 @@ rollback/recovery ещё blocked. См. [MAIN_TRANSACTIONS.md](MAIN_TRANSACTIONS
 * soak-test без функциональных изменений;
 * документация установки и восстановления;
 * демонстрационный сценарий для портфолио.
+
+### P0 11.10.2026: legacy deployment migration
+
+Owner baseline: working 0.5.0-dev / old 18-file journal; HGDEPLOY2 и новые модули
+не установлены. Read-only preflight и 17-test host migration rehearsal реализованы
+отдельно; production coordinator/target procd/boot остаются BLOCKED. Не заменять
+receiver отдельно, не подделывать inventory-version, не повторять bootstrap.
+/etc/home-gateway sysupgrade omission (3 files) — critical blocker; новый
+bootstrap allowlist исправлен, на target не применён. См. DEPLOY_MIGRATION.md.

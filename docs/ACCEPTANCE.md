@@ -43,3 +43,15 @@ PASS ниже относится только к указанному automated/
 Изменение MAIN, restore конфигурации, reboot и sysupgrade требуют отдельного
 разрешения владельца. Ни одна строка BLOCKED не может быть закрыта предположением,
 старым target selftest или успешным host mock test.
+
+## Baseline владельца 11.10.2026 и новый P0
+
+| Критерий | Offline | CUDY / блокер |
+|---|---|---|
+| HGDEPLOY1 18 → HGDEPLOY2 20 | 17 migration rehearsal tests, read-only BusyBox preflight | BLOCKED: production coordinator, exact receiver identity, target procd/boot |
+| /etc/home-gateway sysupgrade inclusion | Новый bootstrap содержит allowlist path; existing persistence contracts | FAIL в owner backup: отсутствуют 3 HG files; исправление/restore не применены |
+| Резервный LAN-доступ | Не проверяется host CI | BLOCKED: Wi-Fi SSH подтверждён, кабельный резерв не проверен |
+
+Подробный план установки/rollback: [DEPLOY_MIGRATION.md](DEPLOY_MIGRATION.md).
+Штатный backup 137 entries / 133 files / 4 links и отдельный HG backup
+проверены владельцем по чтению/SHA, не по restore. Private archives не публиковать.
