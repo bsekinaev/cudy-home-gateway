@@ -132,6 +132,16 @@ int main(int argc, char **argv) {
         return fixed(2, "USAGE");
     unsigned seconds = (unsigned)strtoul(argv[2], NULL, 10);
     if (!seconds || seconds > 600) return fixed(2, "USAGE");
+    struct sigaction sa = {.sa_handler = cancel};
+    sigemptyset(&sa.sa_mask);
+    struct sigaction chld = {.sa_handler = SIG_DFL};
+    sigemptyset(&chld.sa_mask);
+    sigset_t mask;
+    sigemptyset(&mask);
+    if (sigaction(SIGTERM, &sa, NULL) || sigaction(SIGINT, &sa, NULL) ||
+        sigaction(SIGCHLD, &chld, NULL) || sigprocmask(SIG_SETMASK, &mask, NULL))
+        return fixed(70, "SIGNAL_FAILED");
+    if (cancelled) return fixed(130, "CANCELLED");
     int base = trusted_directory(RUN_BASE);
     if (!private_fd(base, S_IFDIR, 0700)) return fixed(70, "UNSAFE_RUN_DIRECTORY");
     int guard = openat(base, "supervisor.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
@@ -157,9 +167,7 @@ int main(int argc, char **argv) {
     if (binary < 0 || fstat(binary, &bs) || !S_ISREG(bs.st_mode) || bs.st_uid != geteuid() ||
         (bs.st_mode & 07022) || !(bs.st_mode & 0100) || pread(binary, magic, 4, 0) != 4 ||
         memcmp(magic, "\177ELF", 4)) return fixed(70, "UNSAFE_BINARY");
-    struct sigaction sa = {.sa_handler = cancel};
-    sigemptyset(&sa.sa_mask);
-    if (sigaction(SIGTERM, &sa, NULL) || sigaction(SIGINT, &sa, NULL)) return fixed(70, "SIGNAL_FAILED");
+    if (cancelled) return fixed(130, "CANCELLED");
     struct stat prior_active;
     if (fstatat(base, "active", &prior_active, AT_SYMLINK_NOFOLLOW) == 0)
         return fixed(70, "RECOVERY_REQUIRED");
@@ -174,15 +182,37 @@ int main(int argc, char **argv) {
     if (active < 0) return fixed(70, "RECOVERY_REQUIRED");
     if (write(active, argv[1], 32) != 32 || fsync(active) || fsync(base)) return fixed(70, "WRITE_FAILED");
     close(active);
+    if (cancelled) {
+        if (unlinkat(base, "active", 0) || fsync(base)) return fixed(70, "WRITE_FAILED");
+        return fixed(130, "CANCELLED");
+    }
     int intent = openat(directory, "execution.intent", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (intent < 0) return fixed(75, "RUN_ALREADY_CONSUMED");
     if (write(intent, "EXECUTING\n", 10) != 10 || fsync(intent) || fsync(directory)) return fixed(70, "WRITE_FAILED");
     close(intent);
+    if (cancelled) {
+        if (unlinkat(directory, "execution.intent", 0) || fsync(directory) ||
+            unlinkat(base, "active", 0) || fsync(base)) return fixed(70, "WRITE_FAILED");
+        return fixed(130, "CANCELLED");
+    }
+    int start_pipe[2];
+    if (pipe2(start_pipe, O_CLOEXEC)) return fixed(70, "PIPE_FAILED");
+    sigset_t launch_mask, previous_mask, pending;
+    sigemptyset(&launch_mask);
+    sigaddset(&launch_mask, SIGTERM); sigaddset(&launch_mask, SIGINT);
+    if (sigprocmask(SIG_BLOCK, &launch_mask, &previous_mask)) return fixed(70, "SIGNAL_FAILED");
     pid_t parent = getpid(), child = fork();
     if (child < 0) return fixed(70, "FORK_FAILED");
     if (child == 0) {
         /* Close parent-death race before touching the executable. */
         if (prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent) _exit(70);
+        close(start_pipe[1]);
+        if (sigprocmask(SIG_SETMASK, &previous_mask, NULL)) _exit(70);
+        char launch = 0;
+        ssize_t received;
+        do { received = read(start_pipe[0], &launch, 1); } while (received < 0 && errno == EINTR && !cancelled);
+        close(start_pipe[0]);
+        if (received != 1 || launch != 'G' || cancelled) _exit(130);
         if (setsid() < 0 || limit(RLIMIT_CORE, 0) || limit(RLIMIT_NOFILE, 256) ||
             limit(RLIMIT_FSIZE, 1048576) || limit(RLIMIT_CPU, seconds + 2)) _exit(70);
         int config_copy = fcntl(config, F_DUPFD_CLOEXEC, 5);
@@ -206,9 +236,21 @@ int main(int argc, char **argv) {
         fexecve(binary, args, env);
         _exit(70);
     }
-    close(config); close(binary); close(directory);
+    close(start_pipe[0]);
+    if (sigpending(&pending)) return fixed(70, "SIGNAL_FAILED");
+    /* Authorization linearizes at this pending-signal check after fork. A
+     * cancellation during setup/fork never receives the child's exec grant. */
+    int prelaunch_cancelled = cancelled || sigismember(&pending, SIGTERM) || sigismember(&pending, SIGINT);
+    char launch = prelaunch_cancelled ? 'N' : 'G';
+    struct sigaction ignore_pipe = {.sa_handler = SIG_IGN};
+    sigemptyset(&ignore_pipe.sa_mask);
+    if (sigaction(SIGPIPE, &ignore_pipe, NULL)) return fixed(70, "RECOVERY_REQUIRED");
+    int grant_failed = write(start_pipe[1], &launch, 1) != 1;
+    if (sigprocmask(SIG_SETMASK, &previous_mask, NULL)) return fixed(70, "RECOVERY_REQUIRED");
+    close(start_pipe[1]);
+    close(config); close(binary);
     double deadline = monotonic() + seconds, kill_at = 0;
-    int status, stopping = 0, why = 0;
+    int status, stopping = 0, why = prelaunch_cancelled ? 130 : grant_failed ? 70 : 0;
     for (;;) {
         /* The child remains ours and unreaped until this call returns its PID.
          * Never signal any PID after it has been reaped: no PID reuse race. */
@@ -220,13 +262,19 @@ int main(int argc, char **argv) {
             why = cancelled ? 130 : 124;
             kill(child, SIGTERM); stopping = 1; kill_at = now + 1;
         } else if (stopping == 1 && now >= kill_at) {
-            kill(child, SIGKILL); stopping = 2;
+            kill(child, SIGKILL); stopping = 2; kill_at = now + 2;
+        } else if (stopping == 2 && now >= kill_at) {
+            /* Pending SIGKILL cannot interrupt kernel D sleep. Stop waiting,
+             * leave active/intent fenced, and never claim child termination. */
+            return fixed(70, "RECOVERY_REQUIRED");
         }
         struct timespec pause = {0, 10000000};
         nanosleep(&pause, NULL);
     }
+    if ((prelaunch_cancelled || grant_failed) && (unlinkat(directory, "execution.intent", 0) || fsync(directory)))
+        return fixed(70, "WRITE_FAILED");
     if (unlinkat(base, "active", 0) || fsync(base)) return fixed(70, "WRITE_FAILED");
-    close(base); close(guard);
-    if (why) return fixed(why, why == 124 ? "TIMEOUT" : "CANCELLED");
+    close(directory); close(base); close(guard);
+    if (why) return fixed(why, why == 124 ? "TIMEOUT" : why == 130 ? "CANCELLED" : "FAILED");
     return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? fixed(0, "DONE") : fixed(70, "FAILED");
 }

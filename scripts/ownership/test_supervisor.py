@@ -79,9 +79,9 @@ class SupervisorTests(unittest.TestCase):
         self.compile(SOURCE, self.executable, ['-DHG_TEST_BUILD',
                      '-DXRAY_PATH="' + str(self.fixture) + '"', '-DRUN_BASE="' + str(self.runs) + '"'])
 
-    def compile(self, source, output, flags=()):
+    def compile(self, source, output, flags=(), extra=()):
         subprocess.run(['gcc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-O2',
-                        *flags, str(source), '-o', str(output)], check=True, capture_output=True)
+                        *flags, str(source), *map(str, extra), '-o', str(output)], check=True, capture_output=True)
 
     def write_config(self, mode):
         self.config.write_text(mode)
@@ -163,6 +163,56 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 70)
         self.assertEqual(json.loads(result.stdout)['status'], 'FAILED')
         self.assertFalse((self.runs / 'active').exists())
+
+    def test_inherited_ignored_sigchld_is_reset(self):
+        result = subprocess.run([str(self.executable), self.run_id, '1'],
+                                preexec_fn=lambda: signal.signal(signal.SIGCHLD, signal.SIG_IGN),
+                                capture_output=True, text=True, timeout=3)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.runs / 'active').exists())
+
+    def test_inherited_blocked_signals_are_unblocked_for_cancel(self):
+        child, pid = self.start(preexec_fn=lambda: signal.pthread_sigmask(
+            signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGCHLD}))
+        child.send_signal(signal.SIGTERM)
+        out, err = child.communicate(timeout=3)
+        self.assertEqual(child.returncode, 130, out + err)
+        self.assertFalse(self.running(pid))
+
+    def test_prelaunch_signal_does_not_consume_or_execute(self):
+        hook = self.base / 'cancel-fsync.c'
+        hook.write_text('#define _GNU_SOURCE\n#include <unistd.h>\n#include <signal.h>\n#include <sys/syscall.h>\nint hg_test_fsync(int fd) { int rc = syscall(SYS_fsync, fd); raise(SIGTERM); return rc; }\n')
+        self.compile(SOURCE, self.executable, ['-DHG_TEST_BUILD', '-Dfsync=hg_test_fsync',
+                     '-DXRAY_PATH="' + str(self.fixture) + '"', '-DRUN_BASE="' + str(self.runs) + '"'], [hook])
+        result = self.cli()
+        self.assertEqual(result.returncode, 130, result.stdout + result.stderr)
+        self.assertFalse((self.run / 'pid').exists())
+        self.assertFalse((self.run / 'execution.intent').exists())
+        self.assertFalse((self.runs / 'active').exists())
+
+    def test_cancel_during_fork_never_receives_exec_grant(self):
+        hook = self.base / 'cancel-fork.c'
+        hook.write_text('#define _GNU_SOURCE\n#include <unistd.h>\n#include <signal.h>\n#include <sys/syscall.h>\npid_t hg_test_fork(void) { raise(SIGTERM); return syscall(SYS_clone, SIGCHLD, 0, 0, 0, 0); }\n')
+        self.compile(SOURCE, self.executable, ['-DHG_TEST_BUILD', '-Dfork=hg_test_fork',
+                     '-DXRAY_PATH="' + str(self.fixture) + '"', '-DRUN_BASE="' + str(self.runs) + '"'], [hook])
+        result = self.cli()
+        self.assertEqual(result.returncode, 130, result.stdout + result.stderr)
+        self.assertFalse((self.run / 'pid').exists())
+        self.assertFalse((self.run / 'execution.intent').exists())
+        self.assertFalse((self.runs / 'active').exists())
+
+    def test_unreapable_wait_boundary_has_final_deadline_and_fence(self):
+        hook = self.base / 'unreapable.c'
+        hook.write_text('#include <sys/types.h>\n#include <sys/wait.h>\npid_t hg_test_waitpid(pid_t pid,int *status,int options) { (void)pid; (void)status; (void)options; return 0; }\n')
+        self.compile(SOURCE, self.executable, ['-DHG_TEST_BUILD', '-Dwaitpid=hg_test_waitpid',
+                     '-DXRAY_PATH="' + str(self.fixture) + '"', '-DRUN_BASE="' + str(self.runs) + '"'], [hook])
+        child, pid = self.start(seconds='1')
+        out, err = child.communicate(timeout=6)
+        self.assertEqual(child.returncode, 70, out + err)
+        self.assertEqual(json.loads(out)['status'], 'RECOVERY_REQUIRED')
+        self.assertTrue((self.runs / 'active').exists())
+        self.assertTrue((self.run / 'execution.intent').exists())
+        self.assertFalse(self.running(pid))
 
     def test_inherited_descriptor_is_closed(self):
         self.write_config('D')

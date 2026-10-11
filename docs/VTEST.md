@@ -88,8 +88,12 @@ parent death race. PID нельзя переиспользовать до waitpi
 Seccomp проверяет syscall architecture, отвергает alternate ABI и новые процессы
 (fork/vfork/non-thread clone/clone3); native threads разрешены. Descriptor cleanup
 через close_range, core/file/CPU/FD limits; TERM затем KILL; fixed JSON output.
+SIGCHLD disposition и signal mask сбрасываются. До exec child ждёт разрешение
+по private pipe; pending cancel до grant не запускает provider и не расходует run.
+После KILL ожидание ограничено двумя секундами; unreaped child оставляет
+RECOVERY_REQUIRED и crash fence, без ложного сообщения об остановке.
 
-13 native isolated tests компилируют тот же код с фиксированным fixture executable:
+18 native isolated tests компилируют тот же код с фиксированным fixture executable:
 SIGKILL parent, timeout с TERM-ignoring child, cancel, unrelated service preservation,
 concurrency/replay/global fence, fork rejection/threads, descriptor cleanup и
 unsafe directories/config/FIFO/symlink. Fixture — только compile-time test boundary,
