@@ -94,3 +94,41 @@ Verifier допускает только это точное соответст�
 не требование иметь все пять ссылок). Имена tar members по-прежнему относительные.
 Штатный backup исключает три файла `/etc/home-gateway`; отдельный private backup
 проверен владельцем по SHA256, restore не проверен. Это critical release blocker.
+
+## Private vault — отдельная host-only реализация
+
+`scripts/backup/vault.py` хранит уже полученные private archives после полной
+проверки SHA256/exact inventory. Ничего не собирает с роутера и не извлекает tar.
+Linux/Python 3.10+, dedicated directory 0700, все archive/inventory/catalog/lock
+files 0600, no symlinks/hardlinks/неизвестные files. Existing shared directories
+не chmodded. Архивы, реальные inventory и SQLite database никогда не публикуются.
+
+```sh
+python3 scripts/backup/vault.py import --vault /private/gateway-vault \
+  --archive /private/backup.tar.gz --sha256 OWNER_CONFIRMED_SHA256 \
+  --inventory /private/inventory.json
+python3 scripts/backup/vault.py show --vault /private/gateway-vault
+python3 scripts/backup/vault.py recover --vault /private/gateway-vault
+```
+
+Kernel lock исключает concurrent vault writers. Files fsynced до commit каталога;
+SQLite FULL/DELETE transaction атомарно сохраняет import, active last-five index
+и audit retirement. До commit старые references сохраняются; после commit старые
+files удаляются только когда новые и оставшиеся active copies проверены. Crash
+может оставить private unreferenced files: `recover` проверяет active index и
+удаляет только строгие vault-generated filenames после metadata validation.
+SQLite hot journal восстанавливается при explicit writable open/recover.
+Read-only show не выполняет GC. Corrupt active archive/inventory/catalog blocks
+import/rotation/GC; generic stdout не раскрывает private paths/contents.
+
+Audit: до 200 committed import/retirement events. Это bounded private catalog log,
+не central Gateway audit и не доказательство незавершённого import. Orphan copies
+до SQLite commit не становятся accepted backup; recovery не заявляет успешный
+router restore. Последние пять references сохраняются, orphan files после crash
+могут временно увеличивать disk count до recovery. Catalog не доказывает coherent
+snapshot источника: transaction_consistent=false, restore_supported=false.
+
+17 isolated vault tests PASS + verifier tests: actual files/SQLite, 7-copy rotation,
+crash before/after catalog commit, actual SIGKILL SQL transaction, corruption,
+private permissions, cross-process kernel lock, path injection и bounded audit.
+Это доступная часть 0.9; collector/coordinated snapshot/target restore still BLOCKED.
