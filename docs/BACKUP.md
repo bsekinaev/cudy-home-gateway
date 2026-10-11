@@ -71,3 +71,17 @@ Physical tar headers проверяются до tarfile: разрешены т�
 последнего member; нулевое содержимое файла не заменяет end marker. Набор
 regular paths должен точно совпадать с приватным owner inventory, без дополнительных
 allowlisted файлов. 15 offline negative/positive tests PASS. LIVE не выполнено.
+
+### Persisted init links и raw tar validation
+
+21 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
+repository-managed enable links (S94/K09 deploy-recover, S95/K10 Telegram)
+разрешён только SYMTYPE с точным relative target ../init.d/соответствующий-service,
+size=0 и явным включением path в owner inventory. Замена этих paths regular file
+или иная ссылка отвергаются. Остальные symlinks/hardlinks запрещены. Owner inventory
+теперь означает exact expected paths: обычные файлы плюс только эти approved links.
+
+Physical headers проверяются до tarfile normalization: один стандартный trailing
+slash directory допустим, повторные separators/traversal — нет. Nonzero member
+padding отвергается. Два нулевых end blocks обязательны после последнего member.
+Это не означает принятую полноту native sysupgrade backup остальных hooks/links.

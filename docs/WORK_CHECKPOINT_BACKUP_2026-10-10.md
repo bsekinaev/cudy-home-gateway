@@ -38,3 +38,9 @@ CI conflict разрешён с сохранением backup, planner и action
 Перед merge нужны новый HEAD CI/review. CUDY/MAIN/restore не изменены.
 Точное продолжение: проверить GitHub CI/review #16, закрыть исправленные 6 findings,
 merge без bypass; затем native ownership PR и remaining backup/transaction adapters.
+
+Повторный review merged HEAD нашёл 3 дополнительные границы: exact managed init
+symlinks, nonzero member padding и raw directory separators до normalization.
+Исправлено: 21 actual backup tests PASS, включая actual BusyBox tar. Generic links
+по-прежнему запрещены; target inventory/hooks/LIVE не приняты. Новый CI/review HEAD
+требуется проверить перед merge. Full stage 0.9 completion не заявляется.

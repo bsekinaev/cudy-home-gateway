@@ -114,6 +114,56 @@ class VerifyTests(unittest.TestCase):
         path.chmod(0o600)
         self.assertEqual(verify.inventory(path), self.required)
 
+    def test_exact_persisted_init_links_preserved_and_validated(self):
+        self.required |= set(verify.PERSISTED_LINKS)
+        output = io.BytesIO()
+        with tarfile.open(fileobj=output, mode='w:', format=tarfile.USTAR_FORMAT) as tar:
+            for name in sorted(self.required):
+                entry = tarfile.TarInfo(name)
+                if name in verify.PERSISTED_LINKS:
+                    entry.type = tarfile.SYMTYPE; entry.linkname = verify.PERSISTED_LINKS[name]
+                    tar.addfile(entry)
+                else:
+                    entry.size = 4; tar.addfile(entry, io.BytesIO(b'data'))
+        self.write(gzip.compress(output.getvalue()))
+        self.assertEqual(self.check()['links'], 4)
+        for name in verify.PERSISTED_LINKS:
+            self.archive([(name, b'data', tarfile.REGTYPE)])
+            with self.assertRaisesRegex(verify.BackupError, 'UNSUPPORTED_ARCHIVE_ENTRY'): self.check()
+        # Wrong or unapproved target is rejected even for an expected path.
+        self.archive([(next(iter(verify.PERSISTED_LINKS)), b'', tarfile.SYMTYPE)])
+        with self.assertRaisesRegex(verify.BackupError, 'UNSUPPORTED_ARCHIVE_ENTRY'): self.check()
+
+    def test_hidden_regular_member_padding_rejected(self):
+        plain = bytearray(self.archive([('etc/config/network', b'data', tarfile.REGTYPE)]))
+        plain[516] = 65
+        self.write(gzip.compress(plain))
+        with self.assertRaisesRegex(verify.BackupError, 'NONZERO_MEMBER_PADDING'): self.check()
+
+    def test_raw_directory_path_multiple_trailing_separators_rejected(self):
+        plain = self.archive()
+        for name in ('etc//', 'etc/config///', '/etc/config/', 'etc/../config/'):
+            entry = tarfile.TarInfo(name); entry.type = tarfile.DIRTYPE
+            header = entry.tobuf(format=tarfile.USTAR_FORMAT)
+            self.write(gzip.compress(header + plain))
+            with self.assertRaisesRegex(verify.BackupError, 'INVALID_ARCHIVE_PATH'): self.check()
+
+    def test_actual_busybox_tar_persisted_links_format(self):
+        source = self.base / 'source'
+        source.mkdir()
+        self.required |= set(verify.PERSISTED_LINKS)
+        for name in sorted(self.required):
+            path = source / name; path.parent.mkdir(parents=True, exist_ok=True)
+            if name in verify.PERSISTED_LINKS:
+                path.symlink_to(verify.PERSISTED_LINKS[name])
+            else:
+                path.write_bytes(b'public-synthetic-data')
+        subprocess.run([os.environ.get('HG_TEST_BUSYBOX', 'busybox'), 'tar', '-czf', str(self.path),
+                        '-C', str(source), *sorted(self.required)], check=True, capture_output=True)
+        self.path.chmod(0o600)
+        self.digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        self.assertEqual(self.check()['links'], 4)
+
     def test_checksum_and_invalid_hash_rejected_before_parsing(self):
         self.archive()
         for value, reason in [('0' * 64, 'CHECKSUM_MISMATCH'), ('invalid', 'INVALID_SHA256')]:

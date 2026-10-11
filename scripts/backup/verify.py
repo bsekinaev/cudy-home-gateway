@@ -15,6 +15,13 @@ MAX_ARCHIVE = 8 * 1024 * 1024
 MAX_TOTAL = 16 * 1024 * 1024
 MAX_FILE = 2 * 1024 * 1024
 MAX_ENTRIES = 1024
+# Only exact repository-managed enable links; never accept generic symlinks.
+PERSISTED_LINKS = {
+    'etc/rc.d/S94home-gateway-deploy-recover': '../init.d/home-gateway-deploy-recover',
+    'etc/rc.d/K09home-gateway-deploy-recover': '../init.d/home-gateway-deploy-recover',
+    'etc/rc.d/S95home-gateway-telegram': '../init.d/home-gateway-telegram',
+    'etc/rc.d/K10home-gateway-telegram': '../init.d/home-gateway-telegram',
+}
 
 
 class BackupError(ValueError):
@@ -59,6 +66,15 @@ def inventory(path):
     return set(data)
 
 
+def header_text(field):
+    value, _, padding = field.partition(b'\0')
+    require(not any(padding), 'INVALID_ARCHIVE_PATH')
+    try:
+        return value.decode('ascii')
+    except UnicodeError:
+        raise BackupError('INVALID_ARCHIVE_PATH') from None
+
+
 def validate_physical_tar(plain):
     """Walk physical USTAR headers: tarfile hides extension and sparse records."""
     require(len(plain) % 512 == 0, 'INVALID_TAR_END')
@@ -72,15 +88,26 @@ def validate_physical_tar(plain):
             return
         entries += 1
         require(entries <= MAX_ENTRIES, 'ENTRY_LIMIT')
-        require(header[156:157] in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE),
+        require(header[156:157] in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE, tarfile.SYMTYPE),
                 'UNSUPPORTED_ARCHIVE_ENTRY')
+        name = header_text(header[:100])
+        prefix = header_text(header[345:500]) if header[257:263] == b'ustar\0' else ''
+        if prefix:
+            name = prefix + '/' + name
+        if header[156:157] == tarfile.DIRTYPE and name.endswith('/'):
+            name = name[:-1]  # At most one conventional trailing separator.
+        require(bool(name) and len(name) <= 240 and re.fullmatch(r'[A-Za-z0-9_./+-]+', name) and
+                not name.startswith('/') and all(part not in ('', '.', '..') for part in name.split('/')),
+                'INVALID_ARCHIVE_PATH')
         # Accept ordinary octal sizes only; no GNU base-256/sparse encodings.
         size_field = header[124:136].strip(b'\0 ')
         require(bool(size_field) and all(byte in b'01234567' for byte in size_field), 'INVALID_ARCHIVE')
         size = int(size_field, 8)
-        require(size <= MAX_FILE and (header[156:157] != tarfile.DIRTYPE or size == 0), 'MEMBER_LIMIT')
-        offset += 512 + ((size + 511) // 512) * 512
-        require(offset <= len(plain), 'TRUNCATED_MEMBER')
+        require(size <= MAX_FILE and (header[156:157] in (tarfile.REGTYPE, tarfile.AREGTYPE) or size == 0), 'MEMBER_LIMIT')
+        next_offset = offset + 512 + ((size + 511) // 512) * 512
+        require(next_offset <= len(plain), 'TRUNCATED_MEMBER')
+        require(not any(plain[offset + 512 + size:next_offset]), 'NONZERO_MEMBER_PADDING')
+        offset = next_offset
     raise BackupError('INVALID_TAR_END')
 
 
@@ -97,7 +124,7 @@ def verify(path, expected_hash, required):
             plain = stream.read(MAX_TOTAL + 1)
         require(len(plain) <= MAX_TOTAL, 'EXPANSION_LIMIT')
         validate_physical_tar(plain)
-        seen, files, total = set(), set(), 0
+        seen, files, links, total = set(), set(), set(), 0
         with tarfile.open(fileobj=io.BytesIO(plain), mode='r:') as archive:
             for member in archive:
                 require(len(seen) < MAX_ENTRIES, 'ENTRY_LIMIT')
@@ -107,25 +134,30 @@ def verify(path, expected_hash, required):
                 require((allowed(name) or directory_allowed) and name not in seen and
                         not name.startswith('/') and all(part not in ('', '.', '..') for part in name.split('/')),
                         'INVALID_ARCHIVE_PATH')
-                require(not member.pax_headers and (member.type in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE)) and
+                require(not member.pax_headers and (member.type in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE, tarfile.SYMTYPE)) and
                         not member.mode & 0o7000, 'UNSUPPORTED_ARCHIVE_ENTRY')
                 seen.add(name)
                 require(0 <= member.size <= MAX_FILE and (not member.isdir() or member.size == 0), 'MEMBER_LIMIT')
                 total += member.size
                 require(total <= MAX_TOTAL, 'CONTENT_LIMIT')
+                if member.issym():
+                    require(name in required and PERSISTED_LINKS.get(name) == member.linkname and member.size == 0,
+                            'UNSUPPORTED_ARCHIVE_ENTRY')
+                    links.add(name)
                 if member.isfile():
+                    require(name not in PERSISTED_LINKS, 'UNSUPPORTED_ARCHIVE_ENTRY')
                     contents = archive.extractfile(member)
                     require(contents is not None and len(contents.read(MAX_FILE + 1)) == member.size, 'TRUNCATED_MEMBER')
                     files.add(name)
             # tarfile can stop at an early end marker and ignore a concatenated
             # second tar. Reject any nonzero bytes after its actual parsed end.
             require(not any(plain[archive.offset:]), 'TRAILING_ARCHIVE_DATA')
-        require(required == files, 'INCOMPLETE_OWNER_INVENTORY')
+        require(required == files | links, 'INCOMPLETE_OWNER_INVENTORY')
     except BackupError:
         raise
     except (OSError, EOFError, tarfile.TarError, ValueError, zlib.error):
         raise BackupError('INVALID_ARCHIVE') from None
-    return dict(schema_version=1, status='VERIFIED', files=len(files), bytes=total,
+    return dict(schema_version=1, status='VERIFIED', files=len(files), links=len(links), bytes=total,
                 archive_sha256=expected_hash, completeness='OWNER_INVENTORY_ONLY',
                 transaction_consistent=False, restore_supported=False)
 
