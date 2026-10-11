@@ -11,7 +11,7 @@ python3 scripts/backup/verify.py /private/backup.tar.gz \
 
 SHA256 должен быть получен владельцем через доверенный канал при создании/передаче
 backup. Самостоятельно вычисленный hash неизвестного архива не доказывает provenance.
-Inventory — приватный JSON array **всех ожидаемых paths: regular files и только четыре approved init links ниже**, относительно
+Inventory — приватный JSON array **всех ожидаемых paths: regular files и только пять exact symlink mappings ниже**, относительно
 корня, без `/`, `.` или `..` компонентов. Он задаётся владельцем по фактическому
 снимку и `sysupgrade -l`, а не угадывается utility. Archive и inventory должны быть
 regular, принадлежащими caller/root, без любых group/other permissions; no-follow
@@ -66,17 +66,19 @@ restore ещё не реализованы. 27 tests используют нас
 ## Границы формата архива
 
 Physical tar headers проверяются до tarfile: разрешены обычные regular/directory
-и только exact managed init symlinks ниже. Sparse/PAX/GNU extension headers
+и только exact managed init/vtest symlinks ниже. Sparse/PAX/GNU extension headers
 отклоняются, включая пустые скрытые headers. Набор ожидаемых paths обязан точно
 совпасть с inventory; дополнительный allowlisted файл запрещён.
 
-### Persisted init links и raw tar validation
+### Persisted init/vtest links и raw tar validation
 
-23 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
+27 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
 repository-managed enable links (S94/K09 deploy-recover, S95/K10 Telegram)
 разрешён только SYMTYPE с точным relative target ../init.d/соответствующий-service,
 size=0 и явным включением path в owner inventory. Замена этих paths regular file
-или иная ссылка отвергаются. Остальные symlinks/hardlinks запрещены. Owner inventory
+или иная ссылка отвергаются. Пятый mapping: `usr/bin/vtest` только SYMTYPE,
+size=0, target `/root/vless-auto.sh`, с явным owner inventory.
+Остальные symlinks/hardlinks запрещены. Owner inventory
 теперь означает exact expected paths: обычные файлы плюс только эти approved links.
 
 Physical headers проверяются до tarfile normalization: один стандартный trailing
