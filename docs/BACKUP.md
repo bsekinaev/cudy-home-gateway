@@ -157,5 +157,3 @@ archive: crash оставляет сохранённый архив, не metada
 Exact archive SHA+canonical inventory hash retry идемпотентен. После commit GC
 errors дают STORED_CLEANUP_PENDING/ALREADY_STORED_CLEANUP_PENDING, без повторной
 rotation и без ложного failed import. 23 vault / 30 verifier = 53 tests.
-=======
->>>>>>> origin/main
