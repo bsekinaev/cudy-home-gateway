@@ -59,7 +59,7 @@ snapshot, journal, post-check/rollback/recovery и LAN доступ.
 Нельзя запускать restore/reboot/sysupgrade на CUDY без отдельного owner approval.
 
 Этап 0.9 остаётся partial: collector, last-five rotation/audit, согласованность и
-restore ещё не реализованы. 27 tests используют настоящий gzip/tar/hash/private FS
+restore ещё не реализованы. 30 tests используют настоящий gzip/tar/hash/private FS
 с public synthetic contents, включая corruption/bombs/links/FIFO/privacy. Они не
 являются проверкой реального backup или восстановления роутера.
 
