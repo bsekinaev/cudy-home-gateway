@@ -8,7 +8,7 @@ deploy/restore/sysupgrade, stable tag не изменены. Исходные п
 private 0700/0600 trusted paths/no chmod shared directories, kernel exclusion,
 fsynced files before SQLite FULL catalog/audit commit, last-five rotation,
 explicit orphan recovery; corruption pauses before deletion/rotation.
-22 actual vault tests PASS (52 вместе с final verifier 30); final verifier #16 HEAD 5ccd9a55b5a042d948d98cd8b0cb8a06f0a455ca
+23 actual vault tests PASS (53 вместе с final verifier 30); final verifier #16 HEAD 5ccd9a55b5a042d948d98cd8b0cb8a06f0a455ca
 проверяется отдельно и должен быть объединён после последнего GitHub CI/review.
 Kernel SIGKILL SQL recovery подтверждён; before/after file/catalog fault boundaries
 проверены на реальной FS, без production fault injection hooks.
@@ -45,3 +45,7 @@ commit; injected archive/manifest storage faults сохраняют старые
 
 12.10: latest review missing-retired-archive closed; complete-pair verification
 перед удалением, orphan inventory retained. 52 backup tests PASS на host ash1.37.
+
+Exact archive SHA+canonical inventory hash retry идемпотентен. После commit GC
+errors дают STORED_CLEANUP_PENDING/ALREADY_STORED_CLEANUP_PENDING, без повторной
+rotation и без ложного failed import. 23 vault / 30 verifier = 53 tests.

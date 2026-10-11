@@ -100,6 +100,7 @@ class VaultTests(unittest.TestCase):
 
     def test_new_copy_readback_fault_preserves_old_index_before_rotation(self):
         for i in range(5): self.make_archive(str(i).encode()); self.store()
+        self.make_archive(b'new-readback-fault-copy')
         with vault.Vault(self.path) as store:
             before = store.records()
             original = {name: (self.path / name).read_bytes() for name in
@@ -120,6 +121,7 @@ class VaultTests(unittest.TestCase):
     def test_missing_retired_archive_preserves_inventory_metadata(self):
         self.store(); first = next(self.path.glob('*.tar.gz'))
         for i in range(4): self.make_archive(str(i).encode()); self.store()
+        self.make_archive(b'new-retired-pair')
         with vault.Vault(self.path) as store:
             with patch.object(store, 'garbage_collect', side_effect=SystemExit):
                 with self.assertRaises(SystemExit): store.import_archive(self.archive, self.digest, self.inventory)
@@ -129,6 +131,24 @@ class VaultTests(unittest.TestCase):
             self.assertEqual(store.garbage_collect(), 0)
             self.assertEqual(store.show()['status'], 'QUARANTINED')
         self.assertEqual(manifest.read_bytes(), saved)
+
+    def test_committed_gc_failure_and_exact_retries_never_rotate_again(self):
+        for i in range(5): self.make_archive(str(i).encode()); self.store()
+        self.make_archive(b'new-commit')
+        with vault.Vault(self.path) as store:
+            with patch.object(store, 'garbage_collect', side_effect=OSError('synthetic cleanup failure')):
+                result = store.import_archive(self.archive, self.digest, self.inventory)
+                self.assertEqual(result['status'], 'STORED_CLEANUP_PENDING')
+                self.assertTrue(result['cleanup_pending'])
+                committed = store.records()
+                events = store.show()['audit_events']
+                for _ in range(3):
+                    retry = store.import_archive(self.archive, self.digest, self.inventory)
+                    self.assertEqual(retry['status'], 'ALREADY_STORED_CLEANUP_PENDING')
+                    self.assertEqual(store.records(), committed)
+                    self.assertEqual(store.show()['audit_events'], events)
+            self.assertEqual(store.import_archive(self.archive, self.digest, self.inventory)['status'], 'ALREADY_STORED')
+            self.assertEqual(store.records(), committed)
 
     def test_verified_copy_private_files_and_fixed_summary(self):
         result = self.store()
@@ -173,6 +193,7 @@ class VaultTests(unittest.TestCase):
 
     def test_crash_before_catalog_commit_preserves_previous_copy(self):
         self.store()
+        self.make_archive(b'new-before-commit')
         with vault.Vault(self.path) as store:
             old = store.records()
             with patch.object(store, 'commit_copy', side_effect=SystemExit):

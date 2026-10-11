@@ -207,12 +207,16 @@ class Vault:
         return removed
 
     def import_archive(self, archive, digest, owner_inventory):
-        self.verified_records()
+        records = self.verified_records()
         required = inventory(owner_inventory)
         verify(archive, digest, required)
         raw = private_read(archive, 8 * 1024 * 1024)
         require(hashlib.sha256(raw).hexdigest() == digest, 'CHECKSUM_MISMATCH')
         manifest = (json.dumps(sorted(required), separators=(',', ':')) + '\n').encode()
+        manifest_digest = hashlib.sha256(manifest).hexdigest()
+        existing = any(sha == digest and inv == manifest_digest for _,sha,inv,_ in records)
+        if existing:
+            return self.finish_import('ALREADY_STORED', len(records))
         identifier = uuid.uuid4().hex
         self.write_copy(identifier + '.tar.gz', raw)
         self.write_copy(identifier + '.inventory.json', manifest)
@@ -222,9 +226,21 @@ class Vault:
                 manifest_digest, 'INVENTORY_CHECKSUM_MISMATCH')
         verify(self.path / (identifier + '.tar.gz'), digest, inventory(copied_manifest))
         self.commit_copy(identifier, digest, manifest_digest)
-        self.garbage_collect()
-        return dict(schema_version=1, status='STORED', copies=len(self.records()),
-                    unreferenced_preserved=self.preserved_unknown(),
+        return self.finish_import('STORED', min(len(records) + 1, 5))
+
+    def finish_import(self, status, copies):
+        pending = False
+        try:
+            self.garbage_collect()
+            preserved = self.preserved_unknown()
+        except (BackupError, OSError, sqlite3.Error, ValueError):
+            # The catalog commit already happened. Do not turn it into a failed
+            # import that callers will retry and rotate again. Exact hash+inventory
+            # deduplication above also handles retry after a lost response.
+            pending = True
+            preserved = None
+        return dict(schema_version=1, status=status + ('_CLEANUP_PENDING' if pending else ''), copies=copies,
+                    cleanup_pending=pending, unreferenced_preserved=preserved,
                     completeness='OWNER_INVENTORY_ONLY', transaction_consistent=False, restore_supported=False)
 
     def preserved_unknown(self):
