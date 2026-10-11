@@ -65,7 +65,10 @@ Telegram не управляет путями.
 ## Блокеры runner
 
 Исходник вызывает привилегированные `/usr/share/passwall2/utils.sh` и
-`/usr/share/passwall2/app.sh run_socks`. Эти зависимости не предоставлены.
+`/usr/share/passwall2/app.sh run_socks`. Точные private copies предоставлены 11 октября 2026 и статически проверены:
+[PASSWALL_SOURCE_AUDIT_2026-10-11.md](PASSWALL_SOURCE_AUDIT_2026-10-11.md).
+Наличие копий не разрешает запуск: eval, shared runtime и asynchronous exec
+не обеспечивают ownership; Lua generators и target binary pinning ещё не проверены.
 Cleanup использует широкий `busybox pgrep -f` и TERM/KILL; требуется ограничить
 владение процессами и исключить MAIN/Torrent. Lock directory/PID требует защиты
 от stale lock, PID reuse и SIGKILL. До этого quick/full/capability возвращают 70.
