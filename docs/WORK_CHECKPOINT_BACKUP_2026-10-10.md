@@ -46,5 +46,9 @@ symlinks, nonzero member padding и raw directory separators до normalization.
 требуется проверить перед merge. Full stage 0.9 completion не заявляется.
 
 Последние 2 findings закрыты: raw linkname NUL padding и capacity 1024 длинных
-paths. 23 backup tests PASS, including max 240-character/1024-path inventory/tar.
+paths. 26 backup tests PASS, including max 240-character/1024-path inventory/tar.
 Current ACCEPTANCE/BACKUP counts согласованы; inventory bound 256 KiB.
+
+Повторное review: rejected leading-NUL numeric sizes и nonzero USTAR header tail,
+26 actual tests PASS после нового exact vtest mapping из owner baseline.
+137/133/4 и separate HG backup — наблюдения владельца, не наша restore приёмка.

@@ -17,8 +17,9 @@ MAX_FILE = 2 * 1024 * 1024
 MAX_ENTRIES = 1024
 MAX_PATH = 240
 MAX_INVENTORY = 256 * 1024
-# Only exact repository-managed enable links; never accept generic symlinks.
+# Exact managed enable links and owner-confirmed vtest mapping; no generic symlinks.
 PERSISTED_LINKS = {
+    'usr/bin/vtest': '/root/vless-auto.sh',
     'etc/rc.d/S94home-gateway-deploy-recover': '../init.d/home-gateway-deploy-recover',
     'etc/rc.d/K09home-gateway-deploy-recover': '../init.d/home-gateway-deploy-recover',
     'etc/rc.d/S95home-gateway-telegram': '../init.d/home-gateway-telegram',
@@ -41,7 +42,7 @@ def allowed(name):
     if any(part in ('', '.', '..') for part in name.split('/')):
         return False
     return (name.startswith('etc/') or name.startswith('usr/lib/home-gateway/') or name.startswith('usr/libexec/home-gateway-deploy/') or
-            name in ('usr/bin/gateway', 'usr/bin/home-gateway-ci-smoke', 'usr/bin/asata-udp-direct', 'root/vless-auto.sh'))
+            name in ('usr/bin/gateway', 'usr/bin/home-gateway-ci-smoke', 'usr/bin/asata-udp-direct', 'usr/bin/vtest', 'root/vless-auto.sh'))
 
 
 def private_read(path, limit):
@@ -107,8 +108,10 @@ def validate_physical_tar(plain):
         else:
             require(not linkname, 'UNSUPPORTED_ARCHIVE_ENTRY')
         # Accept ordinary octal sizes only; no GNU base-256/sparse encodings.
-        size_field = header[124:136].strip(b'\0 ')
-        require(bool(size_field) and all(byte in b'01234567' for byte in size_field), 'INVALID_ARCHIVE')
+        size_raw = header[124:136]
+        require(re.fullmatch(rb' *[0-7]+(?:\x00[\x00 ]*| *)', size_raw), 'INVALID_ARCHIVE')
+        size_field = size_raw.split(b'\0', 1)[0].strip(b' ')
+        require(not any(header[500:512]), 'NONZERO_HEADER_PADDING')
         size = int(size_field, 8)
         require(size <= MAX_FILE and (header[156:157] in (tarfile.REGTYPE, tarfile.AREGTYPE) or size == 0), 'MEMBER_LIMIT')
         next_offset = offset + 512 + ((size + 511) // 512) * 512

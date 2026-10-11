@@ -59,7 +59,7 @@ snapshot, journal, post-check/rollback/recovery и LAN доступ.
 Нельзя запускать restore/reboot/sysupgrade на CUDY без отдельного owner approval.
 
 Этап 0.9 остаётся partial: collector, last-five rotation/audit, согласованность и
-restore ещё не реализованы. 23 tests используют настоящий gzip/tar/hash/private FS
+restore ещё не реализованы. 26 tests используют настоящий gzip/tar/hash/private FS
 с public synthetic contents, включая corruption/bombs/links/FIFO/privacy. Они не
 являются проверкой реального backup или восстановления роутера.
 
@@ -88,3 +88,9 @@ Inventory ограничен 256 KiB: этот bound вмещает 1024 paths �
 в обычном JSON encoding. Capacity test проверяет maximum-length USTAR paths и
 соответствующий tar. Linkname raw field также проверяется на zero padding до
 tarfile truncation; undeclared target bytes отвергаются.
+
+Baseline владельца 11.10.2026 подтвердил vtest link `usr/bin/vtest -> /root/vless-auto.sh`.
+Verifier допускает только это точное соответствие (всего пять известных mappings,
+не требование иметь все пять ссылок). Имена tar members по-прежнему относительные.
+Штатный backup исключает три файла `/etc/home-gateway`; отдельный private backup
+проверен владельцем по SHA256, restore не проверен. Это critical release blocker.

@@ -126,7 +126,7 @@ class VerifyTests(unittest.TestCase):
                 else:
                     entry.size = 4; tar.addfile(entry, io.BytesIO(b'data'))
         self.write(gzip.compress(output.getvalue()))
-        self.assertEqual(self.check()['links'], 4)
+        self.assertEqual(self.check()['links'], 5)
         for name in verify.PERSISTED_LINKS:
             self.archive([(name, b'data', tarfile.REGTYPE)])
             with self.assertRaisesRegex(verify.BackupError, 'UNSUPPORTED_ARCHIVE_ENTRY'): self.check()
@@ -162,7 +162,7 @@ class VerifyTests(unittest.TestCase):
                         '-C', str(source), *sorted(self.required)], check=True, capture_output=True)
         self.path.chmod(0o600)
         self.digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
-        self.assertEqual(self.check()['links'], 4)
+        self.assertEqual(self.check()['links'], 5)
 
     def test_hidden_padding_in_approved_symlink_target_rejected(self):
         name, target = next(iter(verify.PERSISTED_LINKS.items()))
@@ -175,6 +175,38 @@ class VerifyTests(unittest.TestCase):
         self.write(gzip.compress(bytes(header) + b'\0' * 1024))
         self.required = {name}
         with self.assertRaisesRegex(verify.BackupError, 'INVALID_ARCHIVE_PATH'): self.check()
+
+    def test_leading_nul_size_cannot_hide_extension_header(self):
+        entry = tarfile.TarInfo('etc/config/network')
+        header = bytearray(entry.tobuf(format=tarfile.USTAR_FORMAT))
+        header[124:136] = b'\x00' + b'00000001000'
+        header[148:156] = b' ' * 8
+        header[148:156] = f'{sum(header):06o}\0 '.encode()
+        extension = tarfile.TarInfo('hidden-extension'); extension.type = tarfile.XHDTYPE
+        following = tarfile.TarInfo('etc/config/firewall')
+        plain = bytes(header) + extension.tobuf(format=tarfile.USTAR_FORMAT) + following.tobuf(format=tarfile.USTAR_FORMAT) + b'\0' * 1024
+        self.required = {'etc/config/network', 'etc/config/firewall'}
+        self.write(gzip.compress(plain))
+        with self.assertRaisesRegex(verify.BackupError, 'INVALID_ARCHIVE'): self.check()
+
+    def test_nonzero_physical_header_tail_rejected(self):
+        plain = bytearray(self.archive([('etc/config/network', b'data', tarfile.REGTYPE)]))
+        plain[500] = 65
+        plain[148:156] = b' ' * 8
+        plain[148:156] = f'{sum(plain[:512]):06o}\0 '.encode()
+        self.write(gzip.compress(plain))
+        with self.assertRaisesRegex(verify.BackupError, 'NONZERO_HEADER_PADDING'): self.check()
+
+    def test_owner_confirmed_vtest_absolute_target_is_exact_only(self):
+        self.required = {'usr/bin/vtest'}
+        entry = tarfile.TarInfo('usr/bin/vtest'); entry.type = tarfile.SYMTYPE
+        for target, valid in (('/root/vless-auto.sh', True), ('/root/other.sh', False), ('../../root/vless-auto.sh', False)):
+            entry.linkname = target
+            self.write(gzip.compress(entry.tobuf(format=tarfile.USTAR_FORMAT) + b'\0' * 1024))
+            if valid:
+                self.assertEqual(self.check()['links'], 1)
+            else:
+                with self.assertRaises(verify.BackupError): self.check()
 
     def test_full_capacity_long_path_inventory_and_archive(self):
         paths = ['etc/' + 'a' * 150 + '/' + 'c' * 77 + f'{i:04d}.cfg' for i in range(verify.MAX_ENTRIES)]
