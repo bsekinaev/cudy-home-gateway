@@ -58,6 +58,31 @@ def inventory(path):
     return set(data)
 
 
+def validate_physical_tar(plain):
+    """Walk physical USTAR headers: tarfile hides extension and sparse records."""
+    require(len(plain) % 512 == 0, 'INVALID_TAR_END')
+    offset, entries = 0, 0
+    while offset + 512 <= len(plain):
+        header = plain[offset:offset + 512]
+        if header == b'\0' * 512:
+            require(offset + 1024 <= len(plain) and
+                    plain[offset:offset + 1024] == b'\0' * 1024 and
+                    not any(plain[offset + 1024:]), 'INVALID_TAR_END')
+            return
+        entries += 1
+        require(entries <= MAX_ENTRIES, 'ENTRY_LIMIT')
+        require(header[156:157] in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE),
+                'UNSUPPORTED_ARCHIVE_ENTRY')
+        # Accept ordinary octal sizes only; no GNU base-256/sparse encodings.
+        size_field = header[124:136].strip(b'\0 ')
+        require(bool(size_field) and all(byte in b'01234567' for byte in size_field), 'INVALID_ARCHIVE')
+        size = int(size_field, 8)
+        require(size <= MAX_FILE and (header[156:157] != tarfile.DIRTYPE or size == 0), 'MEMBER_LIMIT')
+        offset += 512 + ((size + 511) // 512) * 512
+        require(offset <= len(plain), 'TRUNCATED_MEMBER')
+    raise BackupError('INVALID_TAR_END')
+
+
 def verify(path, expected_hash, required):
     require(isinstance(expected_hash, str) and re.fullmatch(r'[0-9a-f]{64}', expected_hash), 'INVALID_SHA256')
     require(isinstance(required, set) and required and len(required) <= MAX_ENTRIES and
@@ -70,8 +95,7 @@ def verify(path, expected_hash, required):
         with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
             plain = stream.read(MAX_TOTAL + 1)
         require(len(plain) <= MAX_TOTAL, 'EXPANSION_LIMIT')
-        require(len(plain) % 512 == 0 and len(plain) >= 1024 and plain[-1024:] == b'\0' * 1024,
-                'INVALID_TAR_END')
+        validate_physical_tar(plain)
         seen, files, total = set(), set(), 0
         with tarfile.open(fileobj=io.BytesIO(plain), mode='r:') as archive:
             for member in archive:
@@ -79,7 +103,7 @@ def verify(path, expected_hash, required):
                 # Standard directory trailing slash may be normalized by tarfile.
                 name = member.name.rstrip('/') if member.isdir() else member.name
                 require(allowed(name) and name not in seen, 'INVALID_ARCHIVE_PATH')
-                require(not member.pax_headers and (member.isfile() or member.isdir()) and
+                require(not member.pax_headers and (member.type in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE)) and
                         not member.mode & 0o7000, 'UNSUPPORTED_ARCHIVE_ENTRY')
                 seen.add(name)
                 require(0 <= member.size <= MAX_FILE and (not member.isdir() or member.size == 0), 'MEMBER_LIMIT')
@@ -92,7 +116,7 @@ def verify(path, expected_hash, required):
             # tarfile can stop at an early end marker and ignore a concatenated
             # second tar. Reject any nonzero bytes after its actual parsed end.
             require(not any(plain[archive.offset:]), 'TRAILING_ARCHIVE_DATA')
-        require(required <= files, 'INCOMPLETE_OWNER_INVENTORY')
+        require(required == files, 'INCOMPLETE_OWNER_INVENTORY')
     except BackupError:
         raise
     except (OSError, EOFError, tarfile.TarError, ValueError, zlib.error):

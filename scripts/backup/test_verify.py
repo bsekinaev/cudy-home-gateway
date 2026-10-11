@@ -58,6 +58,36 @@ class VerifyTests(unittest.TestCase):
         self.assertNotIn('synthetic', json.dumps(result))
         self.assertNotIn('notifications.jsonl', json.dumps(result))
 
+    def test_unapproved_extra_file_rejected(self):
+        entries = [(p, b'data', tarfile.REGTYPE) for p in sorted(self.required)]
+        self.archive(entries + [('etc/config/unapproved', b'extra', tarfile.REGTYPE)])
+        with self.assertRaisesRegex(verify.BackupError, 'INCOMPLETE_OWNER_INVENTORY'):
+            self.check()
+
+    def test_sparse_and_hidden_extension_headers_rejected(self):
+        for kind in (tarfile.GNUTYPE_SPARSE, tarfile.XHDTYPE, tarfile.XGLTYPE,
+                     tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK):
+            plain = self.archive()
+            hidden = tarfile.TarInfo('etc/extension')
+            hidden.type = kind
+            hidden.size = 0
+            header = hidden.tobuf(format=tarfile.USTAR_FORMAT)
+            self.write(gzip.compress(header + plain))
+            with self.assertRaisesRegex(verify.BackupError, 'UNSUPPORTED_ARCHIVE_ENTRY'):
+                self.check()
+
+    def test_zero_file_contents_never_substitute_for_end_headers(self):
+        self.required = {'etc/config/network'}
+        plain = self.archive([('etc/config/network', b'\0' * 1024, tarfile.REGTYPE)])
+        self.write(gzip.compress(plain[:1536]))
+        with self.assertRaisesRegex(verify.BackupError, 'INVALID_TAR_END'):
+            self.check()
+        self.write(gzip.compress(plain[:2048]))
+        with self.assertRaisesRegex(verify.BackupError, 'INVALID_TAR_END'):
+            self.check()
+        self.write(gzip.compress(plain[:2560]))
+        self.assertEqual(self.check()['status'], 'VERIFIED')
+
     def test_checksum_and_invalid_hash_rejected_before_parsing(self):
         self.archive()
         for value, reason in [('0' * 64, 'CHECKSUM_MISMATCH'), ('invalid', 'INVALID_SHA256')]:

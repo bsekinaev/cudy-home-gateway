@@ -62,3 +62,12 @@ private pre-restore backup, journal, post-check/rollback/recovery и LAN дос�
 restore ещё не реализованы. 12 tests используют настоящий gzip/tar/hash/private FS
 с public synthetic contents, включая corruption/bombs/links/FIFO/privacy. Они не
 являются проверкой реального backup или восстановления роутера.
+
+## Исправления review 11 октября 2026
+
+Physical tar headers проверяются до tarfile: разрешены только обычные regular
+и directory typeflags, sparse/PAX/GNU extension headers отклоняются, включая
+пустые скрытые headers. Два нулевых end blocks обязательны именно после
+последнего member; нулевое содержимое файла не заменяет end marker. Набор
+regular paths должен точно совпадать с приватным owner inventory, без дополнительных
+allowlisted файлов. 15 offline negative/positive tests PASS. LIVE не выполнено.
