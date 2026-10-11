@@ -66,7 +66,7 @@ esac
 
     def wire(self, data=None):
         data = data or self.new
-        lines = [f'HGDEPLOY1 {COMMIT}\n'.encode()]
+        lines = [f'HGDEPLOY2 {COMMIT}\n'.encode()]
         for name in PATHS:
             content = data[name]
             mode = '0755' if name in PATHS[:3] else '0644'
@@ -87,12 +87,47 @@ esac
             self.assertEqual((self.root / name).read_bytes(), data, name)
         self.assertTrue(self.running.exists())
 
+    def test_legacy_journal_refused_before_service_or_phase_change(self):
+        self.assertEqual(self.run_engine('apply').returncode, 0)
+        txid = (self.base / 'latest').read_text().strip()
+        tx = self.base / txid
+        (tx / 'inventory-version').unlink()
+        self.assertNotEqual(self.run_engine('rollback').returncode, 0)
+        self.assertEqual((tx / 'phase').read_text().strip(), 'COMMITTED')
+        self.assertTrue(self.running.exists())
+        self.assertFalse((self.base / 'active').exists())
+        (tx / 'phase').write_text('APPLYING\n')
+        (self.base / 'active').write_text(txid + '\n')
+        self.assertNotEqual(self.run_engine('recover').returncode, 0)
+        self.assertEqual((tx / 'phase').read_text().strip(), 'APPLYING')
+        self.assertEqual((self.base / 'active').read_text().strip(), txid)
+        self.assertTrue(self.running.exists())
+
+    def test_marked_journal_requires_exact_inventory(self):
+        self.assertEqual(self.run_engine('apply').returncode, 0)
+        tx = self.base / (self.base / 'latest').read_text().strip()
+        for name in ('backup.sha256', 'new.sha256'):
+            path = tx / name
+            path.write_text(''.join(line for line in path.read_text().splitlines(True)
+                                    if not line.endswith('usr/lib/home-gateway/actions.uc\n')))
+        self.assertNotEqual(self.run_engine('rollback').returncode, 0)
+        self.assertEqual((tx / 'phase').read_text().strip(), 'COMMITTED')
+        self.assertTrue(self.running.exists())
+        self.assertFalse((self.base / 'active').exists())
+
     def test_plan_never_changes_runtime(self):
         result = self.run_engine('plan')
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn(b'CHANGED=1', result.stdout)
         self.assert_old()
         self.assertFalse(list(self.base.iterdir()))
+
+    def test_previous_wire_protocol_is_rejected_before_apply(self):
+        wire = self.wire().replace(b'HGDEPLOY2 ', b'HGDEPLOY1 ', 1)
+        result = self.run_engine('apply', wire)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'bad header', result.stdout)
+        self.assert_old()
 
     def test_apply_noop_and_manual_rollback(self):
         result = self.run_engine('apply')

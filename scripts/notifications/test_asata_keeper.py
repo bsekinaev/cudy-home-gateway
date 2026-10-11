@@ -58,6 +58,15 @@ exit 97
         return subprocess.run([self.busybox, 'ash', str(GATEWAY), 'asata-keeper', mode],
                               env=env, text=True, capture_output=True, timeout=8)
 
+    def test_existing_shared_runtime_rejected_without_chmod(self):
+        shared = self.base / 'shared'
+        shared.mkdir(mode=0o1777)
+        shared.chmod(0o1777)
+        self.env['HG_ASATA_KEEPER_RUNTIME_DIR'] = str(shared)
+        self.assertEqual(self.keeper().returncode, 70)
+        self.assertEqual(shared.stat().st_mode & 0o7777, 0o1777)
+        self.assertFalse((shared / 'asata-keeper.lock').exists())
+
     def test_exact_first_rule_needs_no_write(self):
         for mode in ('check', 'repair'):
             result = self.keeper(mode, True)
@@ -124,7 +133,7 @@ exit 97
 
     def test_lock_excludes_parallel_process_and_recovers_after_crash(self):
         runtime = self.base / 'runtime'
-        runtime.mkdir()
+        runtime.mkdir(mode=0o700)
         # This test holds the actual kernel flock, then kills its owner (no PID-directory simulation).
         import sys
         child = subprocess.Popen([sys.executable, '-c',
@@ -190,7 +199,7 @@ exit 97
     def test_doctor_distinguishes_busy_from_bad_semantics(self):
         import fcntl
         runtime = self.base / 'runtime'
-        runtime.mkdir()
+        runtime.mkdir(mode=0o700)
         with (runtime / 'asata-keeper.lock').open('w') as file:
             fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
             script = '. "$HG_LIBDIR/common.sh"; . "$HG_LIBDIR/doctor.sh"; hg_doctor_asata; printf "FAIL=%s\\n" "$HG_DOCTOR_FAIL"'
