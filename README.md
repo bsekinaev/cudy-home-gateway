@@ -52,6 +52,7 @@ CI каждой новой ветки проверяется отдельно. `
 - [Incident State](docs/INCIDENTS.md)
 - [Аудит vtest и блокеры 0.6](docs/VTEST.md)
 - [Safe Actions и migration 0.7](docs/SAFE_ACTIONS.md)
+- [Приватные backup: проверка и ограничения 0.9](docs/BACKUP.md)
 - [Adaptive External Probes](docs/ADAPTIVE_PROBES.md)
 - [CI/CD](docs/CI_CD.md)
 - [Telegram read-only](docs/TELEGRAM.md)

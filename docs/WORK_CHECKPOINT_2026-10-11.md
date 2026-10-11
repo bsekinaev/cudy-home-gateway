@@ -48,3 +48,7 @@ PR16 исправлен до 23 backup tests, текущий HEAD 1a3a835; CI/re
 Дополнительное review: EINTR при intent persistence повторяется до sync;
 prelaunch cancel очищает собственный intent/fence. Fixture PID публикуется
 атомарным rename; test readiness не наблюдает пустой PID file.
+
+12.10: PR16 merged main7a134a3, 30 verifier tests; native19 suite объединён
+со свежим main, provider remains default DISABLED/target acceptance pending.
+Next: current merged CI/review then PR17 merge; никаких real CUDY changes.
