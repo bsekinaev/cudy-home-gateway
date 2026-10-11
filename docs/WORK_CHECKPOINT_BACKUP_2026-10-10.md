@@ -29,3 +29,12 @@ limits, immutable archives, проверкой перед last-five rotation, jo
 17 actual offline tests PASS, включая malformed 5000-digit/deep JSON CLI и реальный
 формат persisted Gateway inventory. Последний published HEAD перед этими fixes:
 65f81791df15d6cde5d0205f629ae41f056aaa3c. Stage 0.9/LIVE не принят.
+
+Обновлено на main после #15: 8a8a37de5443bee5ee988a3b0623bb3589a8a07d.
+CI conflict разрешён с сохранением backup, planner и actions suites. README ссылается
+на BACKUP.md и ACCEPTANCE.md. Фактические проверки merged tree: 182 PASS =
+64 notifications/ASATA +23 vtest +17 backup +9 planner +24 actions +13 release +
+32 deploy; full CI_RESULT=PASS, BusyBox 1.36.1 ash/pinned ucode syntax PASS.
+Перед merge нужны новый HEAD CI/review. CUDY/MAIN/restore не изменены.
+Точное продолжение: проверить GitHub CI/review #16, закрыть исправленные 6 findings,
+merge без bypass; затем native ownership PR и remaining backup/transaction adapters.

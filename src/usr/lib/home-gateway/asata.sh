@@ -285,7 +285,7 @@ hg_asata_runtime_prepare() (
         remaining="${remaining#"$segment"}"
         # The parent was validated before this lookup/create. A hostile existing
         # entry is inspected on the next iteration, never chmodded or descended.
-        [ -e "$prefix" ] || [ -L "$prefix" ] || mkdir "$prefix" || exit 1
+        [ -e "$prefix" ] || [ -L "$prefix" ] || mkdir -m 700 "$prefix" || exit 1
     done
-    chmod 700 "$candidate"
+    [ "$prefix" != / ] && [ "$prefix" != /tmp ] && [ "$permission" = 700 ]
 )
