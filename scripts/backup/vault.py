@@ -188,7 +188,17 @@ class Vault:
         removed = 0
         with os.scandir(self.fd) as entries:
             names = [entry.name for entry in entries if COPY.fullmatch(entry.name) and entry.name not in referenced]
-        for name in names:
+        retired = dict(self.db.execute("SELECT id,digest FROM audit WHERE event='ROTATED' ORDER BY sequence"))
+        remove = [name for name in names if COPY.fullmatch(name).group(1) in retired]
+        # A lost/rolled-back catalog cannot prove an unknown pair was never
+        # committed. Preserve it; only explicit retained retirement receipts
+        # authorize deletion. Validate every available retired archive first.
+        for name in remove:
+            if name.endswith('.tar.gz'):
+                identifier = COPY.fullmatch(name).group(1)
+                raw = private_read(self.path / name, 8 * 1024 * 1024)
+                require(hashlib.sha256(raw).hexdigest() == retired[identifier], 'RETIRED_CHECKSUM_MISMATCH')
+        for name in remove:
             os.unlink(name, dir_fd=self.fd); removed += 1
         os.fsync(self.fd)
         return removed
@@ -206,11 +216,22 @@ class Vault:
         self.commit_copy(identifier, digest, hashlib.sha256(manifest).hexdigest())
         self.garbage_collect()
         return dict(schema_version=1, status='STORED', copies=len(self.records()),
+                    unreferenced_preserved=self.preserved_unknown(),
                     completeness='OWNER_INVENTORY_ONLY', transaction_consistent=False, restore_supported=False)
+
+    def preserved_unknown(self):
+        records = self.records()
+        known = {identifier for identifier, *_ in records}
+        known |= {row[0] for row in self.db.execute("SELECT id FROM audit WHERE event='ROTATED'")}
+        with os.scandir(self.fd) as entries:
+            return sum(1 for entry in entries if COPY.fullmatch(entry.name) and
+                       COPY.fullmatch(entry.name).group(1) not in known)
 
     def show(self):
         records = self.verified_records()
-        return dict(schema_version=1, status='VERIFIED', copies=len(records),
+        unknown = self.preserved_unknown()
+        return dict(schema_version=1, status='QUARANTINED' if unknown else 'VERIFIED', copies=len(records),
+                    unreferenced_preserved=unknown,
                     audit_events=self.db.execute('SELECT count(*) FROM audit').fetchone()[0],
                     transaction_consistent=False, restore_supported=False)
 
@@ -231,7 +252,7 @@ def main():
             elif args.operation == 'recover':
                 vault.garbage_collect()
                 result = vault.show()
-                result['status'] = 'RECOVERED'
+                result['status'] = 'QUARANTINED' if result['unreferenced_preserved'] else 'RECOVERED'
             else:
                 result = vault.show()
     except (BackupError, OSError, sqlite3.Error, ValueError) as error:

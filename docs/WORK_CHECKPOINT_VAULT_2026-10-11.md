@@ -8,7 +8,7 @@ deploy/restore/sysupgrade, stable tag не изменены. Исходные п
 private 0700/0600 trusted paths/no chmod shared directories, kernel exclusion,
 fsynced files before SQLite FULL catalog/audit commit, last-five rotation,
 explicit orphan recovery; corruption pauses before deletion/rotation.
-17 actual vault tests PASS (44 вместе с final verifier 27); final verifier #16 HEAD 5ccd9a55b5a042d948d98cd8b0cb8a06f0a455ca
+20 actual vault tests PASS (48 вместе с final verifier 28); final verifier #16 HEAD 5ccd9a55b5a042d948d98cd8b0cb8a06f0a455ca
 проверяется отдельно и должен быть объединён после последнего GitHub CI/review.
 Kernel SIGKILL SQL recovery подтверждён; before/after file/catalog fault boundaries
 проверены на реальной FS, без production fault injection hooks.
@@ -33,3 +33,8 @@ P0 migration/preflight — отдельный PR18. No private archive requested
 Полная local regression после reconcile: 209 actual PASS = 164 state/CLI +
 13 release + 32 deploy. PR19 retarget main для CI; merge зависит от PR16.
 Latest verifier doc contract объединён; новый HEAD CI/review проверять заново.
+
+Review P1 исправлен: consistent catalog rollback/empty index+audit никогда не
+приводят к удалению unknown копий; они QUARANTINED. GC требует ROTATED receipt,
+metadata и digest retirement archives, иначе pauses before deletion.
+48 current backup tests PASS; старый combined209 относится к предыдущему HEAD.

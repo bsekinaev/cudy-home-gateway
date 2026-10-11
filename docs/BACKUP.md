@@ -72,7 +72,7 @@ Physical tar headers проверяются до tarfile: разрешены о�
 
 ### Persisted init/vtest links и raw tar validation
 
-27 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
+28 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
 repository-managed enable links (S94/K09 deploy-recover, S95/K10 Telegram)
 разрешён только SYMTYPE с точным relative target ../init.d/соответствующий-service,
 size=0 и явным включением path в owner inventory. Замена этих paths regular file
@@ -97,6 +97,11 @@ Verifier допускает только это точное соответст�
 Штатный backup исключает три файла `/etc/home-gateway`; отдельный private backup
 проверен владельцем по SHA256, restore не проверен. Это critical release blocker.
 
+Raw numeric fields mode/uid/gid/mtime/checksum/size/device проверяются одинаково,
+NUL допускает лишь последующее zero/space padding, device values=0. uname/gname
+имеют zero padding. Magic/version — canonical USTAR, GNU ordinary header without
+prefix/extensions или zero V7 metadata; inconsistent representations запрещены.
+
 ## Private vault — отдельная host-only реализация
 
 `scripts/backup/vault.py` хранит уже полученные private archives после полной
@@ -118,7 +123,9 @@ SQLite FULL/DELETE transaction атомарно сохраняет import, activ
 и audit retirement. До commit старые references сохраняются; после commit старые
 files удаляются только когда новые и оставшиеся active copies проверены. Crash
 может оставить private unreferenced files: `recover` проверяет active index и
-удаляет только строгие vault-generated filenames после metadata validation.
+удаляет только свои файлы с retained ROTATED receipt и проверенным archive SHA256.
+Unknown unreferenced pairs сохраняются, даже если copies/audit исчезли вместе;
+show/recover сообщают QUARANTINED и unreferenced_preserved.
 SQLite hot journal восстанавливается при explicit writable open/recover.
 Read-only show не выполняет GC. Corrupt active archive/inventory/catalog blocks
 import/rotation/GC; generic stdout не раскрывает private paths/contents.
@@ -130,7 +137,7 @@ router restore. Последние пять references сохраняются, o
 могут временно увеличивать disk count до recovery. Catalog не доказывает coherent
 snapshot источника: transaction_consistent=false, restore_supported=false.
 
-17 isolated vault tests PASS + verifier tests: actual files/SQLite, 7-copy rotation,
+20 isolated vault tests PASS + verifier tests: actual files/SQLite, 7-copy rotation,
 crash before/after catalog commit, actual SIGKILL SQL transaction, corruption,
 private permissions, cross-process kernel lock, path injection и bounded audit.
 Это доступная часть 0.9; collector/coordinated snapshot/target restore still BLOCKED.

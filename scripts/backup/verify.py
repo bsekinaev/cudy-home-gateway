@@ -78,6 +78,14 @@ def header_text(field):
         raise BackupError('INVALID_ARCHIVE_PATH') from None
 
 
+def header_number(field):
+    value, _, padding = field.partition(b'\0')
+    require(all(byte in (0, 32) for byte in padding), 'INVALID_ARCHIVE')
+    value = value.strip(b' ')
+    require(all(byte in b'01234567' for byte in value), 'INVALID_ARCHIVE')
+    return int(value, 8) if value else 0
+
+
 def validate_physical_tar(plain):
     """Walk physical USTAR headers: tarfile hides extension and sparse records."""
     require(len(plain) % 512 == 0, 'INVALID_TAR_END')
@@ -93,6 +101,15 @@ def validate_physical_tar(plain):
         require(entries <= MAX_ENTRIES, 'ENTRY_LIMIT')
         require(header[156:157] in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE, tarfile.SYMTYPE),
                 'UNSUPPORTED_ARCHIVE_ENTRY')
+        for start, end in ((100,108), (108,116), (116,124), (136,148), (148,156)):
+            header_number(header[start:end])
+        header_text(header[265:297])
+        header_text(header[297:329])
+        require(header_number(header[329:337]) == 0 and header_number(header[337:345]) == 0, 'INVALID_ARCHIVE')
+        magic, version = header[257:263], header[263:265]
+        require((magic == b'ustar\0' and version == b'00') or
+                (magic == b'ustar ' and version == b' \0') or
+                (not any(header[257:512])), 'INVALID_ARCHIVE')
         name = header_text(header[:100])
         if header[257:263] == b'ustar\0':
             prefix = header_text(header[345:500])
@@ -112,11 +129,8 @@ def validate_physical_tar(plain):
         else:
             require(not linkname, 'UNSUPPORTED_ARCHIVE_ENTRY')
         # Accept ordinary octal sizes only; no GNU base-256/sparse encodings.
-        size_raw = header[124:136]
-        require(re.fullmatch(rb' *[0-7]+(?:\x00[\x00 ]*| *)', size_raw), 'INVALID_ARCHIVE')
-        size_field = size_raw.split(b'\0', 1)[0].strip(b' ')
+        size = header_number(header[124:136])
         require(not any(header[500:512]), 'NONZERO_HEADER_PADDING')
-        size = int(size_field, 8)
         require(size <= MAX_FILE and (header[156:157] in (tarfile.REGTYPE, tarfile.AREGTYPE) or size == 0), 'MEMBER_LIMIT')
         next_offset = offset + 512 + ((size + 511) // 512) * 512
         require(next_offset <= len(plain), 'TRUNCATED_MEMBER')

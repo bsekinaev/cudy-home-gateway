@@ -219,6 +219,21 @@ class VerifyTests(unittest.TestCase):
         self.write(gzip.compress(bytes(header) + b'\0' * 1024))
         with self.assertRaisesRegex(verify.BackupError, 'INVALID_ARCHIVE'): self.check()
 
+    def test_fixed_width_metadata_nul_padding_is_validated(self):
+        template = self.archive([('etc/config/network', b'data', tarfile.REGTYPE)])
+        for start, end in ((100,108), (108,116), (116,124), (136,148), (265,297), (297,329), (329,337), (337,345)):
+            with self.subTest(field=(start,end)):
+                plain = bytearray(template)
+                plain[start:end] = b'\0' + b'7' * (end-start-1)
+                plain[148:156] = b' ' * 8
+                plain[148:156] = f'{sum(plain[:512]):06o}\0 '.encode()
+                self.write(gzip.compress(plain))
+                with self.assertRaises(verify.BackupError): self.check()
+        # Checksum is validated too; there is no alternate hidden suffix form.
+        plain = bytearray(template); plain[148:156] = b'\0' + b'7' * 7
+        self.write(gzip.compress(plain))
+        with self.assertRaises(verify.BackupError): self.check()
+
     def test_full_capacity_long_path_inventory_and_archive(self):
         paths = ['etc/' + 'a' * 150 + '/' + 'c' * 77 + f'{i:04d}.cfg' for i in range(verify.MAX_ENTRIES)]
         self.assertTrue(all(len(p) == verify.MAX_PATH for p in paths))

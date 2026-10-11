@@ -59,6 +59,45 @@ class VaultTests(unittest.TestCase):
         with vault.Vault(self.path, readonly=True) as store:
             self.assertEqual(store.show()['copies'], 1)
 
+    def test_catalog_rollback_preserves_unreferenced_committed_pair(self):
+        self.store()
+        catalog = (self.path / 'vault.sqlite').read_bytes()
+        self.make_archive(b'second-committed'); self.store()
+        pairs = {p.name: p.read_bytes() for p in self.path.iterdir() if vault.COPY.fullmatch(p.name)}
+        (self.path / 'vault.sqlite').write_bytes(catalog)
+        with vault.Vault(self.path) as store:
+            self.assertEqual(store.garbage_collect(), 0)
+            self.assertEqual(store.show()['status'], 'QUARANTINED')
+            self.assertEqual(store.show()['unreferenced_preserved'], 2)
+        self.assertEqual(pairs, {p.name: p.read_bytes() for p in self.path.iterdir() if vault.COPY.fullmatch(p.name)})
+        self.make_archive(b'next-import'); self.store()
+        for name,data in pairs.items(): self.assertEqual((self.path / name).read_bytes(), data)
+
+    def test_empty_corrupt_catalog_never_deletes_committed_pair(self):
+        self.store()
+        pairs = {p.name: p.read_bytes() for p in self.path.iterdir() if vault.COPY.fullmatch(p.name)}
+        with vault.Vault(self.path) as store:
+            store.db.execute('BEGIN IMMEDIATE')
+            store.db.execute('DELETE FROM copies'); store.db.execute('DELETE FROM audit')
+            store.db.execute('COMMIT')
+            self.assertEqual(store.garbage_collect(), 0)
+            self.assertEqual(store.show()['unreferenced_preserved'], 2)
+        self.assertEqual(pairs, {p.name: p.read_bytes() for p in self.path.iterdir() if vault.COPY.fullmatch(p.name)})
+
+    def test_corrupt_retired_copy_blocks_all_deletion(self):
+        self.store()
+        first = next(self.path.glob('*.tar.gz'))
+        for i in range(4): self.make_archive(str(i).encode()); self.store()
+        self.make_archive(b'sixth')
+        with vault.Vault(self.path) as store:
+            with patch.object(store, 'garbage_collect', side_effect=SystemExit):
+                with self.assertRaises(SystemExit): store.import_archive(self.archive, self.digest, self.inventory)
+        first.write_bytes(b'corrupted-retired-copy')
+        before = {p.name: p.read_bytes() for p in self.path.iterdir() if vault.COPY.fullmatch(p.name)}
+        with vault.Vault(self.path) as store:
+            with self.assertRaisesRegex(BackupError, 'RETIRED_CHECKSUM_MISMATCH'): store.garbage_collect()
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.path.iterdir() if vault.COPY.fullmatch(p.name)})
+
     def test_verified_copy_private_files_and_fixed_summary(self):
         result = self.store()
         self.assertEqual(result['status'], 'STORED')
@@ -108,8 +147,10 @@ class VaultTests(unittest.TestCase):
                 with self.assertRaises(SystemExit): store.import_archive(self.archive, self.digest, self.inventory)
         with vault.Vault(self.path) as store:
             self.assertEqual(store.records(), old)
-            self.assertEqual(store.garbage_collect(), 2)
+            self.assertEqual(store.garbage_collect(), 0)
             self.assertEqual(store.show()['copies'], 1)
+            self.assertEqual(store.show()['unreferenced_preserved'], 2)
+            self.assertEqual(store.show()['status'], 'QUARANTINED')
 
     def test_crash_after_commit_retains_new_index_until_gc(self):
         for i in range(5): self.make_archive(str(i).encode()); self.store()
