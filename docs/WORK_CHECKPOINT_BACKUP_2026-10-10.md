@@ -22,3 +22,10 @@ main, combined regression, publish PR и GitHub CI/review. Затем implement 
 backup coordinator с notification/incident/actions locks, actual inventory/space
 limits, immutable archives, проверкой перед last-five rotation, journal/recovery
 и isolated restore tests. Получить audited target helper versions без secrets.
+
+11 октября: после повторного review добавлены sanitized ValueError/RecursionError
+для corrupt JSON inventory и persisted deployment runtime paths (CI smoke/receiver).
+Каталоги-предки private inventory допустимы, без ослабления exact regular-file set.
+17 actual offline tests PASS, включая malformed 5000-digit/deep JSON CLI и реальный
+формат persisted Gateway inventory. Последний published HEAD перед этими fixes:
+65f81791df15d6cde5d0205f629ae41f056aaa3c. Stage 0.9/LIVE не принят.

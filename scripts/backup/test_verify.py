@@ -88,6 +88,32 @@ class VerifyTests(unittest.TestCase):
         self.write(gzip.compress(plain[:2560]))
         self.assertEqual(self.check()['status'], 'VERIFIED')
 
+    def test_corrupt_inventory_integer_and_depth_have_fixed_cli_error(self):
+        self.archive()
+        path = self.base / 'inventory.json'
+        for data in ('[' + '1' * 5000 + ']', '[' * 1500 + '0' + ']' * 1500):
+            path.write_text(data)
+            path.chmod(0o600)
+            result = subprocess.run([sys.executable, str(Path(verify.__file__)), str(self.path),
+                                     '--sha256', self.digest, '--inventory', str(path)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(json.loads(result.stdout)['status'], 'INVALID_INVENTORY')
+            self.assertEqual(result.stderr, '')
+
+    def test_persisted_deployment_runtime_inventory_is_supported(self):
+        self.required = {'usr/bin/home-gateway-ci-smoke',
+                         'usr/libexec/home-gateway-deploy/engine.sh',
+                         'usr/libexec/home-gateway-deploy/wrapper.sh'}
+        entries = [(p, b'data', tarfile.REGTYPE) for p in sorted(self.required)]
+        entries += [(p, b'', tarfile.DIRTYPE) for p in ('usr', 'usr/bin', 'usr/libexec', 'usr/libexec/home-gateway-deploy')]
+        self.archive(entries)
+        self.assertEqual(self.check()['files'], 3)
+        path = self.base / 'inventory.json'
+        path.write_text(json.dumps(sorted(self.required)))
+        path.chmod(0o600)
+        self.assertEqual(verify.inventory(path), self.required)
+
     def test_checksum_and_invalid_hash_rejected_before_parsing(self):
         self.archive()
         for value, reason in [('0' * 64, 'CHECKSUM_MISMATCH'), ('invalid', 'INVALID_SHA256')]:

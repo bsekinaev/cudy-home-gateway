@@ -31,8 +31,8 @@ def allowed(name):
         return False
     if any(part in ('', '.', '..') for part in name.split('/')):
         return False
-    return (name.startswith('etc/') or name.startswith('usr/lib/home-gateway/') or
-            name in ('usr/bin/gateway', 'usr/bin/asata-udp-direct', 'root/vless-auto.sh'))
+    return (name.startswith('etc/') or name.startswith('usr/lib/home-gateway/') or name.startswith('usr/libexec/home-gateway-deploy/') or
+            name in ('usr/bin/gateway', 'usr/bin/home-gateway-ci-smoke', 'usr/bin/asata-udp-direct', 'root/vless-auto.sh'))
 
 
 def private_read(path, limit):
@@ -49,9 +49,10 @@ def private_read(path, limit):
 
 
 def inventory(path):
+    raw = private_read(path, 65536)
     try:
-        data = json.loads(private_read(path, 65536))
-    except (json.JSONDecodeError, UnicodeError):
+        data = json.loads(raw)
+    except (ValueError, UnicodeError, RecursionError):
         raise BackupError('INVALID_INVENTORY') from None
     require(isinstance(data, list) and 0 < len(data) <= MAX_ENTRIES and
             all(allowed(name) for name in data) and len(set(data)) == len(data), 'INVALID_INVENTORY')
@@ -102,7 +103,10 @@ def verify(path, expected_hash, required):
                 require(len(seen) < MAX_ENTRIES, 'ENTRY_LIMIT')
                 # Standard directory trailing slash may be normalized by tarfile.
                 name = member.name.rstrip('/') if member.isdir() else member.name
-                require(allowed(name) and name not in seen, 'INVALID_ARCHIVE_PATH')
+                directory_allowed = member.isdir() and any(path.startswith(name + '/') for path in required)
+                require((allowed(name) or directory_allowed) and name not in seen and
+                        not name.startswith('/') and all(part not in ('', '.', '..') for part in name.split('/')),
+                        'INVALID_ARCHIVE_PATH')
                 require(not member.pax_headers and (member.type in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE)) and
                         not member.mode & 0o7000, 'UNSUPPORTED_ARCHIVE_ENTRY')
                 seen.add(name)
