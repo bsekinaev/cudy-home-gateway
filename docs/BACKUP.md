@@ -72,7 +72,7 @@ Physical tar headers проверяются до tarfile: разрешены о�
 
 ### Persisted init/vtest links и raw tar validation
 
-28 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
+30 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
 repository-managed enable links (S94/K09 deploy-recover, S95/K10 Telegram)
 разрешён только SYMTYPE с точным relative target ../init.d/соответствующий-service,
 size=0 и явным включением path в owner inventory. Замена этих paths regular file
@@ -101,6 +101,10 @@ Raw numeric fields mode/uid/gid/mtime/checksum/size/device проверяютс�
 NUL допускает лишь последующее zero/space padding, device values=0. uname/gname
 имеют zero padding. Magic/version — canonical USTAR, GNU ordinary header without
 prefix/extensions или zero V7 metadata; inconsistent representations запрещены.
+
+Gzip parser проверяет reserved flags/FHCRC/CRC/trailer каждого member,
+не только первого. ≤64 gzip members; общий decompressed bound остаётся 16 MiB.
+30 tests — новые flags/second-member/member-count negative regressions.
 
 ## Private vault — отдельная host-only реализация
 
@@ -137,7 +141,15 @@ router restore. Последние пять references сохраняются, o
 могут временно увеличивать disk count до recovery. Catalog не доказывает coherent
 snapshot источника: transaction_consistent=false, restore_supported=false.
 
-20 isolated vault tests PASS + verifier tests: actual files/SQLite, 7-copy rotation,
+22 isolated vault tests PASS + verifier tests: actual files/SQLite, 7-copy rotation,
 crash before/after catalog commit, actual SIGKILL SQL transaction, corruption,
 private permissions, cross-process kernel lock, path injection и bounded audit.
 Это доступная часть 0.9; collector/coordinated snapshot/target restore still BLOCKED.
+
+Read-back new pair hash/inventory verification выполняется до catalog rotation
+commit; injected archive/manifest storage faults сохраняют старые пять references
+и файлы. 52 actual backup tests PASS (22 vault + 30 verifier).
+
+Retirement GC разрешён лишь для complete archive+inventory pair после SHA проверки
+архива; incomplete пары сохраняются QUARANTINED. Manifest удаляется раньше
+archive: crash оставляет сохранённый архив, не metadata без проверенного archive.

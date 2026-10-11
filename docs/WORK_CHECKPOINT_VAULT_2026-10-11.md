@@ -8,7 +8,7 @@ deploy/restore/sysupgrade, stable tag не изменены. Исходные п
 private 0700/0600 trusted paths/no chmod shared directories, kernel exclusion,
 fsynced files before SQLite FULL catalog/audit commit, last-five rotation,
 explicit orphan recovery; corruption pauses before deletion/rotation.
-20 actual vault tests PASS (48 вместе с final verifier 28); final verifier #16 HEAD 5ccd9a55b5a042d948d98cd8b0cb8a06f0a455ca
+22 actual vault tests PASS (52 вместе с final verifier 30); final verifier #16 HEAD 5ccd9a55b5a042d948d98cd8b0cb8a06f0a455ca
 проверяется отдельно и должен быть объединён после последнего GitHub CI/review.
 Kernel SIGKILL SQL recovery подтверждён; before/after file/catalog fault boundaries
 проверены на реальной FS, без production fault injection hooks.
@@ -37,4 +37,11 @@ Latest verifier doc contract объединён; новый HEAD CI/review пр�
 Review P1 исправлен: consistent catalog rollback/empty index+audit никогда не
 приводят к удалению unknown копий; они QUARANTINED. GC требует ROTATED receipt,
 metadata и digest retirement archives, иначе pauses before deletion.
-48 current backup tests PASS; старый combined209 относится к предыдущему HEAD.
+52 current backup tests PASS; старый combined209 относится к предыдущему HEAD.
+
+Read-back new pair hash/inventory verification выполняется до catalog rotation
+commit; injected archive/manifest storage faults сохраняют старые пять references
+и файлы. 49 actual backup tests PASS (21 vault + 28 verifier).
+
+12.10: latest review missing-retired-archive closed; complete-pair verification
+перед удалением, orphan inventory retained. 52 backup tests PASS на host ash1.37.

@@ -98,6 +98,38 @@ class VaultTests(unittest.TestCase):
             with self.assertRaisesRegex(BackupError, 'RETIRED_CHECKSUM_MISMATCH'): store.garbage_collect()
         self.assertEqual(before, {p.name: p.read_bytes() for p in self.path.iterdir() if vault.COPY.fullmatch(p.name)})
 
+    def test_new_copy_readback_fault_preserves_old_index_before_rotation(self):
+        for i in range(5): self.make_archive(str(i).encode()); self.store()
+        with vault.Vault(self.path) as store:
+            before = store.records()
+            original = {name: (self.path / name).read_bytes() for name in
+                        [identifier + suffix for identifier, *_ in before for suffix in ('.tar.gz','.inventory.json')]}
+            real = store.write_copy
+            for suffix, reason in (('.tar.gz', 'CHECKSUM_MISMATCH'), ('.inventory.json', 'INVENTORY_CHECKSUM_MISMATCH')):
+                def corrupt(name, data):
+                    real(name, data)
+                    if name.endswith(suffix): (self.path / name).write_bytes(b'silent-storage-fault')
+                with patch.object(store, 'write_copy', corrupt):
+                    with self.assertRaisesRegex(BackupError, reason):
+                        store.import_archive(self.archive, self.digest, self.inventory)
+                self.assertEqual(store.records(), before)
+                self.assertEqual(store.show()['copies'], 5)
+                for name,data in original.items(): self.assertEqual((self.path / name).read_bytes(), data)
+            self.assertEqual(store.show()['unreferenced_preserved'], 4)
+
+    def test_missing_retired_archive_preserves_inventory_metadata(self):
+        self.store(); first = next(self.path.glob('*.tar.gz'))
+        for i in range(4): self.make_archive(str(i).encode()); self.store()
+        with vault.Vault(self.path) as store:
+            with patch.object(store, 'garbage_collect', side_effect=SystemExit):
+                with self.assertRaises(SystemExit): store.import_archive(self.archive, self.digest, self.inventory)
+        manifest = self.path / (first.name.removesuffix('.tar.gz') + '.inventory.json')
+        saved = manifest.read_bytes(); first.unlink()
+        with vault.Vault(self.path) as store:
+            self.assertEqual(store.garbage_collect(), 0)
+            self.assertEqual(store.show()['status'], 'QUARANTINED')
+        self.assertEqual(manifest.read_bytes(), saved)
+
     def test_verified_copy_private_files_and_fixed_summary(self):
         result = self.store()
         self.assertEqual(result['status'], 'STORED')

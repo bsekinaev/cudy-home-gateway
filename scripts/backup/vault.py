@@ -189,7 +189,10 @@ class Vault:
         with os.scandir(self.fd) as entries:
             names = [entry.name for entry in entries if COPY.fullmatch(entry.name) and entry.name not in referenced]
         retired = dict(self.db.execute("SELECT id,digest FROM audit WHERE event='ROTATED' ORDER BY sequence"))
-        remove = [name for name in names if COPY.fullmatch(name).group(1) in retired]
+        available = set(names)
+        approved = {identifier for identifier in retired
+                    if identifier + '.tar.gz' in available and identifier + '.inventory.json' in available}
+        remove = [name for name in names if COPY.fullmatch(name).group(1) in approved]
         # A lost/rolled-back catalog cannot prove an unknown pair was never
         # committed. Preserve it; only explicit retained retirement receipts
         # authorize deletion. Validate every available retired archive first.
@@ -198,7 +201,7 @@ class Vault:
                 identifier = COPY.fullmatch(name).group(1)
                 raw = private_read(self.path / name, 8 * 1024 * 1024)
                 require(hashlib.sha256(raw).hexdigest() == retired[identifier], 'RETIRED_CHECKSUM_MISMATCH')
-        for name in remove:
+        for name in sorted(remove, key=lambda name: name.endswith('.tar.gz')):
             os.unlink(name, dir_fd=self.fd); removed += 1
         os.fsync(self.fd)
         return removed
@@ -213,7 +216,12 @@ class Vault:
         identifier = uuid.uuid4().hex
         self.write_copy(identifier + '.tar.gz', raw)
         self.write_copy(identifier + '.inventory.json', manifest)
-        self.commit_copy(identifier, digest, hashlib.sha256(manifest).hexdigest())
+        manifest_digest = hashlib.sha256(manifest).hexdigest()
+        copied_manifest = self.path / (identifier + '.inventory.json')
+        require(hashlib.sha256(private_read(copied_manifest, MAX_INVENTORY)).hexdigest() ==
+                manifest_digest, 'INVENTORY_CHECKSUM_MISMATCH')
+        verify(self.path / (identifier + '.tar.gz'), digest, inventory(copied_manifest))
+        self.commit_copy(identifier, digest, manifest_digest)
         self.garbage_collect()
         return dict(schema_version=1, status='STORED', copies=len(self.records()),
                     unreferenced_preserved=self.preserved_unknown(),
@@ -222,10 +230,12 @@ class Vault:
     def preserved_unknown(self):
         records = self.records()
         known = {identifier for identifier, *_ in records}
-        known |= {row[0] for row in self.db.execute("SELECT id FROM audit WHERE event='ROTATED'")}
+        retired = {row[0] for row in self.db.execute("SELECT id FROM audit WHERE event='ROTATED'")}
         with os.scandir(self.fd) as entries:
-            return sum(1 for entry in entries if COPY.fullmatch(entry.name) and
-                       COPY.fullmatch(entry.name).group(1) not in known)
+            names = {entry.name for entry in entries if COPY.fullmatch(entry.name)}
+        known |= {identifier for identifier in retired
+                  if identifier + '.tar.gz' in names and identifier + '.inventory.json' in names}
+        return sum(1 for name in names if COPY.fullmatch(name).group(1) not in known)
 
     def show(self):
         records = self.verified_records()

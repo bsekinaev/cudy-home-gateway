@@ -1,6 +1,5 @@
 """Host-only private OpenWrt backup validation. Never extracts or contacts a router."""
 import argparse
-import gzip
 import hashlib
 import io
 import json
@@ -148,9 +147,17 @@ def verify(path, expected_hash, required):
     try:
         # Bound the decompressed stream before tar parsing, including metadata and
         # padding. Compressed archive size alone cannot bound gzip expansion.
-        with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
-            plain = stream.read(MAX_TOTAL + 1)
-        require(len(plain) <= MAX_TOTAL, 'EXPANSION_LIMIT')
+        # zlib's gzip parser enforces reserved flags and FHCRC for each member.
+        plain, remaining, members = bytearray(), raw, 0
+        while remaining:
+            members += 1
+            require(members <= 64, 'GZIP_MEMBER_LIMIT')
+            decoder = zlib.decompressobj(31)
+            plain.extend(decoder.decompress(remaining, MAX_TOTAL - len(plain) + 1))
+            require(len(plain) <= MAX_TOTAL, 'EXPANSION_LIMIT')
+            require(decoder.eof, 'INVALID_ARCHIVE')
+            remaining = decoder.unused_data
+        plain = bytes(plain)
         validate_physical_tar(plain)
         seen, files, links, total = set(), set(), set(), 0
         with tarfile.open(fileobj=io.BytesIO(plain), mode='r:') as archive:
