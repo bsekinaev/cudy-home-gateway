@@ -46,6 +46,8 @@ CI каждой новой ветки проверяется отдельно. `
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Инженерные решения](docs/DECISIONS.md)
 - [План релизов](docs/ROADMAP.md)
+- [Матрица приёмки v1.0.0 и блокеры](docs/ACCEPTANCE.md)
+- [MAIN Transactions: read-only planner и ограничения](docs/MAIN_TRANSACTIONS.md)
 - [Health Core](docs/HEALTH.md)
 - [Incident State](docs/INCIDENTS.md)
 - [Аудит vtest и блокеры 0.6](docs/VTEST.md)

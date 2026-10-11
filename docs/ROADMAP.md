@@ -118,6 +118,9 @@ Tailscale-only MAINTENANCE и Telegram /actions. LIVE и HGDEPLOY2 bootstrap н�
 
 ## 0.8 — Transactions
 
+**Статус:** разработан только read-only UCI planner; preflight/snapshot/apply/
+rollback/recovery ещё blocked. См. [MAIN_TRANSACTIONS.md](MAIN_TRANSACTIONS.md).
+
 * preflight ноды;
 * snapshot;
 * смена MAIN;

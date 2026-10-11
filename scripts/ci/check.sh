@@ -110,6 +110,9 @@ HG_TEST_BUSYBOX=busybox python3 -m unittest discover -s scripts/vtest -p 'test_*
     fail 'vtest inspection/Telegram authorization contracts'
 pass 'vtest inspection/Telegram authorization contracts'
 
+HG_TEST_BUSYBOX=busybox python3 -m unittest discover -s scripts/transactions -p 'test_*.py' -v ||
+    fail 'MAIN transaction read-only planning contracts'
+pass 'MAIN transaction read-only planning contracts'
 python3 -m unittest discover -s scripts/actions -p 'test_*.py' -v ||
     fail 'Safe Actions confirmation/replay/crash contracts'
 pass 'Safe Actions confirmation/replay/crash contracts'
