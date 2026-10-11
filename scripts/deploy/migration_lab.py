@@ -384,9 +384,13 @@ class Migration:
             return 'ALREADY_COMMITTED'
         # Acquire first, then re-read legacy under the shared receiver exclusion.
         lock = self.fence()
-        self.load()
-        fresh, _ = self.legacy()
-        require(all(fresh[k] == r[k] for k in fresh), 'LEGACY_CHANGED')
+        try:
+            self.load()
+            fresh, _ = self.legacy()
+            require(all(fresh[k] == r[k] for k in fresh), 'LEGACY_CHANGED')
+        except (OSError, ValueError, TypeError, KeyError):
+            self.unfence(lock)  # No live mutation has started.
+            raise
         self.clean_temporaries(r)
         self.phase('APPLYING')
         for rel in ALL:
@@ -408,17 +412,22 @@ class Migration:
         phase = read(self.state / 'phase', 0o600).decode().strip()
         require(phase in ('PREPARED', 'APPLYING', 'COMMITTED', 'RESTORING', 'ROLLED_BACK'), 'PHASE')
         lock = self.fence()
-        self.load()
-        latest = self.base / 'latest'
-        if latest.exists() or latest.is_symlink():
-            require(read(latest, 0o600).decode() == r['latest'], 'NEW_DEPLOYMENT_EXISTS')
-        # Interrupted apply can contain only old/new bytes at each known path.
-        for rel in ALL:
-            dst = self.root / rel
-            if not dst.exists() and not dst.is_symlink():
-                require(rel in ADDED, 'MISSING_RUNTIME')
-                continue
-            require(digest(read(dst, mode(rel))) in {r['new'][rel], r['old'].get(rel)}, 'FILE_DRIFT')
+        try:
+            self.load()
+            latest = self.base / 'latest'
+            if latest.exists() or latest.is_symlink():
+                require(read(latest, 0o600).decode() == r['latest'], 'NEW_DEPLOYMENT_EXISTS')
+            # Interrupted apply can contain only old/new bytes at each known path.
+            for rel in ALL:
+                dst = self.root / rel
+                if not dst.exists() and not dst.is_symlink():
+                    require(rel in ADDED, 'MISSING_RUNTIME')
+                    continue
+                require(digest(read(dst, mode(rel))) in {r['new'][rel], r['old'].get(rel)}, 'FILE_DRIFT')
+        except (OSError, ValueError, TypeError, KeyError):
+            if phase in ('PREPARED', 'COMMITTED', 'ROLLED_BACK'):
+                self.unfence(lock)  # Refused before mutation: do not block newer deployment.
+            raise
         self.clean_temporaries(r)
         self.phase('RESTORING')
         for rel in OLD + RECEIVERS:

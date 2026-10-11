@@ -263,6 +263,7 @@ class MigrationTests(unittest.TestCase):
         self.fixture.put(self.base / 'latest', b'tx.newv2\n', 0o600)
         with self.assertRaisesRegex(Refused, 'NEW_DEPLOYMENT_EXISTS'):
             self.m.rollback()
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
 
     def test_external_deploy_lock_and_partial_fence_refused(self):
         self.prepare()
@@ -438,6 +439,19 @@ m.apply()
             with self.assertRaisesRegex(Refused,'DEPLOYMENT_BUSY'): self.m.apply()
         self.assertTrue(lock.is_dir()); self.assertEqual(list(lock.iterdir()),[])
         self.assert_previous()
+
+    def test_drift_between_read_and_fence_releases_prepared_guard(self):
+        self.prepare()
+        import migration_lab
+        real = self.m.fence
+        path = self.root / OLD[3]; saved = path.read_bytes()
+        def changed():
+            lock = real(); path.write_bytes(saved + b'concurrent-writer'); return lock
+        with patch.object(self.m,'fence',changed):
+            with self.assertRaises(Refused): self.m.apply()
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.assertEqual((self.m.state / 'phase').read_text(),'PREPARED\n')
+        path.write_bytes(saved); self.assert_previous()
 
     def test_real_root_and_no_sentinel_refused(self):
         with self.assertRaises(Refused):

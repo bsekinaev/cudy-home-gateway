@@ -43,7 +43,7 @@ critical persistence blocker. Ни один restore не проверен. Ар�
   ALREADY_COMMITTED. После нового v2 deployment миграционный rollback запрещён:
   сначала требуется отдельное согласованное восстановление той транзакции.
 
-26 isolated tests PASS: реальные FS/rename/fsync/flock, BusyBox ash legacy
+27 isolated tests PASS: реальные FS/rename/fsync/flock, BusyBox ash legacy
 apply/rollback/preflight, SIGKILL, interrupted rollback, exact inventories,
 corrupted manifests/receipts/snapshots, traversal/symlink/hardlink, missing files,
 drift/modes, повторный запуск и conflict с новым deployment. Caller/owner mismatch
@@ -113,4 +113,8 @@ Interrupted prepare/reset/fence teardown negative tests; target migration BLOCKE
 Fence acquisition готовится в receipt-owned sibling и публикуется Linux
 renameat2(RENAME_NOREPLACE), без unsafe fallback; own partial stage recoverable.
 Legacy/rollback validation повторяется после acquisition под exclusion.
-26 migration regressions включают actual SIGKILL pre-publish и foreign lock race.
+27 migration regressions включают actual SIGKILL pre-publish и foreign lock race.
+
+Pre-mutation refusal на PREPARED/COMMITTED/ROLLED_BACK снимает только свой
+fence; interrupted APPLYING/RESTORING остаётся fenced. Newer deployment/drift
+не блокируется отвергнутым rollback. 27 migration tests PASS.
