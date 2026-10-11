@@ -22,7 +22,7 @@ https://github.com/bsekinaev/cudy-home-gateway/pull/16
 
 Новый ownership primitive: фиксированный Xray/config fd, seccomp no new processes
 с native threads; trusted paths, no inherited FD, PDEATHSIG, exact unreaped child
-signals, timeout/cancel, global lock/crash fence/run consumption. 18 native tests
+signals, timeout/cancel, global lock/crash fence/run consumption. 19 native tests
 PASS (actual C/ELF/processes), включая alternate syscall ABI. Default disabled,
 не установлен и не включён в release inventory. Provider run всё ещё blocked.
 Фактическая полная CI проверка baseline #15 с primitive: 133 state/CLI/native
@@ -39,8 +39,12 @@ coordination. Owner LIVE gates перечислены в ACCEPTANCE.md; stable t
 
 Исправлены четыре findings: bounded post-KILL wait с сохранением fence,
 prelaunch cancel/exec-grant handshake, inherited SIGCHLD=IGNORE и signal mask.
-18 actual native tests PASS; production runner не активирован.
+19 actual native tests PASS; production runner не активирован.
 Новый baseline владельца 11.10: HGDEPLOY1, 18 файлов, COMMITTED, active ABSENT;
 HGDEPLOY2/actions/notifications ABSENT. Миграция P0 — отдельная ветка.
 Штатный backup исключает /etc/home-gateway: critical blocker.
 PR16 исправлен до 23 backup tests, текущий HEAD 1a3a835; CI/review проверять заново.
+
+Дополнительное review: EINTR при intent persistence повторяется до sync;
+prelaunch cancel очищает собственный intent/fence. Fixture PID публикуется
+атомарным rename; test readiness не наблюдает пустой PID file.

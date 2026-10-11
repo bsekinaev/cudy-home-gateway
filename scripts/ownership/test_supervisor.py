@@ -31,7 +31,14 @@ int main(int argc, char **argv) {
     if (!cfg) return 99;
     int mode = fgetc(cfg); fclose(cfg);
     char *last = strrchr(path, '/'); strcpy(last + 1, "pid");
-    FILE *pid = fopen(path, "w"); fprintf(pid, "%d\n", getpid()); fclose(pid);
+    strcpy(last + 1, "pid.new");
+    FILE *pid = fopen(path, "w");
+    if (!pid) return 90;
+    fprintf(pid, "%d\n", getpid());
+    if (fclose(pid)) return 90;
+    char final[1024]; strcpy(final, path); strcpy(strrchr(final, '/') + 1, "pid");
+    if (rename(path, final)) return 90;
+    strcpy(last + 1, "pid");
     if (mode == 'S') return 0;
     if (mode == 'F') return fork() == -1 && errno == EPERM ? 0 : 96;
     if (mode == 'T') {
@@ -268,6 +275,17 @@ class SupervisorTests(unittest.TestCase):
         self.runs.chmod(0o700)
         moved = self.base / 'real-runs'; self.runs.rename(moved); self.runs.symlink_to(moved)
         self.assertEqual(self.cli().returncode, 70)
+
+    def test_cancel_eintr_during_intent_fsync_cleans_unlaunched_run(self):
+        hook = self.base / 'cancel-intent-eintr.c'
+        hook.write_text('#define _GNU_SOURCE\n#include <unistd.h>\n#include <signal.h>\n#include <errno.h>\n#include <sys/syscall.h>\nint hg_test_fsync(int fd) { static int call; if (++call == 3) { raise(SIGTERM); errno=EINTR; return -1; } return syscall(SYS_fsync, fd); }\n')
+        self.compile(SOURCE, self.executable, ['-DHG_TEST_BUILD', '-Dfsync=hg_test_fsync',
+                     '-DXRAY_PATH="' + str(self.fixture) + '"', '-DRUN_BASE="' + str(self.runs) + '"'], [hook])
+        result = self.cli()
+        self.assertEqual(result.returncode, 130, result.stdout + result.stderr)
+        self.assertFalse((self.run / 'pid').exists())
+        self.assertFalse((self.run / 'execution.intent').exists())
+        self.assertFalse((self.runs / 'active').exists())
 
     def test_production_binary_disabled_without_local_authorization(self):
         production = self.base / 'production'

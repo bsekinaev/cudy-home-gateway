@@ -93,7 +93,7 @@ SIGCHLD disposition и signal mask сбрасываются. До exec child ж�
 После KILL ожидание ограничено двумя секундами; unreaped child оставляет
 RECOVERY_REQUIRED и crash fence, без ложного сообщения об остановке.
 
-18 native isolated tests компилируют тот же код с фиксированным fixture executable:
+19 native isolated tests компилируют тот же код с фиксированным fixture executable:
 SIGKILL parent, timeout с TERM-ignoring child, cancel, unrelated service preservation,
 concurrency/replay/global fence, fork rejection/threads, descriptor cleanup и
 unsafe directories/config/FIFO/symlink. Fixture — только compile-time test boundary,
@@ -106,3 +106,7 @@ UCI schemas, curl/TLS/traffic/memory budget, worker journal/progress/notificatio
 и owner-authorized target acceptance. Crash fence нельзя автоматически снимать:
 high-level recovery должен подтвердить отсутствие owned process, либо дождаться
 reboot (без benchmark auto rerun). Stage 0.6 не принят, run_supported=false.
+
+Дополнительное review: EINTR при intent persistence повторяется до sync;
+prelaunch cancel очищает собственный intent/fence. Fixture PID публикуется
+атомарным rename; test readiness не наблюдает пустой PID file.

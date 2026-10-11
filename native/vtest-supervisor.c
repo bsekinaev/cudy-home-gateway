@@ -32,6 +32,21 @@
 #endif
 #endif
 
+static int sync_fd(int fd) {
+    int result;
+    do { result = fsync(fd); } while (result < 0 && errno == EINTR);
+    return result;
+}
+static int write_all(int fd, const char *data, size_t size) {
+    size_t offset = 0;
+    while (offset < size) {
+        ssize_t n = write(fd, data + offset, size - offset);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return -1;
+        offset += (size_t)n;
+    }
+    return 0;
+}
 static volatile sig_atomic_t cancelled;
 static void cancel(int sig) { (void)sig; cancelled = 1; }
 static double monotonic(void) {
@@ -180,19 +195,19 @@ int main(int argc, char **argv) {
      * leaves it in place; a new engine cannot overlap an orphan's death. */
     int active = openat(base, "active", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (active < 0) return fixed(70, "RECOVERY_REQUIRED");
-    if (write(active, argv[1], 32) != 32 || fsync(active) || fsync(base)) return fixed(70, "WRITE_FAILED");
+    if (write_all(active, argv[1], 32) || sync_fd(active) || sync_fd(base)) return fixed(70, "WRITE_FAILED");
     close(active);
     if (cancelled) {
-        if (unlinkat(base, "active", 0) || fsync(base)) return fixed(70, "WRITE_FAILED");
+        if (unlinkat(base, "active", 0) || sync_fd(base)) return fixed(70, "WRITE_FAILED");
         return fixed(130, "CANCELLED");
     }
     int intent = openat(directory, "execution.intent", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (intent < 0) return fixed(75, "RUN_ALREADY_CONSUMED");
-    if (write(intent, "EXECUTING\n", 10) != 10 || fsync(intent) || fsync(directory)) return fixed(70, "WRITE_FAILED");
+    if (write_all(intent, "EXECUTING\n", 10) || sync_fd(intent) || sync_fd(directory)) return fixed(70, "WRITE_FAILED");
     close(intent);
     if (cancelled) {
-        if (unlinkat(directory, "execution.intent", 0) || fsync(directory) ||
-            unlinkat(base, "active", 0) || fsync(base)) return fixed(70, "WRITE_FAILED");
+        if (unlinkat(directory, "execution.intent", 0) || sync_fd(directory) ||
+            unlinkat(base, "active", 0) || sync_fd(base)) return fixed(70, "WRITE_FAILED");
         return fixed(130, "CANCELLED");
     }
     int start_pipe[2];
@@ -271,9 +286,9 @@ int main(int argc, char **argv) {
         struct timespec pause = {0, 10000000};
         nanosleep(&pause, NULL);
     }
-    if ((prelaunch_cancelled || grant_failed) && (unlinkat(directory, "execution.intent", 0) || fsync(directory)))
+    if ((prelaunch_cancelled || grant_failed) && (unlinkat(directory, "execution.intent", 0) || sync_fd(directory)))
         return fixed(70, "WRITE_FAILED");
-    if (unlinkat(base, "active", 0) || fsync(base)) return fixed(70, "WRITE_FAILED");
+    if (unlinkat(base, "active", 0) || sync_fd(base)) return fixed(70, "WRITE_FAILED");
     close(directory); close(base); close(guard);
     if (why) return fixed(why, why == 124 ? "TIMEOUT" : why == 130 ? "CANCELLED" : "FAILED");
     return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? fixed(0, "DONE") : fixed(70, "FAILED");
