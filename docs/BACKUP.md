@@ -72,7 +72,7 @@ Physical tar headers проверяются до tarfile: разрешены о�
 
 ### Persisted init/vtest links и raw tar validation
 
-27 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
+28 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
 repository-managed enable links (S94/K09 deploy-recover, S95/K10 Telegram)
 разрешён только SYMTYPE с точным relative target ../init.d/соответствующий-service,
 size=0 и явным включением path в owner inventory. Замена этих paths regular file
@@ -96,3 +96,8 @@ Verifier допускает только это точное соответст�
 не требование иметь все пять ссылок). Имена tar members по-прежнему относительные.
 Штатный backup исключает три файла `/etc/home-gateway`; отдельный private backup
 проверен владельцем по SHA256, restore не проверен. Это critical release blocker.
+
+Raw numeric fields mode/uid/gid/mtime/checksum/size/device проверяются одинаково,
+NUL допускает лишь последующее zero/space padding, device values=0. uname/gname
+имеют zero padding. Magic/version — canonical USTAR, GNU ordinary header without
+prefix/extensions или zero V7 metadata; inconsistent representations запрещены.
