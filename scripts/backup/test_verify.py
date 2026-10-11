@@ -234,6 +234,21 @@ class VerifyTests(unittest.TestCase):
         self.write(gzip.compress(plain))
         with self.assertRaises(verify.BackupError): self.check()
 
+    def test_reserved_gzip_flags_rejected_in_every_member(self):
+        plain = self.archive()
+        for flag in (0x20, 0x40, 0x80):
+            for leading in (b'', gzip.compress(b'')):
+                poisoned = bytearray(gzip.compress(plain)); poisoned[3] |= flag
+                self.write(leading + bytes(poisoned))
+                with self.assertRaisesRegex(verify.BackupError, 'INVALID_ARCHIVE'): self.check()
+        self.write(gzip.compress(b'') + gzip.compress(plain))
+        self.assertEqual(self.check()['files'], 2)
+
+    def test_gzip_member_count_is_bounded(self):
+        plain = self.archive()
+        self.write(gzip.compress(b'') * 64 + gzip.compress(plain))
+        with self.assertRaisesRegex(verify.BackupError, 'GZIP_MEMBER_LIMIT'): self.check()
+
     def test_full_capacity_long_path_inventory_and_archive(self):
         paths = ['etc/' + 'a' * 150 + '/' + 'c' * 77 + f'{i:04d}.cfg' for i in range(verify.MAX_ENTRIES)]
         self.assertTrue(all(len(p) == verify.MAX_PATH for p in paths))

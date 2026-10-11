@@ -72,7 +72,7 @@ Physical tar headers проверяются до tarfile: разрешены о�
 
 ### Persisted init/vtest links и raw tar validation
 
-28 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
+30 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
 repository-managed enable links (S94/K09 deploy-recover, S95/K10 Telegram)
 разрешён только SYMTYPE с точным relative target ../init.d/соответствующий-service,
 size=0 и явным включением path в owner inventory. Замена этих paths regular file
@@ -101,3 +101,7 @@ Raw numeric fields mode/uid/gid/mtime/checksum/size/device проверяютс�
 NUL допускает лишь последующее zero/space padding, device values=0. uname/gname
 имеют zero padding. Magic/version — canonical USTAR, GNU ordinary header without
 prefix/extensions или zero V7 metadata; inconsistent representations запрещены.
+
+Gzip parser проверяет reserved flags/FHCRC/CRC/trailer каждого member,
+не только первого. ≤64 gzip members; общий decompressed bound остаётся 16 MiB.
+30 tests — новые flags/second-member/member-count negative regressions.
