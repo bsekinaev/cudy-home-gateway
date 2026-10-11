@@ -11,7 +11,7 @@ python3 scripts/backup/verify.py /private/backup.tar.gz \
 
 SHA256 должен быть получен владельцем через доверенный канал при создании/передаче
 backup. Самостоятельно вычисленный hash неизвестного архива не доказывает provenance.
-Inventory — приватный JSON array **всех ожидаемых regular file paths**, относительно
+Inventory — приватный JSON array **всех ожидаемых paths: regular files и только четыре approved init links ниже**, относительно
 корня, без `/`, `.` или `..` компонентов. Он задаётся владельцем по фактическому
 снимку и `sysupgrade -l`, а не угадывается utility. Archive и inventory должны быть
 regular, принадлежащими caller/root, без любых group/other permissions; no-follow
@@ -20,14 +20,14 @@ reason/counts/bytes/hash, без исходных filenames, содержимо�
 
 Проверяются SHA256 до tar parse, compressed ≤8 MiB, полный decompressed stream
 (включая metadata/padding) ≤16 MiB, member ≤2 MiB, ≤1024 entries. Разрешены regular
-files/directories в `etc/`, `usr/lib/home-gateway/`, отдельные Gateway/ASATA/vtest
+files/directories в `etc/`, `usr/lib/home-gateway/`, persisted deployment receiver, отдельные Gateway/ASATA/vtest
 entrypoints. Запрещены absolute/traversal/duplicate paths, special file types,
-symlink/hardlink, PAX, special mode bits и второй concatenated tar после end marker.
+generic symlink/hardlink, PAX, special mode bits и второй concatenated tar после end marker.
 Неизвестный/большой archive требует отдельного review формата, а не обхода лимитов.
 
 Результат VERIFIED означает **только соответствие предоставленному inventory**:
 `completeness=OWNER_INVENTORY_ONLY`, `transaction_consistent=false`,
-`restore_supported=false`. Ничего не извлекается, не выполняется и не изменяется.
+`restore_supported=false`. Проверяемый archive не извлекается, не выполняется и не изменяется.
 Указанный inventory может быть неполным; schema/snapshot consistency state и
 production restore этим инструментом не доказываются.
 
@@ -50,27 +50,25 @@ Telegram. Пять последних архивов должны хранить
 
 ## Почему restore пока blocked
 
-Изучен upstream [OpenWrt sysupgrade](https://github.com/openwrt/openwrt/blob/main/package/base-files/files/sbin/sysupgrade)
-10.10.2026. Это **не исходник установленной версии CUDY**. В upstream backup `-b`
-собирает tar/gzip по conffiles/hooks, restore `-r` вызывает platform hook либо
-`tar -C / -x...`. Нельзя считать прямое root extraction безопасной транзакцией.
-Для target restore нужны audited installed helpers, inventory/path/type validation,
-private pre-restore backup, journal, post-check/rollback/recovery и LAN доступ.
+Получена private копия установленного sysupgrade 11.10.2026; её local hash и
+статический аудит перечислены в PASSWALL_SOURCE_AUDIT_2026-10-11.md. Совпадение
+с текущим target hash ещё ждёт владельца. Restore fallback извлекает tar в /,
+а platform hooks не предоставлены: это не безопасная Gateway транзакция.
+Для target restore нужны inventory/path/type validation, private pre-restore
+snapshot, journal, post-check/rollback/recovery и LAN доступ.
 Нельзя запускать restore/reboot/sysupgrade на CUDY без отдельного owner approval.
 
 Этап 0.9 остаётся partial: collector, last-five rotation/audit, согласованность и
-restore ещё не реализованы. 12 tests используют настоящий gzip/tar/hash/private FS
+restore ещё не реализованы. 21 tests используют настоящий gzip/tar/hash/private FS
 с public synthetic contents, включая corruption/bombs/links/FIFO/privacy. Они не
 являются проверкой реального backup или восстановления роутера.
 
-## Исправления review 11 октября 2026
+## Границы формата архива
 
-Physical tar headers проверяются до tarfile: разрешены только обычные regular
-и directory typeflags, sparse/PAX/GNU extension headers отклоняются, включая
-пустые скрытые headers. Два нулевых end blocks обязательны именно после
-последнего member; нулевое содержимое файла не заменяет end marker. Набор
-regular paths должен точно совпадать с приватным owner inventory, без дополнительных
-allowlisted файлов. 15 offline negative/positive tests PASS. LIVE не выполнено.
+Physical tar headers проверяются до tarfile: разрешены обычные regular/directory
+и только exact managed init symlinks ниже. Sparse/PAX/GNU extension headers
+отклоняются, включая пустые скрытые headers. Набор ожидаемых paths обязан точно
+совпасть с inventory; дополнительный allowlisted файл запрещён.
 
 ### Persisted init links и raw tar validation
 
