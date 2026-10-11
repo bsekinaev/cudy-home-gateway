@@ -94,7 +94,11 @@ def validate_physical_tar(plain):
         require(header[156:157] in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE, tarfile.SYMTYPE),
                 'UNSUPPORTED_ARCHIVE_ENTRY')
         name = header_text(header[:100])
-        prefix = header_text(header[345:500]) if header[257:263] == b'ustar\0' else ''
+        if header[257:263] == b'ustar\0':
+            prefix = header_text(header[345:500])
+        else:
+            require(not any(header[345:500]), 'INVALID_ARCHIVE')
+            prefix = ''
         if prefix:
             name = prefix + '/' + name
         if header[156:157] == tarfile.DIRTYPE and name.endswith('/'):

@@ -208,6 +208,17 @@ class VerifyTests(unittest.TestCase):
             else:
                 with self.assertRaises(verify.BackupError): self.check()
 
+    def test_non_ustar_magic_cannot_reinterpret_prefix_path(self):
+        entry = tarfile.TarInfo('config/network')
+        header = bytearray(entry.tobuf(format=tarfile.USTAR_FORMAT))
+        header[257:263] = b'BADMAG'
+        header[345:349] = b'etc\0'
+        header[148:156] = b' ' * 8
+        header[148:156] = f'{sum(header):06o}\0 '.encode()
+        self.required = {'etc/config/network'}
+        self.write(gzip.compress(bytes(header) + b'\0' * 1024))
+        with self.assertRaisesRegex(verify.BackupError, 'INVALID_ARCHIVE'): self.check()
+
     def test_full_capacity_long_path_inventory_and_archive(self):
         paths = ['etc/' + 'a' * 150 + '/' + 'c' * 77 + f'{i:04d}.cfg' for i in range(verify.MAX_ENTRIES)]
         self.assertTrue(all(len(p) == verify.MAX_PATH for p in paths))
