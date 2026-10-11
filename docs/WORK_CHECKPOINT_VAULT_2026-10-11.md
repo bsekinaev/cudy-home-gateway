@@ -29,3 +29,7 @@ before GC; audit retention проверена фактическими 105 impor
 
 Новый owner baseline: sysupgrade исключает /etc/home-gateway; vault это не исправляет.
 P0 migration/preflight — отдельный PR18. No private archive requested/published.
+
+Полная local regression после reconcile: 209 actual PASS = 164 state/CLI +
+13 release + 32 deploy. PR19 retarget main для CI; merge зависит от PR16.
+Latest verifier doc contract объединён; новый HEAD CI/review проверять заново.
