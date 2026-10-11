@@ -287,6 +287,29 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse((self.run / 'execution.intent').exists())
         self.assertFalse((self.runs / 'active').exists())
 
+    def test_cancel_at_unblock_before_atomic_grant_never_executes(self):
+        hook = self.base / 'cancel-grant.c'
+        hook.write_text('#define _GNU_SOURCE\n#include <signal.h>\n#include <sys/syscall.h>\n#include <unistd.h>\nint hg_test_sigprocmask(int how,const sigset_t *set,sigset_t *old) { static int calls; if (++calls==3) raise(SIGTERM); return syscall(SYS_rt_sigprocmask,how,set,old,8); }\n')
+        self.compile(SOURCE,self.executable,['-DHG_TEST_BUILD','-Dsigprocmask=hg_test_sigprocmask',
+          '-DXRAY_PATH="'+str(self.fixture)+'"','-DRUN_BASE="'+str(self.runs)+'"'],[hook])
+        result=self.cli()
+        self.assertEqual(result.returncode,130,result.stdout+result.stderr)
+        self.assertFalse((self.run/'pid').exists())
+        self.assertFalse((self.run/'execution.intent').exists())
+        self.assertFalse((self.runs/'active').exists())
+
+    def test_fork_failure_leaves_no_global_recovery_fence(self):
+        hook=self.base/'fork-failed.c'
+        hook.write_text('#include <sys/types.h>\n#include <errno.h>\npid_t hg_test_fork(void) { errno=EAGAIN;return -1; }\n')
+        self.compile(SOURCE,self.executable,['-DHG_TEST_BUILD','-Dfork=hg_test_fork',
+          '-DXRAY_PATH="'+str(self.fixture)+'"','-DRUN_BASE="'+str(self.runs)+'"'],[hook])
+        result=self.cli()
+        self.assertEqual(result.returncode,70,result.stdout)
+        self.assertIn('FORK_FAILED',result.stdout)
+        self.assertFalse((self.runs/'active').exists())
+        self.assertFalse((self.run/'pid').exists())
+        self.assertTrue((self.run/'execution.intent').exists())
+
     def test_production_binary_disabled_without_local_authorization(self):
         production = self.base / 'production'
         self.compile(SOURCE, production)

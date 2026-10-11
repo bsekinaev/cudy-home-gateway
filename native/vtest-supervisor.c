@@ -9,6 +9,7 @@
 #include <linux/sched.h>
 #include <linux/seccomp.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,8 +48,16 @@ static int write_all(int fd, const char *data, size_t size) {
     }
     return 0;
 }
+#if ATOMIC_INT_LOCK_FREE != 2
+#error Signal-safe launch arbitration requires always-lock-free integer atomics
+#endif
 static volatile sig_atomic_t cancelled;
-static void cancel(int sig) { (void)sig; cancelled = 1; }
+static atomic_int launch_permission; /* 0 undecided, 1 cancelled, 2 authorized */
+static void cancel(int sig) {
+    (void)sig; cancelled = 1;
+    int undecided = 0;
+    atomic_compare_exchange_strong(&launch_permission, &undecided, 1);
+}
 static double monotonic(void) {
     struct timespec t;
     if (clock_gettime(CLOCK_MONOTONIC, &t)) _exit(70);
@@ -212,12 +221,18 @@ int main(int argc, char **argv) {
     }
     int start_pipe[2];
     if (pipe2(start_pipe, O_CLOEXEC)) return fixed(70, "PIPE_FAILED");
-    sigset_t launch_mask, previous_mask, pending;
+    sigset_t launch_mask, previous_mask;
     sigemptyset(&launch_mask);
     sigaddset(&launch_mask, SIGTERM); sigaddset(&launch_mask, SIGINT);
     if (sigprocmask(SIG_BLOCK, &launch_mask, &previous_mask)) return fixed(70, "SIGNAL_FAILED");
     pid_t parent = getpid(), child = fork();
-    if (child < 0) return fixed(70, "FORK_FAILED");
+    if (child < 0) {
+        /* No child exists: leave the one-shot intent, but never quarantine the
+         * global resource on an EAGAIN/ENOMEM pre-child failure. */
+        if (sigprocmask(SIG_SETMASK, &previous_mask, NULL) ||
+            unlinkat(base, "active", 0) || sync_fd(base)) return fixed(70, "WRITE_FAILED");
+        return fixed(70, "FORK_FAILED");
+    }
     if (child == 0) {
         /* Close parent-death race before touching the executable. */
         if (prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent) _exit(70);
@@ -252,16 +267,17 @@ int main(int argc, char **argv) {
         _exit(70);
     }
     close(start_pipe[0]);
-    if (sigpending(&pending)) return fixed(70, "SIGNAL_FAILED");
-    /* Authorization linearizes at this pending-signal check after fork. A
-     * cancellation during setup/fork never receives the child's exec grant. */
-    int prelaunch_cancelled = cancelled || sigismember(&pending, SIGTERM) || sigismember(&pending, SIGINT);
-    char launch = prelaunch_cancelled ? 'N' : 'G';
     struct sigaction ignore_pipe = {.sa_handler = SIG_IGN};
     sigemptyset(&ignore_pipe.sa_mask);
     if (sigaction(SIGPIPE, &ignore_pipe, NULL)) return fixed(70, "RECOVERY_REQUIRED");
-    int grant_failed = write(start_pipe[1], &launch, 1) != 1;
+    /* Deliver blocked cancellation before the authorization CAS. The handler
+     * and grant compete on one lock-free state: a cancellation that wins cannot
+     * be followed by an exec grant. The pipe transports an already-decided grant. */
     if (sigprocmask(SIG_SETMASK, &previous_mask, NULL)) return fixed(70, "RECOVERY_REQUIRED");
+    int undecided = 0;
+    int prelaunch_cancelled = !atomic_compare_exchange_strong(&launch_permission, &undecided, 2);
+    char launch = prelaunch_cancelled ? 'N' : 'G';
+    int grant_failed = write_all(start_pipe[1], &launch, 1) != 0;
     close(start_pipe[1]);
     close(config); close(binary);
     double deadline = monotonic() + seconds, kill_at = 0;
