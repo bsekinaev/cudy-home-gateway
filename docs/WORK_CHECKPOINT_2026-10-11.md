@@ -22,7 +22,7 @@ https://github.com/bsekinaev/cudy-home-gateway/pull/16
 
 Новый ownership primitive: фиксированный Xray/config fd, seccomp no new processes
 с native threads; trusted paths, no inherited FD, PDEATHSIG, exact unreaped child
-signals, timeout/cancel, global lock/crash fence/run consumption. 21 native tests
+signals, timeout/cancel, global lock/crash fence/run consumption. 22 native tests
 PASS (actual C/ELF/processes), включая alternate syscall ABI. Default disabled,
 не установлен и не включён в release inventory. Provider run всё ещё blocked.
 Фактическая полная CI проверка baseline #15 с primitive: 133 state/CLI/native
@@ -39,7 +39,7 @@ coordination. Owner LIVE gates перечислены в ACCEPTANCE.md; stable t
 
 Исправлены четыре findings: bounded post-KILL wait с сохранением fence,
 prelaunch cancel/exec-grant handshake, inherited SIGCHLD=IGNORE и signal mask.
-21 actual native tests PASS; production runner не активирован.
+22 actual native tests PASS; production runner не активирован.
 Новый baseline владельца 11.10: HGDEPLOY1, 18 файлов, COMMITTED, active ABSENT;
 HGDEPLOY2/actions/notifications ABSENT. Миграция P0 — отдельная ветка.
 Штатный backup исключает /etc/home-gateway: critical blocker.
@@ -56,4 +56,7 @@ Next: current merged CI/review then PR17 merge; никаких real CUDY changes
 Review: cancellation handler и grant используют один always-lock-free atomic
 state после unblock; authorization linearizes at CAS, pipe transport следует
 после уже принятого решения. fork failure сохраняет one-shot intent, но снимает
-global active fence, так как child не существует. 21 native tests PASS.
+global active fence, так как child не существует. 22 native tests PASS.
+
+pipe2/signal-mask resource failure до fork снимает own global fence, сохраняя
+one-shot intent; child отсутствует. EMFILE regression, 22 native tests PASS.

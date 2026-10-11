@@ -93,7 +93,7 @@ SIGCHLD disposition и signal mask сбрасываются. До exec child ж�
 После KILL ожидание ограничено двумя секундами; unreaped child оставляет
 RECOVERY_REQUIRED и crash fence, без ложного сообщения об остановке.
 
-21 native isolated tests компилируют тот же код с фиксированным fixture executable:
+22 native isolated tests компилируют тот же код с фиксированным fixture executable:
 SIGKILL parent, timeout с TERM-ignoring child, cancel, unrelated service preservation,
 concurrency/replay/global fence, fork rejection/threads, descriptor cleanup и
 unsafe directories/config/FIFO/symlink. Fixture — только compile-time test boundary,
@@ -114,4 +114,7 @@ prelaunch cancel очищает собственный intent/fence. Fixture PID
 Review: cancellation handler и grant используют один always-lock-free atomic
 state после unblock; authorization linearizes at CAS, pipe transport следует
 после уже принятого решения. fork failure сохраняет one-shot intent, но снимает
-global active fence, так как child не существует. 21 native tests PASS.
+global active fence, так как child не существует. 22 native tests PASS.
+
+pipe2/signal-mask resource failure до fork снимает own global fence, сохраняя
+one-shot intent; child отсутствует. EMFILE regression, 22 native tests PASS.

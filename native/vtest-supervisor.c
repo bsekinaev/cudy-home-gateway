@@ -220,11 +220,17 @@ int main(int argc, char **argv) {
         return fixed(130, "CANCELLED");
     }
     int start_pipe[2];
-    if (pipe2(start_pipe, O_CLOEXEC)) return fixed(70, "PIPE_FAILED");
+    if (pipe2(start_pipe, O_CLOEXEC)) {
+        if (unlinkat(base, "active", 0) || sync_fd(base)) return fixed(70, "WRITE_FAILED");
+        return fixed(70, "PIPE_FAILED");
+    }
     sigset_t launch_mask, previous_mask;
     sigemptyset(&launch_mask);
     sigaddset(&launch_mask, SIGTERM); sigaddset(&launch_mask, SIGINT);
-    if (sigprocmask(SIG_BLOCK, &launch_mask, &previous_mask)) return fixed(70, "SIGNAL_FAILED");
+    if (sigprocmask(SIG_BLOCK, &launch_mask, &previous_mask)) {
+        if (unlinkat(base, "active", 0) || sync_fd(base)) return fixed(70, "WRITE_FAILED");
+        return fixed(70, "SIGNAL_FAILED");
+    }
     pid_t parent = getpid(), child = fork();
     if (child < 0) {
         /* No child exists: leave the one-shot intent, but never quarantine the

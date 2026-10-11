@@ -310,6 +310,18 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse((self.run/'pid').exists())
         self.assertTrue((self.run/'execution.intent').exists())
 
+    def test_pipe_resource_failure_leaves_no_global_fence(self):
+        hook=self.base/'pipe-failed.c'
+        hook.write_text('#include <errno.h>\nint hg_test_pipe2(int fds[2],int flags) { (void)fds;(void)flags;errno=EMFILE;return -1; }\n')
+        self.compile(SOURCE,self.executable,['-DHG_TEST_BUILD','-Dpipe2=hg_test_pipe2',
+          '-DXRAY_PATH="'+str(self.fixture)+'"','-DRUN_BASE="'+str(self.runs)+'"'],[hook])
+        result=self.cli()
+        self.assertEqual(result.returncode,70,result.stdout)
+        self.assertIn('PIPE_FAILED',result.stdout)
+        self.assertFalse((self.runs/'active').exists())
+        self.assertFalse((self.run/'pid').exists())
+        self.assertTrue((self.run/'execution.intent').exists())
+
     def test_production_binary_disabled_without_local_authorization(self):
         production = self.base / 'production'
         self.compile(SOURCE, production)
