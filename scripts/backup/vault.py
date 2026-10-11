@@ -35,6 +35,7 @@ def directory(path, create=False):
             except FileNotFoundError:
                 require(create, 'VAULT_MISSING')
                 os.mkdir(part, 0o700, dir_fd=fd)
+                os.fsync(fd)  # Make the new child entry durable before descending.
                 child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
             st = os.fstat(child)
             try:
@@ -217,6 +218,11 @@ class Vault:
         existing = any(sha == digest and inv == manifest_digest for _,sha,inv,_ in records)
         if existing:
             return self.finish_import('ALREADY_STORED', len(records))
+        # Do not accumulate rotations while a retained cleanup blocker exists.
+        # This happens before creating files or changing catalog/audit references.
+        self.garbage_collect()
+        pending = self.pending_retirements()
+        require(pending == 0, 'RETIRED_PAIR_RECOVERY_REQUIRED')
         identifier = uuid.uuid4().hex
         self.write_copy(identifier + '.tar.gz', raw)
         self.write_copy(identifier + '.inventory.json', manifest)
@@ -253,10 +259,26 @@ class Vault:
                   if identifier + '.tar.gz' in names and identifier + '.inventory.json' in names}
         return sum(1 for name in names if COPY.fullmatch(name).group(1) not in known)
 
+    def pending_retirements(self):
+        retired = dict(self.db.execute("SELECT id,digest FROM audit WHERE event='ROTATED' ORDER BY sequence"))
+        pending = 0
+        with os.scandir(self.fd) as entries:
+            names = {entry.name for entry in entries if COPY.fullmatch(entry.name)}
+        for identifier, sha in retired.items():
+            archive = identifier + '.tar.gz'
+            manifest = identifier + '.inventory.json'
+            if archive in names:
+                require(hashlib.sha256(private_read(self.path / archive, 8 * 1024 * 1024)).hexdigest() == sha,
+                        'RETIRED_CHECKSUM_MISMATCH')
+            pending += int(archive in names) + int(manifest in names)
+        return pending
+
     def show(self):
         records = self.verified_records()
         unknown = self.preserved_unknown()
-        return dict(schema_version=1, status='QUARANTINED' if unknown else 'VERIFIED', copies=len(records),
+        pending = self.pending_retirements()
+        return dict(schema_version=1, status='QUARANTINED' if unknown else 'CLEANUP_PENDING' if pending else 'VERIFIED', copies=len(records),
+                    pending_retired_files=pending, cleanup_pending=bool(pending),
                     unreferenced_preserved=unknown,
                     audit_events=self.db.execute('SELECT count(*) FROM audit').fetchone()[0],
                     transaction_consistent=False, restore_supported=False)

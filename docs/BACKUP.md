@@ -141,14 +141,14 @@ router restore. Последние пять references сохраняются, o
 могут временно увеличивать disk count до recovery. Catalog не доказывает coherent
 snapshot источника: transaction_consistent=false, restore_supported=false.
 
-23 isolated vault tests PASS + verifier tests: actual files/SQLite, 7-copy rotation,
+25 isolated vault tests PASS + verifier tests: actual files/SQLite, 7-copy rotation,
 crash before/after catalog commit, actual SIGKILL SQL transaction, corruption,
 private permissions, cross-process kernel lock, path injection и bounded audit.
 Это доступная часть 0.9; collector/coordinated snapshot/target restore still BLOCKED.
 
 Read-back new pair hash/inventory verification выполняется до catalog rotation
 commit; injected archive/manifest storage faults сохраняют старые пять references
-и файлы. 53 actual backup tests PASS (23 vault + 30 verifier).
+и файлы. 55 actual backup tests PASS (25 vault + 30 verifier).
 
 Retirement GC разрешён лишь для complete archive+inventory pair после SHA проверки
 архива; incomplete пары сохраняются QUARANTINED. Manifest удаляется раньше
@@ -156,4 +156,9 @@ archive: crash оставляет сохранённый архив, не metada
 
 Exact archive SHA+canonical inventory hash retry идемпотентен. После commit GC
 errors дают STORED_CLEANUP_PENDING/ALREADY_STORED_CLEANUP_PENDING, без повторной
-rotation и без ложного failed import. 23 vault / 30 verifier = 53 tests.
+rotation и без ложного failed import. 25 vault / 30 verifier = 55 tests.
+
+Review: каждый mkdir fsync parent до descent; новый distinct import блокируется
+до устранения retained cleanup errors, retirement receipts не теряются на ротации.
+show проверяет retired SHA и сообщает CLEANUP_PENDING/QUARANTINED; 105 blocked
+imports не изменяют references/audit. 55 backup tests PASS.

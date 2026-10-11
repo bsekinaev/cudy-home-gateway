@@ -40,6 +40,13 @@ class VaultTests(unittest.TestCase):
         self.archive.chmod(0o600)
         self.digest = hashlib.sha256(self.archive.read_bytes()).hexdigest()
 
+    def fail_cleanup_after_new_commit(self, store, error):
+        real = store.garbage_collect
+        def failure():
+            if any(sha == self.digest for _,sha,_,_ in store.records()): raise error
+            return real()
+        return patch.object(store, 'garbage_collect', side_effect=failure)
+
     def store(self):
         with vault.Vault(self.path, create=True) as store:
             return store.import_archive(self.archive, self.digest, self.inventory)
@@ -90,7 +97,7 @@ class VaultTests(unittest.TestCase):
         for i in range(4): self.make_archive(str(i).encode()); self.store()
         self.make_archive(b'sixth')
         with vault.Vault(self.path) as store:
-            with patch.object(store, 'garbage_collect', side_effect=SystemExit):
+            with self.fail_cleanup_after_new_commit(store, SystemExit('post-commit crash')):
                 with self.assertRaises(SystemExit): store.import_archive(self.archive, self.digest, self.inventory)
         first.write_bytes(b'corrupted-retired-copy')
         before = {p.name: p.read_bytes() for p in self.path.iterdir() if vault.COPY.fullmatch(p.name)}
@@ -123,7 +130,7 @@ class VaultTests(unittest.TestCase):
         for i in range(4): self.make_archive(str(i).encode()); self.store()
         self.make_archive(b'new-retired-pair')
         with vault.Vault(self.path) as store:
-            with patch.object(store, 'garbage_collect', side_effect=SystemExit):
+            with self.fail_cleanup_after_new_commit(store, SystemExit('post-commit crash')):
                 with self.assertRaises(SystemExit): store.import_archive(self.archive, self.digest, self.inventory)
         manifest = self.path / (first.name.removesuffix('.tar.gz') + '.inventory.json')
         saved = manifest.read_bytes(); first.unlink()
@@ -136,7 +143,7 @@ class VaultTests(unittest.TestCase):
         for i in range(5): self.make_archive(str(i).encode()); self.store()
         self.make_archive(b'new-commit')
         with vault.Vault(self.path) as store:
-            with patch.object(store, 'garbage_collect', side_effect=OSError('synthetic cleanup failure')):
+            with self.fail_cleanup_after_new_commit(store, OSError('synthetic cleanup failure')):
                 result = store.import_archive(self.archive, self.digest, self.inventory)
                 self.assertEqual(result['status'], 'STORED_CLEANUP_PENDING')
                 self.assertTrue(result['cleanup_pending'])
@@ -149,6 +156,46 @@ class VaultTests(unittest.TestCase):
                     self.assertEqual(store.show()['audit_events'], events)
             self.assertEqual(store.import_archive(self.archive, self.digest, self.inventory)['status'], 'ALREADY_STORED')
             self.assertEqual(store.records(), committed)
+
+    def test_blocked_cleanup_preserves_receipt_and_stops_further_rotations(self):
+        for i in range(5): self.make_archive(str(i).encode()); self.store()
+        first = next(self.path.glob('*.tar.gz'))
+        self.make_archive(b'new-retirement')
+        with vault.Vault(self.path) as store:
+            with self.fail_cleanup_after_new_commit(store, SystemExit('commit')):
+                with self.assertRaises(SystemExit): store.import_archive(self.archive,self.digest,self.inventory)
+        # Find the actual retired ID rather than relying on directory ordering.
+        with vault.Vault(self.path) as store:
+            identifier = store.db.execute("SELECT id FROM audit WHERE event='ROTATED'").fetchone()[0]
+            first = self.path / (identifier + '.tar.gz'); original = first.read_bytes()
+            first.write_bytes(b'corrupt-retirement')
+            before = store.records(); events = store.db.execute('SELECT count(*) FROM audit').fetchone()[0]
+            with self.assertRaisesRegex(BackupError,'RETIRED_CHECKSUM_MISMATCH'): store.show()
+            for i in range(105):
+                self.make_archive(('blocked-' + str(i)).encode())
+                with self.assertRaisesRegex(BackupError,'RETIRED_CHECKSUM_MISMATCH'):
+                    store.import_archive(self.archive,self.digest,self.inventory)
+            self.assertEqual(store.records(), before)
+            self.assertEqual(store.db.execute('SELECT count(*) FROM audit').fetchone()[0], events)
+            first.write_bytes(original)
+            self.assertEqual(store.show()['status'],'CLEANUP_PENDING')
+            self.assertEqual(store.garbage_collect(),2)
+            self.assertEqual(store.show()['status'],'VERIFIED')
+
+    def test_directory_creation_syncs_each_parent_entry(self):
+        real_mkdir, real_sync = vault.os.mkdir, vault.os.fsync
+        events = []
+        def mkdir(path,*args,**kwargs):
+            result=real_mkdir(path,*args,**kwargs)
+            if 'dir_fd' in kwargs: events.append(('mkdir',os.fstat(kwargs['dir_fd']).st_ino))
+            return result
+        def sync(fd):
+            result=real_sync(fd);events.append(('sync',os.fstat(fd).st_ino));return result
+        self.path = self.base / 'nested' / 'private' / 'vault'
+        with patch.object(vault.os,'mkdir',mkdir),patch.object(vault.os,'fsync',sync): self.store()
+        made = [(i,inode) for i,(kind,inode) in enumerate(events) if kind=='mkdir']
+        self.assertEqual(len(made),3)
+        for i,inode in made: self.assertEqual(events[i+1],('sync',inode))
 
     def test_verified_copy_private_files_and_fixed_summary(self):
         result = self.store()
@@ -209,7 +256,7 @@ class VaultTests(unittest.TestCase):
         for i in range(5): self.make_archive(str(i).encode()); self.store()
         self.make_archive(b'newest')
         with vault.Vault(self.path) as store:
-            with patch.object(store, 'garbage_collect', side_effect=SystemExit):
+            with self.fail_cleanup_after_new_commit(store, SystemExit('post-commit crash')):
                 with self.assertRaises(SystemExit): store.import_archive(self.archive, self.digest, self.inventory)
         self.assertEqual(len(list(self.path.glob('*.tar.gz'))), 6)
         with vault.Vault(self.path) as store:
