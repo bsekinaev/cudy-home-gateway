@@ -4,6 +4,7 @@ set -eu
 ROOT=
 if [ "${1:-}" = --test-root ]; then
     ROOT=$2
+    case "$ROOT" in /*) ;; *) exit 64;; esac
     [ "$ROOT" != / ] && [ -f "$ROOT/.hg-migration-lab" ] || exit 64
     shift 2
 else

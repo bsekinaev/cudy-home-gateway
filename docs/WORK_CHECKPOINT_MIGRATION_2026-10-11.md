@@ -7,7 +7,7 @@
 Реализованы read-only BusyBox preflight и host-only durable migration rehearsal:
 exact 18 legacy → 20 runtime + receiver, сохранён исходный legacy rollback,
 новый журнал/fence, interrupted recovery, идемпотентность и drift refusal.
-17 actual migration tests PASS. Runtime version остаётся 0.5.0-dev, production
+20 actual migration tests PASS. Runtime version остаётся 0.5.0-dev, production
 migration BLOCKED до coordinator и disposable OpenWrt/procd/boot acceptance.
 Missing /etc/home-gateway sysupgrade inclusion остаётся target blocker; новый
 bootstrap allowlist исправлен, существующий CUDY не перебутстрапливать.
@@ -16,3 +16,7 @@ bootstrap allowlist исправлен, существующий CUDY не пе�
 production migration coordinator, сохранив exact legacy bytes/pointers и disabled
 CD/boot admission. Перед merge повторно сверить main/PR16, объединить свежий main,
 повторить ash/pinned ucode/release/deploy/migration suites. Сначала завершить PR16.
+
+Review fixes: own stale temporaries проверяются по exact snapshot prefix, metadata
+и reserved names, только под migration/deploy fence; symlink/unrelated data
+не удаляются. Actual SIGKILL до rename + relative-root refusal regressions.

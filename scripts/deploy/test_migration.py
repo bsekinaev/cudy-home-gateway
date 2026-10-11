@@ -308,6 +308,50 @@ m.apply()
         self.assertEqual(result.returncode, 70)
         self.assertNotIn(b'common.sh', result.stderr)
 
+    def test_actual_sigkill_before_rename_cleans_owned_temporary(self):
+        self.prepare()
+        self.m.close()
+        script = """import os,signal,sys
+import migration_lab
+m=migration_lab.Migration(sys.argv[1])
+real=migration_lab.os.replace
+def crash(source,target):
+    if target == m.root / 'usr/lib/home-gateway/actions.uc':
+        os.kill(os.getpid(), signal.SIGKILL)
+    real(source,target)
+migration_lab.os.replace=crash
+m.apply()
+"""
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).parent.resolve()))
+        result = subprocess.run([os.sys.executable, '-c', script, str(self.root)], env=env,
+                                capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, -9, result.stderr)
+        tmp = self.root / (ADDED[0] + '.migration-new')
+        self.assertTrue(tmp.exists())
+        self.m = Migration(self.root); self.addCleanup(self.m.close)
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK')
+        self.assertFalse(tmp.exists())
+        self.assert_previous()
+
+    def test_unowned_temporary_or_wrong_contents_never_removed(self):
+        self.prepare()
+        tmp = self.root / (ADDED[0] + '.migration-new')
+        self.fixture.put(tmp, b'not-receipt-data', mode(ADDED[0]))
+        with self.assertRaisesRegex(Refused, 'TEMPORARY_DRIFT'):
+            self.m.rollback()
+        self.assertEqual(tmp.read_bytes(), b'not-receipt-data')
+        tmp.unlink(); tmp.symlink_to(self.root / OLD[0])
+        with self.assertRaisesRegex(Refused, 'SYMLINK'):
+            self.m.rollback()
+        self.assertTrue(tmp.is_symlink())
+        tmp.unlink()
+        self.assert_previous()
+
+    def test_readonly_preflight_refuses_relative_root_immediately(self):
+        cmd = os.environ.get('HG_TEST_SHELL', '/bin/sh').split() + [str(Path(__file__).with_name('legacy-preflight.sh')), '--test-root', 'lab', digest(LEGACY.read_bytes())]
+        result = subprocess.run(cmd, capture_output=True, env=self.fixture.env, timeout=3)
+        self.assertEqual(result.returncode, 64)
+
     def test_real_root_and_no_sentinel_refused(self):
         with self.assertRaises(Refused):
             Migration('/')

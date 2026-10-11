@@ -217,6 +217,9 @@ class Migration:
         require(not (self.state / 'receipt.json').exists(), 'ALREADY_PREPARED')
         require(not (self.state / 'phase').exists(), 'INCOMPLETE_PREPARATION')
         receipt, previous = self.legacy()
+        for path in [self.root / p for p in ALL] + [self.base / 'latest', self.state / 'phase']:
+            tmp = path.with_name(path.name + '.migration-new')
+            require(not tmp.exists() and not tmp.is_symlink(), 'TEMPORARY_PREEXISTS')
         candidate = Path(candidate).absolute()
         manifest = read(candidate / 'migration.sha256', 0o600)
         require(re.fullmatch('[0-9a-f]{64}', sha256) and digest(manifest) == sha256, 'CANDIDATE_SHA256')
@@ -234,6 +237,30 @@ class Migration:
         self.load()
         self.phase('PREPARED')
         return 'PREPARED'
+
+    def clean_temporaries(self, r):
+        # Only fixed reserved names that were absent at prepare; accept partial
+        # writes only when they are exact prefixes of this receipt's own bytes.
+        expected = []
+        for rel in ALL:
+            data = [read(self.state / 'new' / rel, mode(rel))]
+            if rel in r['old']:
+                data.append(read(self.state / 'old' / rel, mode(rel)))
+            expected.append((self.root / rel, mode(rel), data))
+        expected.append((self.base / 'latest', 0o600, [r['latest'].encode()]))
+        phases = ['PREPARING', 'PREPARED', 'APPLYING', 'COMMITTED', 'RESTORING', 'ROLLED_BACK']
+        expected.append((self.state / 'phase', 0o600, [(p + '\n').encode() for p in phases]))
+        remove = []
+        for path, permissions, values in expected:
+            tmp = path.with_name(path.name + '.migration-new')
+            if tmp.exists() or tmp.is_symlink():
+                data = read(tmp, permissions)
+                require(any(value.startswith(data) for value in values), 'TEMPORARY_DRIFT')
+                remove.append(tmp)
+        # Validate the entire list before deleting anything.
+        for tmp in remove:
+            tmp.unlink()
+            sync_dir(tmp.parent)
 
     def fence(self):
         lock = self.root / 'tmp/home-gateway-deploy.lock'
@@ -260,14 +287,15 @@ class Migration:
         require(phase in ('PREPARED', 'COMMITTED'), 'RECOVERY_REQUIRED')
         if phase == 'COMMITTED':
             self.check_new(r)
-            lockpath = self.root / 'tmp/home-gateway-deploy.lock'
-            if lockpath.exists() or lockpath.is_symlink():
-                self.unfence(self.fence())
+            lock = self.fence()
+            self.clean_temporaries(r)
+            self.unfence(lock)
             return 'ALREADY_COMMITTED'
         # Freeze old state again immediately before the first live write.
         fresh, _ = self.legacy()
         require(all(fresh[k] == r[k] for k in fresh), 'LEGACY_CHANGED')
         lock = self.fence()
+        self.clean_temporaries(r)
         self.phase('APPLYING')
         for rel in ALL:
             write(self.root / rel, read(self.state / 'new' / rel, mode(rel)), mode(rel))
@@ -298,6 +326,7 @@ class Migration:
                 continue
             require(digest(read(dst, mode(rel))) in {r['new'][rel], r['old'].get(rel)}, 'FILE_DRIFT')
         lock = self.fence()
+        self.clean_temporaries(r)
         self.phase('RESTORING')
         for rel in OLD + RECEIVERS:
             write(self.root / rel, read(self.state / 'old' / rel, mode(rel)), mode(rel))
@@ -327,8 +356,14 @@ def main():
             require(args.candidate is not None and args.sha256 is not None, 'CANDIDATE_REQUIRED')
             result = migration.prepare(args.candidate, args.sha256)
         elif args.operation == 'status':
-            migration.load()
+            receipt = migration.load()
             result = read(migration.state / 'phase', 0o600).decode().strip()
+            require(result in ('PREPARED', 'APPLYING', 'COMMITTED', 'RESTORING', 'ROLLED_BACK'), 'PHASE')
+            if result == 'COMMITTED':
+                migration.check_new(receipt)
+            elif result == 'ROLLED_BACK':
+                verify_files(migration.root, receipt['old'])
+                migration.legacy()
         else:
             result = getattr(migration, args.operation)()
         print('MIGRATION_LAB=' + result + ' PRODUCTION_SUPPORTED=false')

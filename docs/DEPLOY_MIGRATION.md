@@ -43,7 +43,7 @@ critical persistence blocker. Ни один restore не проверен. Ар�
   ALREADY_COMMITTED. После нового v2 deployment миграционный rollback запрещён:
   сначала требуется отдельное согласованное восстановление той транзакции.
 
-17 isolated tests PASS: реальные FS/rename/fsync/flock, BusyBox ash legacy
+20 isolated tests PASS: реальные FS/rename/fsync/flock, BusyBox ash legacy
 apply/rollback/preflight, SIGKILL, interrupted rollback, exact inventories,
 corrupted manifests/receipts/snapshots, traversal/symlink/hardlink, missing files,
 drift/modes, повторный запуск и conflict с новым deployment. Caller/owner mismatch
@@ -89,3 +89,7 @@ Host BusyBox 1.36.1 не доказывает BusyBox 1.37.0 target PASS.
 Точная следующая задача: port coordinator на BusyBox/OpenWrt без Python и
 подтвердить exact installed legacy receiver identity; затем isolated procd/boot
 fault tests. Только после этого предлагать владельцу конкретный production apply.
+
+Review fixes: own stale temporaries проверяются по exact snapshot prefix, metadata
+и reserved names, только под migration/deploy fence; symlink/unrelated data
+не удаляются. Actual SIGKILL до rename + relative-root refusal regressions.
