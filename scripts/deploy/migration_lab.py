@@ -4,6 +4,8 @@ No SSH, service commands, archive extraction or production entrypoint. The live
 migration remains blocked until an OpenWrt service/admission coordinator exists.
 """
 import argparse
+import ctypes
+import errno
 import fcntl
 import hashlib
 import json
@@ -134,6 +136,17 @@ def parse_manifest(raw, inventory):
 def verify_files(base, records):
     for rel, sha in records.items():
         require(digest(read(base / rel, mode(rel))) == sha, 'FILE_DRIFT')
+
+
+def rename_noreplace(source, target):
+    libc = ctypes.CDLL(None, use_errno=True)
+    function = getattr(libc, 'renameat2', None)
+    require(function is not None, 'ATOMIC_RENAME_UNAVAILABLE')
+    function.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    function.restype = ctypes.c_int
+    if function(-100, os.fsencode(source), -100, os.fsencode(target), 1):
+        require(ctypes.get_errno() not in (errno.EEXIST, errno.ENOTEMPTY), 'DEPLOYMENT_BUSY')
+        raise Refused('ATOMIC_RENAME_FAILED')
 
 
 class Migration:
@@ -329,9 +342,24 @@ class Migration:
             require(read(lock / 'migration-lab-fence', 0o600) == digest(read(self.state / 'receipt.json', 0o600)).encode(), 'FENCE_CHANGED')
         else:
             checked(lock.parent, True)
-            lock.mkdir(mode=0o700)
+            proof = digest(read(self.state / 'receipt.json', 0o600)).encode()
+            staging = lock.parent / ('hg-migration-acquire.' + proof.decode())
+            if staging.exists() or staging.is_symlink():
+                checked(staging, True, 0o700)
+                names = set(p.name for p in staging.iterdir())
+                require(names <= {'migration-lab-fence', 'migration-lab-fence.migration-new'}, 'ACQUIRE_FENCE_CHANGED')
+                if 'migration-lab-fence' in names:
+                    require(read(staging / 'migration-lab-fence', 0o600) == proof, 'FENCE_CHANGED')
+                if 'migration-lab-fence.migration-new' in names:
+                    temporary = staging / 'migration-lab-fence.migration-new'
+                    require(proof.startswith(read(temporary, 0o600)), 'FENCE_CHANGED')
+                    temporary.unlink(); sync_dir(staging)
+            else:
+                staging.mkdir(mode=0o700); sync_dir(staging.parent)
+            marker = staging / 'migration-lab-fence'
+            if not marker.exists(): write(marker, proof, 0o600)
+            rename_noreplace(staging, lock)
             sync_dir(lock.parent)
-            write(lock / 'migration-lab-fence', digest(read(self.state / 'receipt.json', 0o600)).encode(), 0o600)
         # Deliberately no pid: both old/new receivers refuse even stale recover.
         return lock
 
@@ -354,10 +382,11 @@ class Migration:
             self.clean_temporaries(r)
             self.unfence(lock)
             return 'ALREADY_COMMITTED'
-        # Freeze old state again immediately before the first live write.
+        # Acquire first, then re-read legacy under the shared receiver exclusion.
+        lock = self.fence()
+        self.load()
         fresh, _ = self.legacy()
         require(all(fresh[k] == r[k] for k in fresh), 'LEGACY_CHANGED')
-        lock = self.fence()
         self.clean_temporaries(r)
         self.phase('APPLYING')
         for rel in ALL:
@@ -378,6 +407,8 @@ class Migration:
         r = self.load()
         phase = read(self.state / 'phase', 0o600).decode().strip()
         require(phase in ('PREPARED', 'APPLYING', 'COMMITTED', 'RESTORING', 'ROLLED_BACK'), 'PHASE')
+        lock = self.fence()
+        self.load()
         latest = self.base / 'latest'
         if latest.exists() or latest.is_symlink():
             require(read(latest, 0o600).decode() == r['latest'], 'NEW_DEPLOYMENT_EXISTS')
@@ -388,7 +419,6 @@ class Migration:
                 require(rel in ADDED, 'MISSING_RUNTIME')
                 continue
             require(digest(read(dst, mode(rel))) in {r['new'][rel], r['old'].get(rel)}, 'FILE_DRIFT')
-        lock = self.fence()
         self.clean_temporaries(r)
         self.phase('RESTORING')
         for rel in OLD + RECEIVERS:

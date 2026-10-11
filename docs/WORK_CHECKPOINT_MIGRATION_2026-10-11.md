@@ -7,7 +7,7 @@
 Реализованы read-only BusyBox preflight и host-only durable migration rehearsal:
 exact 18 legacy → 20 runtime + receiver, сохранён исходный legacy rollback,
 новый журнал/fence, interrupted recovery, идемпотентность и drift refusal.
-24 actual migration tests PASS. Runtime version остаётся 0.5.0-dev, production
+26 actual migration tests PASS. Runtime version остаётся 0.5.0-dev, production
 migration BLOCKED до coordinator и disposable OpenWrt/procd/boot acceptance.
 Missing /etc/home-gateway sysupgrade inclusion остаётся target blocker; новый
 bootstrap allowlist исправлен, существующий CUDY не перебутстрапливать.
@@ -25,3 +25,8 @@ Review: reset-preparation валидирует partial private tree и теку�
 сохраняет flock inode/RESETTING phase до окончания очистки. Fence снимается
 атомарным rename intact directory в receipt-owned sibling, cleanup повторяемый.
 Interrupted prepare/reset/fence teardown negative tests; target migration BLOCKED.
+
+Fence acquisition готовится в receipt-owned sibling и публикуется Linux
+renameat2(RENAME_NOREPLACE), без unsafe fallback; own partial stage recoverable.
+Legacy/rollback validation повторяется после acquisition под exclusion.
+26 migration regressions включают actual SIGKILL pre-publish и foreign lock race.

@@ -19,7 +19,7 @@ PASS ниже относится только к указанному automated/
 | 0.7 crash outcome и MAINTENANCE | PASS: actual SIGKILL/OS flock/health projection | BLOCKED: target persistence/reboot; UNKNOWN никогда не auto-retry |
 | 0.8 read-only configuration planner | PASS: 9 BusyBox ash contracts, [PR #15](https://github.com/bsekinaev/cudy-home-gateway/pull/15), initial CI 38084049196 | Observation only, всегда preflight/apply blocked |
 | 0.8 preflight/snapshot/apply/postcheck/rollback/recovery | BLOCKED | Реальные audited adapters, writer coordination, LAN/Tailscale recovery, durable journal |
-| 0.9 full private backups/SHA256/last-five/restore/audit | Partial: offline verifier в PR #16 (17 tests), engine BLOCKED | Runtime backup engine и isolated restore/fault tests ещё не реализованы |
+| 0.9 full private backups/SHA256/last-five/restore/audit | Partial: offline verifier в PR #16 (30 tests), engine BLOCKED | Runtime backup engine и isolated restore/fault tests ещё не реализованы |
 | Control-plane release/deploy integrity/recovery | PASS: release/deploy tests | BLOCKED: HGDEPLOY2 receiver/module bootstrap + target smoke/rollback |
 | 1.0 full target negative/reboot/crash regression | BLOCKED | Только отдельное разрешение/изолированный стенд; production destructive tests запрещены |
 | 1.0 длительный soak без functional changes | BLOCKED | Согласовать duration/metrics/start/end; реального soak не было |
@@ -48,7 +48,7 @@ PASS ниже относится только к указанному automated/
 
 | Критерий | Offline | CUDY / блокер |
 |---|---|---|
-| HGDEPLOY1 18 → HGDEPLOY2 20 | 24 migration rehearsal tests, read-only BusyBox preflight | BLOCKED: production coordinator, exact receiver identity, target procd/boot |
+| HGDEPLOY1 18 → HGDEPLOY2 20 | 26 migration rehearsal tests, read-only BusyBox preflight | BLOCKED: production coordinator, exact receiver identity, target procd/boot |
 | /etc/home-gateway sysupgrade inclusion | Новый bootstrap содержит allowlist path; existing persistence contracts | FAIL в owner backup: отсутствуют 3 HG files; исправление/restore не применены |
 | Резервный LAN-доступ | Не проверяется host CI | BLOCKED: Wi-Fi SSH подтверждён, кабельный резерв не проверен |
 
@@ -64,3 +64,8 @@ Review: reset-preparation валидирует partial private tree и теку�
 сохраняет flock inode/RESETTING phase до окончания очистки. Fence снимается
 атомарным rename intact directory в receipt-owned sibling, cleanup повторяемый.
 Interrupted prepare/reset/fence teardown negative tests; target migration BLOCKED.
+
+Fence acquisition готовится в receipt-owned sibling и публикуется Linux
+renameat2(RENAME_NOREPLACE), без unsafe fallback; own partial stage recoverable.
+Legacy/rollback validation повторяется после acquisition под exclusion.
+26 migration regressions включают actual SIGKILL pre-publish и foreign lock race.

@@ -407,6 +407,38 @@ m.apply()
         self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
         self.assert_previous(); self.prepare()
 
+    def test_actual_sigkill_during_fence_creation_can_retry_safely(self):
+        self.prepare(); self.m.close()
+        script = """import os,signal,sys
+import migration_lab
+m=migration_lab.Migration(sys.argv[1]); real=migration_lab.os.replace
+def crash(source,target):
+    if target.name == 'migration-lab-fence': os.kill(os.getpid(), signal.SIGKILL)
+    real(source,target)
+migration_lab.os.replace=crash
+m.apply()
+"""
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).parent.resolve()))
+        result = subprocess.run([os.sys.executable,'-c',script,str(self.root)], env=env, capture_output=True,timeout=30)
+        self.assertEqual(result.returncode,-9,result.stderr)
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.m = Migration(self.root); self.addCleanup(self.m.close)
+        self.assertEqual(self.m.apply(), 'COMMITTED')
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK'); self.assert_previous()
+
+    def test_atomic_fence_publish_never_replaces_foreign_empty_lock(self):
+        self.prepare()
+        import migration_lab
+        real = migration_lab.rename_noreplace
+        lock = self.root / 'tmp/home-gateway-deploy.lock'
+        def competing(source,target):
+            lock.mkdir(mode=0o700)
+            return real(source,target)
+        with patch.object(migration_lab,'rename_noreplace',competing):
+            with self.assertRaisesRegex(Refused,'DEPLOYMENT_BUSY'): self.m.apply()
+        self.assertTrue(lock.is_dir()); self.assertEqual(list(lock.iterdir()),[])
+        self.assert_previous()
+
     def test_real_root_and_no_sentinel_refused(self):
         with self.assertRaises(Refused):
             Migration('/')

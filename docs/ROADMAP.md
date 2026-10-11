@@ -132,6 +132,9 @@ rollback/recovery ещё blocked. См. [MAIN_TRANSACTIONS.md](MAIN_TRANSACTIONS
 
 ## 0.9 — Backup & Hardening
 
+**Статус:** разработан host-only private archive verifier, runtime collector/
+rotation/restore ещё отсутствуют. См. [BACKUP.md](BACKUP.md); LIVE не принят.
+
 * sysupgrade backup;
 * SHA256 и проверка архива;
 * ротация последних 5 архивов;
@@ -149,7 +152,7 @@ rollback/recovery ещё blocked. См. [MAIN_TRANSACTIONS.md](MAIN_TRANSACTIONS
 ### P0 11.10.2026: legacy deployment migration
 
 Owner baseline: working 0.5.0-dev / old 18-file journal; HGDEPLOY2 и новые модули
-не установлены. Read-only preflight и 24-test host migration rehearsal реализованы
+не установлены. Read-only preflight и 26-test host migration rehearsal реализованы
 отдельно; production coordinator/target procd/boot остаются BLOCKED. Не заменять
 receiver отдельно, не подделывать inventory-version, не повторять bootstrap.
 /etc/home-gateway sysupgrade omission (3 files) — critical blocker; новый
@@ -163,3 +166,8 @@ Review: reset-preparation валидирует partial private tree и теку�
 сохраняет flock inode/RESETTING phase до окончания очистки. Fence снимается
 атомарным rename intact directory в receipt-owned sibling, cleanup повторяемый.
 Interrupted prepare/reset/fence teardown negative tests; target migration BLOCKED.
+
+Fence acquisition готовится в receipt-owned sibling и публикуется Linux
+renameat2(RENAME_NOREPLACE), без unsafe fallback; own partial stage recoverable.
+Legacy/rollback validation повторяется после acquisition под exclusion.
+26 migration regressions включают actual SIGKILL pre-publish и foreign lock race.
