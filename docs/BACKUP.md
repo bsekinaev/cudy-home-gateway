@@ -59,7 +59,7 @@ snapshot, journal, post-check/rollback/recovery и LAN доступ.
 Нельзя запускать restore/reboot/sysupgrade на CUDY без отдельного owner approval.
 
 Этап 0.9 остаётся partial: collector, last-five rotation/audit, согласованность и
-restore ещё не реализованы. 21 tests используют настоящий gzip/tar/hash/private FS
+restore ещё не реализованы. 23 tests используют настоящий gzip/tar/hash/private FS
 с public synthetic contents, включая corruption/bombs/links/FIFO/privacy. Они не
 являются проверкой реального backup или восстановления роутера.
 
@@ -72,7 +72,7 @@ Physical tar headers проверяются до tarfile: разрешены о�
 
 ### Persisted init links и raw tar validation
 
-21 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
+23 offline tests PASS, включая фактический BusyBox 1.36.1 tar -czf. Для четырёх
 repository-managed enable links (S94/K09 deploy-recover, S95/K10 Telegram)
 разрешён только SYMTYPE с точным relative target ../init.d/соответствующий-service,
 size=0 и явным включением path в owner inventory. Замена этих paths regular file
@@ -83,3 +83,8 @@ Physical headers проверяются до tarfile normalization: один с�
 slash directory допустим, повторные separators/traversal — нет. Nonzero member
 padding отвергается. Два нулевых end blocks обязательны после последнего member.
 Это не означает принятую полноту native sysupgrade backup остальных hooks/links.
+
+Inventory ограничен 256 KiB: этот bound вмещает 1024 paths по 240 ASCII characters
+в обычном JSON encoding. Capacity test проверяет maximum-length USTAR paths и
+соответствующий tar. Linkname raw field также проверяется на zero padding до
+tarfile truncation; undeclared target bytes отвергаются.

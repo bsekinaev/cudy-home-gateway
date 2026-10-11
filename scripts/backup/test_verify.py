@@ -164,6 +164,28 @@ class VerifyTests(unittest.TestCase):
         self.digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
         self.assertEqual(self.check()['links'], 4)
 
+    def test_hidden_padding_in_approved_symlink_target_rejected(self):
+        name, target = next(iter(verify.PERSISTED_LINKS.items()))
+        entry = tarfile.TarInfo(name); entry.type = tarfile.SYMTYPE; entry.linkname = target
+        header = bytearray(entry.tobuf(format=tarfile.USTAR_FORMAT))
+        header[157 + len(target) + 1] = 65
+        header[148:156] = b' ' * 8
+        checksum = sum(header)
+        header[148:156] = f'{checksum:06o}\0 '.encode()
+        self.write(gzip.compress(bytes(header) + b'\0' * 1024))
+        self.required = {name}
+        with self.assertRaisesRegex(verify.BackupError, 'INVALID_ARCHIVE_PATH'): self.check()
+
+    def test_full_capacity_long_path_inventory_and_archive(self):
+        paths = ['etc/' + 'a' * 150 + '/' + 'c' * 77 + f'{i:04d}.cfg' for i in range(verify.MAX_ENTRIES)]
+        self.assertTrue(all(len(p) == verify.MAX_PATH for p in paths))
+        path = self.base / 'inventory.json'
+        path.write_text(json.dumps(paths)); path.chmod(0o600)
+        self.assertGreater(path.stat().st_size, 65536)
+        self.required = verify.inventory(path)
+        self.archive([(p, b'', tarfile.REGTYPE) for p in paths])
+        self.assertEqual(self.check()['files'], verify.MAX_ENTRIES)
+
     def test_checksum_and_invalid_hash_rejected_before_parsing(self):
         self.archive()
         for value, reason in [('0' * 64, 'CHECKSUM_MISMATCH'), ('invalid', 'INVALID_SHA256')]:

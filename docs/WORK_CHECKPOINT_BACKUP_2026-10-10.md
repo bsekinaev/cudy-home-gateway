@@ -44,3 +44,7 @@ symlinks, nonzero member padding и raw directory separators до normalization.
 Исправлено: 21 actual backup tests PASS, включая actual BusyBox tar. Generic links
 по-прежнему запрещены; target inventory/hooks/LIVE не приняты. Новый CI/review HEAD
 требуется проверить перед merge. Full stage 0.9 completion не заявляется.
+
+Последние 2 findings закрыты: raw linkname NUL padding и capacity 1024 длинных
+paths. 23 backup tests PASS, including max 240-character/1024-path inventory/tar.
+Current ACCEPTANCE/BACKUP counts согласованы; inventory bound 256 KiB.

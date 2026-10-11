@@ -15,6 +15,8 @@ MAX_ARCHIVE = 8 * 1024 * 1024
 MAX_TOTAL = 16 * 1024 * 1024
 MAX_FILE = 2 * 1024 * 1024
 MAX_ENTRIES = 1024
+MAX_PATH = 240
+MAX_INVENTORY = 256 * 1024
 # Only exact repository-managed enable links; never accept generic symlinks.
 PERSISTED_LINKS = {
     'etc/rc.d/S94home-gateway-deploy-recover': '../init.d/home-gateway-deploy-recover',
@@ -34,7 +36,7 @@ def require(condition, reason):
 
 
 def allowed(name):
-    if not isinstance(name, str) or len(name) > 240 or not re.fullmatch(r'[A-Za-z0-9_./+-]+', name):
+    if not isinstance(name, str) or len(name) > MAX_PATH or not re.fullmatch(r'[A-Za-z0-9_./+-]+', name):
         return False
     if any(part in ('', '.', '..') for part in name.split('/')):
         return False
@@ -56,7 +58,7 @@ def private_read(path, limit):
 
 
 def inventory(path):
-    raw = private_read(path, 65536)
+    raw = private_read(path, MAX_INVENTORY)
     try:
         data = json.loads(raw)
     except (ValueError, UnicodeError, RecursionError):
@@ -96,9 +98,14 @@ def validate_physical_tar(plain):
             name = prefix + '/' + name
         if header[156:157] == tarfile.DIRTYPE and name.endswith('/'):
             name = name[:-1]  # At most one conventional trailing separator.
-        require(bool(name) and len(name) <= 240 and re.fullmatch(r'[A-Za-z0-9_./+-]+', name) and
+        require(bool(name) and len(name) <= MAX_PATH and re.fullmatch(r'[A-Za-z0-9_./+-]+', name) and
                 not name.startswith('/') and all(part not in ('', '.', '..') for part in name.split('/')),
                 'INVALID_ARCHIVE_PATH')
+        linkname = header_text(header[157:257])
+        if header[156:157] == tarfile.SYMTYPE:
+            require(PERSISTED_LINKS.get(name) == linkname, 'UNSUPPORTED_ARCHIVE_ENTRY')
+        else:
+            require(not linkname, 'UNSUPPORTED_ARCHIVE_ENTRY')
         # Accept ordinary octal sizes only; no GNU base-256/sparse encodings.
         size_field = header[124:136].strip(b'\0 ')
         require(bool(size_field) and all(byte in b'01234567' for byte in size_field), 'INVALID_ARCHIVE')
