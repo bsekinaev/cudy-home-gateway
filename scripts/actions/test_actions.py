@@ -18,7 +18,7 @@ class ActionTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
         for name in ('state', 'runtime', 'secrets', 'init'):
-            (self.base / name).mkdir()
+            (self.base / name).mkdir(mode=0o700)
         (self.base / 'secrets/telegram.user_id').write_text('111\n')
         (self.base / 'secrets/telegram.chat_id').write_text('222\n')
         for service in ('tailscale', 'uhttpd'):
@@ -145,9 +145,56 @@ exit "${HG_ACTION_TEST_RC:-0}"
         self.assertEqual(self.confirm(token).returncode, 75)
         self.assertEqual(self.state()['records'][0]['phase'], 'UNKNOWN')
         self.assertEqual((self.base / 'executed').read_text(), 'restart\n')
+        refused = self.run_action('prepare', 'restart-tailscale', '111', '222', '900')
+        self.assertEqual(refused.returncode, 70)
+        self.assertIn('RESOURCE_QUARANTINED', refused.stdout)
         self._kill_group(child.pid)
         child.stdout.close()
         child.stderr.close()
+
+    def test_unknown_resource_requires_local_acknowledgement(self):
+        token = self.prepare()
+        data = self.state()
+        data['records'][0]['phase'] = 'EXECUTING'
+        self.rewrite(data)
+        self.assertEqual(self.run_action('show').returncode, 0)
+        refused = self.run_action('prepare', 'restart-tailscale', '111', '222', '900')
+        self.assertEqual(refused.returncode, 70)
+        self.assertIn('RESOURCE_QUARANTINED', refused.stdout)
+        self.assertEqual(self.run_action('acknowledge', 'restart-tailscale').returncode, 77)
+        self.env['HG_ACTION_ACKNOWLEDGE_AUTHORIZED'] = '1'
+        self.assertEqual(self.run_action('acknowledge', 'restart-tailscale').returncode, 0)
+        self.assertEqual(self.confirm(token).returncode, 75)
+        self.assertEqual(self.confirm(self.prepare()).returncode, 0)
+
+    def test_latest_failed_execution_clears_older_settling(self):
+        self.assertEqual(self.confirm(self.prepare()).returncode, 0)
+        self.assertEqual(self.run_action('maintenance').stdout, 'MAINTENANCE\n')
+        token = self.prepare()
+        self.env['HG_ACTION_TEST_RC'] = '1'
+        self.assertEqual(self.confirm(token).returncode, 70)
+        self.assertEqual(self.run_action('maintenance').stdout, 'NONE\n')
+
+    def test_shared_directory_overrides_never_change_permissions(self):
+        self.base.chmod(0o755)
+        for directory in ('/', '/tmp', str(self.base)):
+            before = Path(directory).stat().st_mode
+            self.env['HG_ACTION_RUNTIME_DIR'] = directory
+            self.assertEqual(self.run_action('show').returncode, 70)
+            self.assertEqual(Path(directory).stat().st_mode, before)
+
+    def test_retention_preserves_unknown_resource_fence(self):
+        self.prepare()
+        data = self.state()
+        original = dict(data['records'][0], phase='UNKNOWN')
+        data['records'] = [original]
+        for i in range(101):
+            data['records'].append(dict(original, token=f'{i + 1:032x}', phase='DONE'))
+        self.rewrite(data)
+        self.prepare('restart-uhttpd')
+        self.assertTrue(any(r['phase'] == 'UNKNOWN' for r in self.state()['records']))
+        refused = self.run_action('prepare', 'restart-tailscale', '111', '222', '900')
+        self.assertIn('RESOURCE_QUARANTINED', refused.stdout)
 
     @staticmethod
     def _kill_group(pid):

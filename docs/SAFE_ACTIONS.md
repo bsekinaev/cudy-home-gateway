@@ -25,24 +25,32 @@ Confirm под kernel flock и per-service lock durably сохраняет EXECU
 Lock fd CLOEXEC: init subprocess не сохраняет lock при гибели engine. Crash после
 EXECUTING даёт UNKNOWN при следующем locked recovery, без автоматического retry.
 Невозможно гарантировать exactly-once завершение внешнего restart после crash;
-UNKNOWN требует проверки оператора. DONE/FAILED/UNKNOWN являются terminal.
+UNKNOWN блокирует новые prepare/confirm того же сервиса, включая уже подготовленные
+токены. Fence сохраняется в durable state и не удаляется retention. Оператор
+сначала проверяет и завершает orphaned init process; только затем локально,
+с root-доступом и trusted `HG_ACTION_ACKNOWLEDGE_AUTHORIZED=1`, вызывает
+`gateway actions acknowledge restart-tailscale` (либо restart-uhttpd).
+ACKNOWLEDGED снимает блокировку, не заявляет успех и не повторяет старый token.
+Telegram не предоставляет acknowledge. На CUDY это не выполнялось. DONE/FAILED/UNKNOWN являются terminal.
 Init вызывается как executable, включая shebang `/bin/sh /etc/rc.common`, затем
 проверяется service status. Restart timeout 30 секунд, status 10, kill-after 2;
 тайм-аут/принудительное завершение трактуется как UNKNOWN. Output init не логируется.
 
 State/audit — `/etc/home-gateway/state/actions.json`, atomic rename + sync,
-0600, max 128 records/128 KiB. Retention: до 100 terminal и 20 pending плюс новая
-запись; pending не удаляются из-за размера, при лимите backpressure. Audit хранит
+0600, max 128 records/128 KiB. Retention: до 100 terminal и 20 pending/UNKNOWN плюс новая
+запись; pending/UNKNOWN не удаляются из-за размера, при лимите backpressure. Audit хранит
 фазы и времена вместе с receipts; stdout show скрывает token/user/chat/message.
 Это bounded audit, не внешняя система хранения долгосрочных доказательств.
 Corrupt/oversized/symlink/writable state, invalid phase или invalid service — pause.
 Root/runtime/state ownership и trusted ancestors проверяются; chmod не заменяет
-проверку владельца. Trusted local overrides нужны для изолированных roots и не
+проверку владельца. Существующий leaf должен иметь mode 0700; shared roots,
+/tmp и leaf с другими правами отвергаются без chmod. Новые каталоги создаются
+0700 только после проверки родителя. ASATA keeper соблюдает ту же границу. Trusted local overrides нужны для изолированных roots и не
 поступают из Telegram. На production вызывающий root требует root-owned paths.
 
 MAINTENANCE ограничен текущим boot и максимумом 120 секунд от старта. Для Tailscale
 он влияет только на tailscale health, не WAN/DNS/MAIN. После успеха — до 30 секунд
-settling в рамках этого максимума; failure/UNKNOWN не скрывают health indefinitely.
+settling в рамках этого максимума; failure/UNKNOWN последнего запуска немедленно завершают прежний settling.
 Incident Engine уже игнорирует MAINTENANCE при open/recover debounce.
 
 ## Telegram и включение владельцем
@@ -64,6 +72,12 @@ production вызывает реальные init scripts, а не тестов�
 используют **HGDEPLOY2**. Предыдущий протокол rejected до apply. Старый receiver
 не совместим с новым клиентом; нельзя автоматически менять receiver на production.
 `safe_live` требует существующий regular `actions.uc`, не создаёт его скрытно.
+
+Новый receiver отвергает legacy journal до изменения phase/pointers или остановки
+Telegram: необходим HGDEPLOY2 marker и точные 20 уникальных paths в обоих manifests.
+Marker вручную не исправляет неполный backup. До замены receiver владелец должен
+восстановить или завершить старые active/latest transactions через matching старый
+receiver по LAN. Автоматическая конвертация journal не предусмотрена.
 
 Для первого обновления владелец должен отдельно одобрить bootstrap:
 проверить manifest SHA256/mode для нового module, подготовить новый trusted receiver

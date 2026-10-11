@@ -11,7 +11,7 @@ const OWNER = fs.stat('/proc/self')?.uid;
 const STATE = STATE_DIR + '/actions.json';
 let ENABLED = false;
 const SERVICES = { 'restart-tailscale': 'tailscale', 'restart-uhttpd': 'uhttpd' };
-const PHASES = [ 'PENDING', 'EXECUTING', 'DONE', 'FAILED', 'UNKNOWN', 'EXPIRED', 'CANCELLED' ];
+const PHASES = [ 'PENDING', 'EXECUTING', 'DONE', 'FAILED', 'UNKNOWN', 'EXPIRED', 'CANCELLED', 'ACKNOWLEDGED' ];
 const BOOT = trim(fs.readfile('/proc/sys/kernel/random/boot_id') || '');
 
 function fail(code, reason) { print({ schema_version: 1, status: reason }, '\n'); exit(code); }
@@ -26,18 +26,24 @@ function private_dir(path) {
     let root = fs.lstat('/');
     if (root?.uid != 0 || ((root.perm.group_write || root.perm.other_write) && !root.perm.sticky)) fail(70, 'UNSAFE_DIRECTORY');
     if (type(OWNER) != 'int' || !match(path, /^\/[a-zA-Z0-9_./-]+$/) || index(path, '//') >= 0) fail(70, 'UNSAFE_DIRECTORY');
-    if (command([ '/bin/mkdir', '-p', path ]) != 0) fail(70, 'DIRECTORY_FAILED');
+    if (path == '/' || path == '/tmp' || length(filter(split(path, '/'), p => length(p))) < 2 || substr(path, -1) == '/') fail(70, 'UNSAFE_DIRECTORY');
+    let existing = fs.lstat(path);
+    if (existing != null && (existing.type != 'directory' || existing.uid != OWNER || (existing.mode & 07777) != 0700)) fail(70, 'UNSAFE_DIRECTORY');
     let prefix = '';
     for (let part in split(path, '/')) {
         if (!length(part)) continue;
         if (part == '.' || part == '..') fail(70, 'UNSAFE_DIRECTORY');
         prefix += '/' + part;
         let st = fs.lstat(prefix);
+        if (st == null) {
+            if (command([ '/bin/mkdir', '-m', '700', prefix ]) != 0) fail(70, 'DIRECTORY_FAILED');
+            st = fs.lstat(prefix);
+        }
         if (st?.type != 'directory' || (st.uid != 0 && st.uid != OWNER) ||
             (prefix == path && st.uid != OWNER) ||
             (prefix != path && (st.perm.group_write || st.perm.other_write) && !st.perm.sticky)) fail(70, 'UNSAFE_DIRECTORY');
     }
-    if (!fs.chmod(path, 0700)) fail(70, 'DIRECTORY_FAILED');
+    if ((fs.lstat(path).mode & 07777) != 0700) fail(70, 'UNSAFE_DIRECTORY');
 }
 function bounded(path, limit) {
     let st = fs.lstat(path);
@@ -109,17 +115,19 @@ ENABLED = getenv('HG_ACTION_EXECUTION_ENABLED') == '1' ||
     trim(bounded(getenv('HG_ACTION_POLICY_FILE') || '/etc/home-gateway/actions.enabled', 16) || '') == '1';
 
 if (MODE == 'maintenance') {
-    let data = load(), now = time(), active = false;
+    let data = load(), now = time(), latest = null;
     for (let r in data.records)
-        if (r.action == 'restart-tailscale' && r.boot == BOOT && r.started > 0 && now >= r.started &&
-            r.maintenance_until > now && r.maintenance_until <= r.started + 120 &&
-            (r.phase == 'EXECUTING' || r.phase == 'DONE')) active = true;
+        if (r.action == 'restart-tailscale' && r.boot == BOOT && r.started > 0 &&
+            (latest == null || r.started >= latest.started)) latest = r;
+    let active = latest != null && now >= latest.started && latest.maintenance_until > now &&
+        latest.maintenance_until <= latest.started + 120 && (latest.phase == 'EXECUTING' || latest.phase == 'DONE');
     print(active ? 'MAINTENANCE\n' : 'NONE\n');
     exit(0);
 }
-if (MODE != 'show' && MODE != 'prepare' && MODE != 'confirm' && MODE != 'cancel') fail(2, 'USAGE');
+if (MODE != 'show' && MODE != 'prepare' && MODE != 'confirm' && MODE != 'cancel' && MODE != 'acknowledge') fail(2, 'USAGE');
 if ((MODE == 'prepare' || MODE == 'confirm') && length(ARGV) != 5) fail(2, 'USAGE');
 if (MODE == 'show' && length(ARGV) > 1) fail(2, 'USAGE');
+if (MODE == 'acknowledge' && (length(ARGV) != 2 || !SERVICES[ARGV[1]] || getenv('HG_ACTION_ACKNOWLEDGE_AUTHORIZED') != '1')) fail(77, 'LOCAL_ACK_REQUIRED');
 if (!match(BOOT, /^[0-9a-f-]{36}$/)) fail(70, 'BOOT_UNAVAILABLE');
 if (MODE == 'cancel' && (length(ARGV) != 3 || !authorized(ARGV[1], ARGV[2]))) fail(77, 'UNAUTHORIZED');
 if ((MODE == 'prepare' || MODE == 'confirm') && !authorized(ARGV[2], ARGV[3])) fail(77, 'UNAUTHORIZED');
@@ -128,8 +136,15 @@ private_dir(STATE_DIR); private_dir(RUNTIME_DIR);
 let guard = lock(RUNTIME_DIR + '/actions.lock');
 let data = load(), now = time();
 let recovered = recover(data, now);
+if (recovered) save(data);
+if (MODE == 'acknowledge') {
+    for (let r in data.records)
+        if (r.action == ARGV[1] && r.phase == 'UNKNOWN') r.phase = 'ACKNOWLEDGED';
+    save(data);
+    print({ schema_version: 1, status: 'ACKNOWLEDGED' }, '\n');
+    exit(0);
+}
 if (MODE == 'show') {
-    if (recovered) save(data);
     print({ schema_version: 1, enabled: ENABLED, actions: keys(SERVICES),
             records: map(data.records, r => ({ action: r.action, phase: r.phase, created: r.created, finished: r.finished })) }, '\n');
     exit(0);
@@ -146,14 +161,16 @@ if (!match(ARGV[4] || '', /^[1-9][0-9]{0,18}$/)) fail(2, 'USAGE');
 if (MODE == 'prepare') {
     let action = ARGV[1];
     if (!SERVICES[action]) fail(2, 'NOT_ALLOWED');
+    for (let r in data.records) if (r.action == action && r.phase == 'UNKNOWN') fail(70, 'RESOURCE_QUARANTINED');
     for (let r in data.records)
         if (r.phase == 'PENDING' && r.user == ARGV[2] && r.chat == ARGV[3] && r.action == action) r.phase = 'CANCELLED';
     // Bounded audit retention; dropping a terminal token never permits execution of it.
     let pending = filter(data.records, r => r.phase == 'PENDING');
-    let terminal = filter(data.records, r => r.phase != 'PENDING');
-    if (length(pending) >= 20) fail(70, 'BACKPRESSURE');
+    let quarantined = filter(data.records, r => r.phase == 'UNKNOWN');
+    let terminal = filter(data.records, r => r.phase != 'PENDING' && r.phase != 'UNKNOWN');
+    if (length(pending) + length(quarantined) >= 20) fail(70, 'BACKPRESSURE');
     while (length(terminal) > 100) shift(terminal);
-    data.records = [ ...terminal, ...pending ];
+    data.records = [ ...terminal, ...quarantined, ...pending ];
     let r = { action, token: nonce(), user: ARGV[2], chat: ARGV[3], message: ARGV[4],
               created: now, expires: now + 120, boot: BOOT, phase: 'PENDING', started: 0, finished: 0, maintenance_until: 0 };
     push(data.records, r); save(data);
@@ -165,6 +182,7 @@ if (!match(token || '', /^[0-9a-f]{32}$/)) fail(2, 'USAGE');
 for (let r in data.records) if (r.token == token) found = r;
 if (!found || found.user != ARGV[2] || found.chat != ARGV[3] || found.message != ARGV[4]) fail(77, 'INVALID_CONFIRMATION');
 if (found.phase != 'PENDING') { save(data); fail(75, found.phase); }
+for (let r in data.records) if (r.action == found.action && r.phase == 'UNKNOWN') fail(70, 'RESOURCE_QUARANTINED');
 let resource = lock(RUNTIME_DIR + '/action-' + SERVICES[found.action] + '.lock');
 let service = INIT_DIR + '/' + SERVICES[found.action];
 let service_prefix = '';
@@ -178,6 +196,7 @@ for (let part in split(INIT_DIR, '/')) {
 }
 let service_stat = fs.lstat(service);
 if (service_stat?.type != 'file' || (service_stat.uid != 0 && service_stat.uid != OWNER) || !service_stat.perm.user_exec || service_stat.perm.group_write || service_stat.perm.other_write) fail(70, 'INVALID_SERVICE');
+for (let r in data.records) if (r.action == found.action) r.maintenance_until = 0;
 found.phase = 'EXECUTING'; found.started = now; found.maintenance_until = now + 120;
 save(data); // Consume durably before starting the allowlisted process.
 let rc = command([ 'timeout', '-k', '2', '30', service, 'restart' ]);

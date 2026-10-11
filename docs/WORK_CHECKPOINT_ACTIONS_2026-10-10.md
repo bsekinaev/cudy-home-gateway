@@ -45,3 +45,20 @@ c18384b4a5f8f67e6fb93de529b366aea2a2be65, CI 38083489420 SUCCESS, review no find
 начать с UCI inventory/dry-run/snapshot/journal/crash recovery; preflight новой
 ноды требует проверенного temporary-SOCKS provider/PassWall helpers. Не реализовывать
 ложный successful preflight заглушкой и не выполнять MAIN apply на CUDY.
+
+## Восстановление и review fixes — 11 октября 2026
+
+После потери временных worktrees восстановлены 4 исправления #14: durable UNKNOWN
+resource quarantine + только local authorised acknowledge; latest-only maintenance;
+отказ от chmod shared leaf в actions/ASATA; inventory-version и exact manifests
+до любых recovery/rollback phase/pointer/service mutations. Parent validation до
+mkdir; UNKNOWN records сохраняются при retention. Legacy journal требует matching
+старого receiver по LAN до bootstrap, не auto conversion.
+
+Актуальная local regression восстановленного дерева: 156 PASS = 64 notification/
+ASATA + 23 vtest + 24 actions + 13 release + 32 deploy. BusyBox 1.36.1 ash,
+закреплённый ucode 85922056ef7abeace3cca3ab28bc1ac2d88e31b1, full CI checks PASS.
+Доказаны actual SIGKILL/orphan fence, terminal replay, failure после DONE,
+shared directory mode unchanged, legacy/missing inventory без остановки service.
+До merge необходимы GitHub CI/review нового опубликованного HEAD.
+CUDY/MAIN/nft/sysupgrade не изменялись; полной target приёмки нет.
