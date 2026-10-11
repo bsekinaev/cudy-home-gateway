@@ -352,6 +352,61 @@ m.apply()
         result = subprocess.run(cmd, capture_output=True, env=self.fixture.env, timeout=3)
         self.assertEqual(result.returncode, 64)
 
+    def test_interrupted_preparation_can_reset_and_prepare_again(self):
+        import migration_lab
+        real = migration_lab.write
+        def crash(path,data,permissions):
+            real(path,data,permissions)
+            if path == self.m.state / 'old' / OLD[0]: raise SystemExit('prepare crash')
+        with patch.object(migration_lab, 'write', crash), self.assertRaises(SystemExit):
+            self.m.prepare(self.candidate, self.sha)
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assert_previous()
+        self.prepare()
+        self.assertEqual(self.m.apply(), 'COMMITTED')
+
+    def test_preparation_reset_refuses_unknown_and_symlink(self):
+        self.m.phase('PREPARING')
+        path = self.m.state / 'unknown'
+        path.write_bytes(b'not-owned')
+        with self.assertRaisesRegex(Refused, 'UNKNOWN_PREPARATION_PATH'): self.m.reset_preparation()
+        self.assertTrue(path.exists()); path.unlink()
+        path = self.m.state / 'old'; path.symlink_to(self.root / 'usr')
+        with self.assertRaises(Refused): self.m.reset_preparation()
+        self.assertTrue(path.is_symlink()); path.unlink()
+        self.assert_previous()
+
+    def test_unfence_crash_after_rename_or_marker_unlink_is_recoverable(self):
+        self.prepare()
+        import migration_lab
+        with patch.object(self.m, 'cleanup_retired_fence', side_effect=[None, None, SystemExit]):
+            with self.assertRaises(SystemExit): self.m.apply()
+        retired = self.m.retired_fence()
+        self.assertTrue(retired.is_dir())
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        # Simulate the next teardown boundary: marker removed, owned retired dir exists.
+        (retired / 'migration-lab-fence').unlink()
+        self.assertEqual(self.m.apply(), 'ALREADY_COMMITTED')
+        self.assertFalse(retired.exists())
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK')
+        self.assert_previous()
+
+    def test_preparation_reset_interruption_can_retry_without_phase_loss(self):
+        import migration_lab
+        real_write = migration_lab.write
+        def crash(path,data,permissions):
+            real_write(path,data,permissions)
+            if path == self.m.state / 'old' / OLD[0]: raise SystemExit('prepare crash')
+        with patch.object(migration_lab, 'write', crash), self.assertRaises(SystemExit): self.prepare()
+        real_sync = migration_lab.sync_dir
+        def stop(path):
+            real_sync(path)
+            if path == self.m.state / 'old' / 'etc/init.d': raise SystemExit('reset crash')
+        with patch.object(migration_lab, 'sync_dir', stop), self.assertRaises(SystemExit): self.m.reset_preparation()
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assert_previous(); self.prepare()
+
     def test_real_root_and_no_sentinel_refused(self):
         with self.assertRaises(Refused):
             Migration('/')

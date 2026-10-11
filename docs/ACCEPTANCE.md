@@ -48,7 +48,7 @@ PASS ниже относится только к указанному automated/
 
 | Критерий | Offline | CUDY / блокер |
 |---|---|---|
-| HGDEPLOY1 18 → HGDEPLOY2 20 | 20 migration rehearsal tests, read-only BusyBox preflight | BLOCKED: production coordinator, exact receiver identity, target procd/boot |
+| HGDEPLOY1 18 → HGDEPLOY2 20 | 24 migration rehearsal tests, read-only BusyBox preflight | BLOCKED: production coordinator, exact receiver identity, target procd/boot |
 | /etc/home-gateway sysupgrade inclusion | Новый bootstrap содержит allowlist path; existing persistence contracts | FAIL в owner backup: отсутствуют 3 HG files; исправление/restore не применены |
 | Резервный LAN-доступ | Не проверяется host CI | BLOCKED: Wi-Fi SSH подтверждён, кабельный резерв не проверен |
 
@@ -59,3 +59,8 @@ PASS ниже относится только к указанному automated/
 Review fixes: own stale temporaries проверяются по exact snapshot prefix, metadata
 и reserved names, только под migration/deploy fence; symlink/unrelated data
 не удаляются. Actual SIGKILL до rename + relative-root refusal regressions.
+
+Review: reset-preparation валидирует partial private tree и текущий legacy,
+сохраняет flock inode/RESETTING phase до окончания очистки. Fence снимается
+атомарным rename intact directory в receipt-owned sibling, cleanup повторяемый.
+Interrupted prepare/reset/fence teardown negative tests; target migration BLOCKED.

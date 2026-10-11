@@ -43,7 +43,7 @@ critical persistence blocker. Ни один restore не проверен. Ар�
   ALREADY_COMMITTED. После нового v2 deployment миграционный rollback запрещён:
   сначала требуется отдельное согласованное восстановление той транзакции.
 
-20 isolated tests PASS: реальные FS/rename/fsync/flock, BusyBox ash legacy
+24 isolated tests PASS: реальные FS/rename/fsync/flock, BusyBox ash legacy
 apply/rollback/preflight, SIGKILL, interrupted rollback, exact inventories,
 corrupted manifests/receipts/snapshots, traversal/symlink/hardlink, missing files,
 drift/modes, повторный запуск и conflict с новым deployment. Caller/owner mismatch
@@ -104,3 +104,8 @@ Defconfig без tc (obsolete host CBQ headers); все используемые
 applets сохранены. Повторяются repository state/CLI и deploy/migration suites.
 Это upstream Linux build, не target OpenWrt patches/config/procd/reboot PASS.
 Ручное безопасное продолжение на host: ./scripts/ci/check-busybox137.sh.
+
+Review: reset-preparation валидирует partial private tree и текущий legacy,
+сохраняет flock inode/RESETTING phase до окончания очистки. Fence снимается
+атомарным rename intact directory в receipt-owned sibling, cleanup повторяемый.
+Interrupted prepare/reset/fence teardown negative tests; target migration BLOCKED.

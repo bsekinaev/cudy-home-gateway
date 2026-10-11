@@ -262,7 +262,66 @@ class Migration:
             tmp.unlink()
             sync_dir(tmp.parent)
 
+    def reset_preparation(self):
+        phase_path = self.state / 'phase'
+        if not phase_path.exists() and not phase_path.is_symlink():
+            require(set(p.name for p in self.state.iterdir()) <= {'lock', 'phase.migration-new'}, 'PHASE')
+            pending = self.state / 'phase.migration-new'
+            if pending.exists() or pending.is_symlink():
+                raw = read(pending, 0o600)
+                require(b'PREPARING\n'.startswith(raw) or b'PREPARATION_RESETTING\n'.startswith(raw), 'PHASE')
+                pending.unlink(); sync_dir(self.state)
+            return 'PREPARATION_RESET'
+        require(read(phase_path, 0o600) in (b'PREPARING\n', b'PREPARATION_RESETTING\n'), 'PHASE')
+        self.legacy()  # Preparation never has authority to mutate live files.
+        lock = self.root / 'tmp/home-gateway-deploy.lock'
+        require(not lock.exists() and not lock.is_symlink(), 'DEPLOYMENT_BUSY')
+        files = {'lock': 0o600, 'phase': 0o600, 'phase.migration-new': 0o600,
+                 'receipt.json': 0o600, 'receipt.json.migration-new': 0o600}
+        for area, inventory in (('old', OLD + RECEIVERS), ('new', ALL)):
+            for rel in inventory:
+                files[area + '/' + rel] = mode(rel)
+                files[area + '/' + rel + '.migration-new'] = mode(rel)
+        directories = {str(parent) for name in files for parent in Path(name).parents if str(parent) != '.'}
+        remove_files, remove_dirs = [], []
+        for parent, dirs, names in os.walk(self.state, followlinks=False):
+            require(len(remove_files) + len(remove_dirs) < 256, 'PREPARATION_LIMIT')
+            for name in dirs:
+                path = Path(parent) / name; rel = str(path.relative_to(self.state))
+                require(rel in directories, 'UNKNOWN_PREPARATION_PATH')
+                checked(path, True, 0o700); remove_dirs.append(path)
+            for name in names:
+                path = Path(parent) / name; rel = str(path.relative_to(self.state))
+                require(rel in files, 'UNKNOWN_PREPARATION_PATH')
+                checked(path, expected_mode=files[rel])
+                if rel != 'lock': remove_files.append(path)
+        # All paths validated first; keep flock inode and phase until completion.
+        self.phase('PREPARATION_RESETTING')
+        for path in remove_files:
+            if path == phase_path: continue
+            path.unlink(); sync_dir(path.parent)
+        for path in sorted(remove_dirs, key=lambda path: len(path.parts), reverse=True):
+            path.rmdir(); sync_dir(path.parent)
+        phase_path.unlink(); sync_dir(self.state)
+        return 'PREPARATION_RESET'
+
+    def retired_fence(self):
+        return self.root / 'tmp' / ('hg-migration-retired.' + digest(read(self.state / 'receipt.json', 0o600)))
+
+    def cleanup_retired_fence(self):
+        retired = self.retired_fence()
+        if not retired.exists() and not retired.is_symlink(): return
+        checked(retired, True, 0o700)
+        names = set(p.name for p in retired.iterdir())
+        require(names <= {'migration-lab-fence'}, 'RETIRED_FENCE_CHANGED')
+        if names:
+            marker = retired / 'migration-lab-fence'
+            require(read(marker, 0o600) == digest(read(self.state / 'receipt.json', 0o600)).encode(), 'FENCE_CHANGED')
+            marker.unlink(); sync_dir(retired)
+        retired.rmdir(); sync_dir(retired.parent)
+
     def fence(self):
+        self.cleanup_retired_fence()
         lock = self.root / 'tmp/home-gateway-deploy.lock'
         if lock.exists() or lock.is_symlink():
             checked(lock, True, 0o700)
@@ -277,9 +336,13 @@ class Migration:
         return lock
 
     def unfence(self, lock):
-        (lock / 'migration-lab-fence').unlink()
-        lock.rmdir()
+        # Release admission by atomically renaming the intact owned directory
+        # to a receipt-specific sibling. A crash never leaves an empty live lock.
+        self.cleanup_retired_fence()
+        retired = self.retired_fence()
+        os.rename(lock, retired)
         sync_dir(lock.parent)
+        self.cleanup_retired_fence()
 
     def apply(self):
         r = self.load()
@@ -344,7 +407,7 @@ class Migration:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('prepare', 'apply', 'rollback', 'status'))
+    parser.add_argument('operation', choices=('prepare', 'reset-preparation', 'apply', 'rollback', 'status'))
     parser.add_argument('--lab-root', required=True)
     parser.add_argument('--candidate')
     parser.add_argument('--sha256')
@@ -355,6 +418,8 @@ def main():
         if args.operation == 'prepare':
             require(args.candidate is not None and args.sha256 is not None, 'CANDIDATE_REQUIRED')
             result = migration.prepare(args.candidate, args.sha256)
+        elif args.operation == 'reset-preparation':
+            result = migration.reset_preparation()
         elif args.operation == 'status':
             receipt = migration.load()
             result = read(migration.state / 'phase', 0o600).decode().strip()
