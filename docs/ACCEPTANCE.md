@@ -48,7 +48,7 @@ PASS ниже относится только к указанному automated/
 
 | Критерий | Offline | CUDY / блокер |
 |---|---|---|
-| HGDEPLOY1 18 → HGDEPLOY2 20 | 27 migration rehearsal tests, read-only BusyBox preflight | BLOCKED: production coordinator, exact receiver identity, target procd/boot |
+| HGDEPLOY1 18 → HGDEPLOY2 20 | 28 migration rehearsal tests, read-only BusyBox preflight | BLOCKED: production coordinator, exact receiver identity, target procd/boot |
 | /etc/home-gateway sysupgrade inclusion | Новый bootstrap содержит allowlist path; existing persistence contracts | FAIL в owner backup: отсутствуют 3 HG files; исправление/restore не применены |
 | Резервный LAN-доступ | Не проверяется host CI | BLOCKED: Wi-Fi SSH подтверждён, кабельный резерв не проверен |
 
@@ -68,8 +68,11 @@ Interrupted prepare/reset/fence teardown negative tests; target migration BLOCKE
 Fence acquisition готовится в receipt-owned sibling и публикуется Linux
 renameat2(RENAME_NOREPLACE), без unsafe fallback; own partial stage recoverable.
 Legacy/rollback validation повторяется после acquisition под exclusion.
-27 migration regressions включают actual SIGKILL pre-publish и foreign lock race.
+28 migration regressions включают actual SIGKILL pre-publish и foreign lock race.
 
 Pre-mutation refusal на PREPARED/COMMITTED/ROLLED_BACK снимает только свой
 fence; interrupted APPLYING/RESTORING остаётся fenced. Newer deployment/drift
-не блокируется отвергнутым rollback. 27 migration tests PASS.
+не блокируется отвергнутым rollback. 28 migration tests PASS.
+
+Temporary validation включена в conditional-unfence для pre-mutation refusal;
+COMMITTED repeat также revalidates после acquisition. 28 migration tests PASS.

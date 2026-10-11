@@ -379,7 +379,13 @@ class Migration:
         if phase == 'COMMITTED':
             self.check_new(r)
             lock = self.fence()
-            self.clean_temporaries(r)
+            try:
+                self.load()
+                self.check_new(r)
+                self.clean_temporaries(r)
+            except (OSError, ValueError, TypeError, KeyError):
+                self.unfence(lock)
+                raise
             self.unfence(lock)
             return 'ALREADY_COMMITTED'
         # Acquire first, then re-read legacy under the shared receiver exclusion.
@@ -388,10 +394,10 @@ class Migration:
             self.load()
             fresh, _ = self.legacy()
             require(all(fresh[k] == r[k] for k in fresh), 'LEGACY_CHANGED')
+            self.clean_temporaries(r)
         except (OSError, ValueError, TypeError, KeyError):
             self.unfence(lock)  # No live mutation has started.
             raise
-        self.clean_temporaries(r)
         self.phase('APPLYING')
         for rel in ALL:
             write(self.root / rel, read(self.state / 'new' / rel, mode(rel)), mode(rel))
@@ -424,11 +430,11 @@ class Migration:
                     require(rel in ADDED, 'MISSING_RUNTIME')
                     continue
                 require(digest(read(dst, mode(rel))) in {r['new'][rel], r['old'].get(rel)}, 'FILE_DRIFT')
+            self.clean_temporaries(r)
         except (OSError, ValueError, TypeError, KeyError):
             if phase in ('PREPARED', 'COMMITTED', 'ROLLED_BACK'):
                 self.unfence(lock)  # Refused before mutation: do not block newer deployment.
             raise
-        self.clean_temporaries(r)
         self.phase('RESTORING')
         for rel in OLD + RECEIVERS:
             write(self.root / rel, read(self.state / 'old' / rel, mode(rel)), mode(rel))

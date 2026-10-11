@@ -341,10 +341,12 @@ m.apply()
         with self.assertRaisesRegex(Refused, 'TEMPORARY_DRIFT'):
             self.m.rollback()
         self.assertEqual(tmp.read_bytes(), b'not-receipt-data')
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
         tmp.unlink(); tmp.symlink_to(self.root / OLD[0])
         with self.assertRaisesRegex(Refused, 'SYMLINK'):
             self.m.rollback()
         self.assertTrue(tmp.is_symlink())
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
         tmp.unlink()
         self.assert_previous()
 
@@ -452,6 +454,14 @@ m.apply()
         self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
         self.assertEqual((self.m.state / 'phase').read_text(),'PREPARED\n')
         path.write_bytes(saved); self.assert_previous()
+
+    def test_committed_temporary_refusal_releases_admission(self):
+        self.prepare();self.m.apply()
+        tmp=self.root/(ADDED[0]+'.migration-new')
+        self.fixture.put(tmp,b'foreign-temporary',mode(ADDED[0]))
+        with self.assertRaisesRegex(Refused,'TEMPORARY_DRIFT'):self.m.apply()
+        self.assertFalse((self.root/'tmp/home-gateway-deploy.lock').exists())
+        self.assertEqual(tmp.read_bytes(),b'foreign-temporary')
 
     def test_real_root_and_no_sentinel_refused(self):
         with self.assertRaises(Refused):
