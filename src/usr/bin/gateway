@@ -36,6 +36,10 @@ CUDY Home Gateway
   gateway vtest [--json]   Проверить наличие и fingerprint внешнего vtest
   gateway main-transaction plan NODE
                            Read-only проверка условий; смена MAIN заблокирована
+  gateway actions [show|prepare ACTION USER CHAT MESSAGE|confirm TOKEN USER CHAT MESSAGE]
+                           Подтверждения для ограниченного списка сервисов
+  gateway asata-keeper check|repair|loop
+                           Проверка keeper; repair заблокирован без writer coordination
   gateway doctor           Проверить окружение и зависимости
   gateway selftest         Проверить установку Gateway CLI
   gateway telegram get-me  Проверить Telegram Bot API
@@ -49,7 +53,8 @@ CUDY Home Gateway
                            Завершить Telegram callback query
 
 Health и Telegram работают только как control plane.
-Команды изменения сетевой конфигурации на этапе 0.5 не реализованы.
+Safe Actions отключены без local owner opt-in; произвольные команды запрещены.
+ASATA repair заблокирован до координации external writers.
 EOF_HELP
 }
 
@@ -86,6 +91,12 @@ main() {
                 hg_error 'использование: gateway health [--json]'
                 return "$HG_EXIT_USAGE"
             fi
+            ;;
+        asata-keeper)
+            [ "$#" -eq 2 ] || return "$HG_EXIT_USAGE"
+            case "$2" in check|repair|loop) ;; *) return "$HG_EXIT_USAGE" ;; esac
+            hg_load_module asata
+            if [ "$2" = loop ]; then hg_asata_keeper_loop; else hg_asata_keeper "$2"; fi
             ;;
         vtest)
             hg_load_module doctor
@@ -142,6 +153,10 @@ main() {
                 hg_error 'использование: gateway incidents [--json|tick]'
                 return "$HG_EXIT_USAGE"
             fi
+            ;;
+        actions)
+            shift
+            ucode "${HG_LIBDIR}/actions.uc" "$@"
             ;;
         notifications)
             notifications_engine="${HG_LIBDIR}/notifications.uc"

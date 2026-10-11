@@ -149,3 +149,5 @@ LIVE остаются: фактический curl/OpenWrt TLS и SOCKS, Telegra
 штатный reboot и procd, sysupgrade inventory, flash-поведение, точный nft output,
 внешний ASATA keeper и проверка data-plane invariants. Рискованные fault tests только
 на изолированном стенде, не на production CUDY.
+
+Независимый ASATA keeper и pending LIVE-план: [ASATA_KEEPER.md](ASATA_KEEPER.md).

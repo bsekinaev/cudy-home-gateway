@@ -13,7 +13,7 @@ from verify import verify
 
 PATHS = ['etc/init.d/home-gateway-telegram', 'usr/bin/gateway', 'usr/bin/home-gateway-ci-smoke'] + [
     'usr/lib/home-gateway/' + n for n in (
-        'asata.sh', 'common.sh', 'dns.sh', 'doctor.sh', 'health.sh', 'incidents.uc',
+        'actions.uc', 'asata.sh', 'common.sh', 'dns.sh', 'doctor.sh', 'health.sh', 'incidents.uc',
         'network.sh','notifications.uc', 'redmi.sh', 'selftest.sh', 'status.sh', 'tailscale.sh',
         'telegram-poller.uc', 'telegram.sh', 'torrent.sh', 'vpn.sh')]
 
@@ -31,7 +31,7 @@ def encode(archive, commit, digest):
         manifest, _ = verify(frozen, commit, digest)
     if {r['path'] for r in manifest['files']} != set(PATHS):
         raise ValueError('Runtime inventory changed; update the trusted receiver first')
-    lines = [f'HGDEPLOY1 {commit}\n'.encode()]
+    lines = [f'HGDEPLOY2 {commit}\n'.encode()]
     with tarfile.open(fileobj=io.BytesIO(raw), mode='r:gz') as tar:
         for path in PATHS:
             member = tar.getmember('payload/' + path)

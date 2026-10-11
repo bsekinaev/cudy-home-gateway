@@ -25,3 +25,16 @@ candidate runner, replacement ASATA требует координации extern
 release/deploy tests, publish PR и проверить CI HEAD. Затем получить/audit
 PassWall2 helpers без секретов; реализовать private snapshot/journal и isolated
 candidate preflight. Не запускать `apply` на реальном CUDY без owner approval.
+
+11 октября: ветка объединена с main после PR #14
+87cff2aa8043730f9b70836e27a01c52b9f8779b. CI/help conflicts разрешены с сохранением
+MAIN planner, actions, ASATA CLI и обоих suites. ACCEPTANCE.md сохранён и уточнён.
+Read-only planner остаётся partial: реального preflight/snapshot/apply/rollback
+MAIN нет; planner всегда fail closed. Новые private PassWall helpers предоставлены,
+но shared runtime/eval/asynchronous process ownership требуют отдельного адаптера.
+CUDY/MAIN/nft/sysupgrade не изменялись. GitHub CI/review merged tree обязательны.
+
+Фактически проверенный combined набор после merge #14: 165 PASS =
+64 notifications/ASATA + 23 vtest + 9 MAIN planner + 24 actions + 13 release +
+32 deploy. Full CI_RESULT=PASS; ash/ucode compile PASS. Следующее действие:
+проверить новый HEAD #15 CI/review, merge без bypass, обновить #16 на свежий main.

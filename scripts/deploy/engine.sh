@@ -22,6 +22,7 @@ files() {
 etc/init.d/home-gateway-telegram
 usr/bin/gateway
 usr/bin/home-gateway-ci-smoke
+usr/lib/home-gateway/actions.uc
 usr/lib/home-gateway/asata.sh
 usr/lib/home-gateway/common.sh
 usr/lib/home-gateway/dns.sh
@@ -44,12 +45,29 @@ fail() { echo "DEPLOY_ERROR: $*" >&2; exit 1; }
 hex() { [ "${#1}" -eq "$2" ] && ! printf '%s' "$1" | grep -q '[^0-9a-f]'; }
 phase() { printf '%s\n' "$1" > "$TX/phase.new" || return 1; mv "$TX/phase.new" "$TX/phase" || return 1; sync; }
 pointer() { printf '%s\n' "${TX##*/}" > "$BASE/$1.new" || return 1; mv "$BASE/$1.new" "$BASE/$1" || return 1; sync; }
+inventory_manifest_valid() {
+    [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c %s "$1")" -le 8192 ] || return 1
+    awk -v expected="$(files)" '
+    BEGIN {n=split(expected,p,"\n");for(i=1;i<=n;i++)wanted[p[i]]=1}
+    {digest=substr($0,1,64);rel=substr($0,67);
+     if(length(digest)!=64 || digest~/[^0-9a-f]/ || substr($0,65,2)!="  " || !wanted[rel] || seen[rel]++)bad=1}
+    END {if(bad || NR!=n)exit 1}' "$1"
+}
+transaction_inventory_valid() {
+    [ -f "$TX/inventory-version" ] && [ ! -L "$TX/inventory-version" ] &&
+    [ "$(stat -c %s "$TX/inventory-version")" -le 16 ] &&
+    [ "$(cat "$TX/inventory-version")" = HGDEPLOY2 ] &&
+    inventory_manifest_valid "$TX/backup.sha256" && inventory_manifest_valid "$TX/new.sha256" || {
+        echo 'DEPLOY_ERROR: legacy or mismatched transaction inventory; use matching receiver over LAN' >&2
+        return 1
+    }
+}
 load_tx() {
     id=$(cat "$BASE/$1") || return 1
     case "$id" in tx.*) ;; *) return 1;; esac
     case "$id" in *[!a-zA-Z0-9.]*|*..*) return 1;; esac
     TX="$BASE/$id"
-    [ -d "$TX" ] && [ ! -L "$TX" ]
+    [ -d "$TX" ] && [ ! -L "$TX" ] && transaction_inventory_valid
 }
 safe_live() {
     for rel in $(files); do
@@ -89,6 +107,7 @@ replace() {
 }
 restore() {
     # Explicit error checks: this function is also used from the EXIT trap.
+    transaction_inventory_valid || return 1
     phase RESTORING || return 1
     (cd "$TX/backup" && sha256sum -c ../backup.sha256 >/dev/null) || return 1
     safe_live || return 1
@@ -182,7 +201,7 @@ timeout 60 head -c 1048577 > "$WORK/request"
 [ "$(sha256sum "$WORK/request" | cut -d ' ' -f1)" = "$request_hash" ] || fail 'request checksum mismatch'
 exec 3< "$WORK/request"
 IFS= read -r header <&3 || fail 'missing header'
-[ "$header" = "HGDEPLOY1 $commit" ] || fail 'bad header'
+[ "$header" = "HGDEPLOY2 $commit" ] || fail 'bad header'
 for rel in $(files); do
     IFS=' ' read -r mode size digest extra <&3 || fail 'truncated metadata'
     [ -z "$extra" ] && hex "$digest" 64 || fail 'bad metadata'
@@ -231,6 +250,7 @@ for rel in $(files); do
 done
 (cd "$TX/backup"; for rel in $(files); do sha256sum "$rel"; done) > "$TX/backup.sha256"
 (cd "$TX/backup" && sha256sum -c ../backup.sha256 >/dev/null)
+printf 'HGDEPLOY2\n' > "$TX/inventory-version"
 phase PREPARED
 pointer active
 ARMED=1

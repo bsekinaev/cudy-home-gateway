@@ -195,6 +195,12 @@ hg_health_collect() {
     HG_HEALTH_ASATA_STATE="$(hg_health_normalize_state "${HG_ASATA_STATE:-UNKNOWN}")"
     HG_HEALTH_TAILSCALE_STATE="$(hg_health_normalize_state "${HG_TAILSCALE_STATE:-UNKNOWN}")"
 
+    if [ -r "${HG_ACTION_STATE_DIR:-/etc/home-gateway/state}/actions.json" ] &&
+       [ -r "${HG_LIBDIR}/actions.uc" ] &&
+       [ "$(ucode "${HG_LIBDIR}/actions.uc" maintenance 2>/dev/null || true)" = MAINTENANCE ]; then
+        HG_HEALTH_TAILSCALE_STATE='MAINTENANCE'
+    fi
+
     HG_HEALTH_DIRECT_EGRESS_STATE="$(hg_health_normalize_state "${HG_NETWORK_DIRECT_STATE:-UNKNOWN}")"
     HG_HEALTH_MAIN_EGRESS_STATE="$(hg_health_normalize_state "${HG_VPN_EGRESS_STATE:-UNKNOWN}")"
     HG_HEALTH_TORRENT_EGRESS_STATE="$(hg_health_normalize_state "${HG_TORRENT_EGRESS_STATE:-UNKNOWN}")"
