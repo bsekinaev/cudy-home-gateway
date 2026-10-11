@@ -93,3 +93,14 @@ fault tests. Только после этого предлагать владе�
 Review fixes: own stale temporaries проверяются по exact snapshot prefix, metadata
 и reserved names, только под migration/deploy fence; symlink/unrelated data
 не удаляются. Actual SIGKILL до rename + relative-root refusal regressions.
+
+## Upstream ash 1.37.0 regression
+
+Дополнительный host CI builds официальный BusyBox 1.37.0 source archive, pin SHA256
+3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4.
+Source получен по HTTPS официального busybox.net; это recorded source hash,
+не подтверждение vendor signature или fingerprint binary установленного CUDY.
+Defconfig без tc (obsolete host CBQ headers); все используемые shell/FS/process
+applets сохранены. Повторяются repository state/CLI и deploy/migration suites.
+Это upstream Linux build, не target OpenWrt patches/config/procd/reboot PASS.
+Ручное безопасное продолжение на host: ./scripts/ci/check-busybox137.sh.
