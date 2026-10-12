@@ -105,3 +105,65 @@ prefix/extensions или zero V7 metadata; inconsistent representations запр
 Gzip parser проверяет reserved flags/FHCRC/CRC/trailer каждого member,
 не только первого. ≤64 gzip members; общий decompressed bound остаётся 16 MiB.
 30 tests — новые flags/second-member/member-count negative regressions.
+
+## Private vault — отдельная host-only реализация
+
+`scripts/backup/vault.py` хранит уже полученные private archives после полной
+проверки SHA256/exact inventory. Ничего не собирает с роутера и не извлекает tar.
+Linux/Python 3.10+, dedicated directory 0700, все archive/inventory/catalog/lock
+files 0600, no symlinks/hardlinks/неизвестные files. Existing shared directories
+не chmodded. Архивы, реальные inventory и SQLite database никогда не публикуются.
+
+```sh
+python3 scripts/backup/vault.py import --vault /private/gateway-vault \
+  --archive /private/backup.tar.gz --sha256 OWNER_CONFIRMED_SHA256 \
+  --inventory /private/inventory.json
+python3 scripts/backup/vault.py show --vault /private/gateway-vault
+python3 scripts/backup/vault.py recover --vault /private/gateway-vault
+```
+
+Kernel lock исключает concurrent vault writers. Files fsynced до commit каталога;
+SQLite FULL/DELETE transaction атомарно сохраняет import, active last-five index
+и audit retirement. До commit старые references сохраняются; после commit старые
+files удаляются только когда новые и оставшиеся active copies проверены. Crash
+может оставить private unreferenced files: `recover` проверяет active index и
+удаляет только свои файлы с retained ROTATED receipt и проверенным archive SHA256.
+Unknown unreferenced pairs сохраняются, даже если copies/audit исчезли вместе;
+show/recover сообщают QUARANTINED и unreferenced_preserved.
+SQLite hot journal восстанавливается при explicit writable open/recover.
+Read-only show не выполняет GC. Corrupt active archive/inventory/catalog blocks
+import/rotation/GC; generic stdout не раскрывает private paths/contents.
+
+Audit: до 200 committed import/retirement events. Это bounded private catalog log,
+не central Gateway audit и не доказательство незавершённого import. Orphan copies
+до SQLite commit не становятся accepted backup; recovery не заявляет успешный
+router restore. Последние пять references сохраняются, orphan files после crash
+могут временно увеличивать disk count до recovery. Catalog не доказывает coherent
+snapshot источника: transaction_consistent=false, restore_supported=false.
+
+27 isolated vault tests PASS + verifier tests: actual files/SQLite, 7-copy rotation,
+crash before/after catalog commit, actual SIGKILL SQL transaction, corruption,
+private permissions, cross-process kernel lock, path injection и bounded audit.
+Это доступная часть 0.9; collector/coordinated snapshot/target restore still BLOCKED.
+
+Read-back new pair hash/inventory verification выполняется до catalog rotation
+commit; injected archive/manifest storage faults сохраняют старые пять references
+и файлы. 57 actual backup tests PASS (27 vault + 30 verifier).
+
+Retirement GC разрешён лишь для complete archive+inventory pair после SHA проверки
+архива; incomplete пары сохраняются QUARANTINED. Manifest удаляется раньше
+archive: crash оставляет сохранённый архив, не metadata без проверенного archive.
+
+Exact archive SHA+canonical inventory hash retry идемпотентен. После commit GC
+errors дают STORED_CLEANUP_PENDING/ALREADY_STORED_CLEANUP_PENDING, без повторной
+rotation и без ложного failed import. 27 vault / 30 verifier = 57 tests.
+
+Review: каждый mkdir fsync parent до descent; новый distinct import блокируется
+до устранения retained cleanup errors, retirement receipts не теряются на ротации.
+show проверяет retired SHA и сообщает CLEANUP_PENDING/QUARANTINED; 105 blocked
+imports не изменяют references/audit. 55 backup tests PASS.
+
+Active post-commit corruption возвращает COMMITTED_INTEGRITY_ERROR (committed
+true, integrity_error true, CLI failure), не cleanup-only success; старые
+archive copies не удаляются. Partial cleanup retries retain cleanup_pending.
+57 backup tests PASS, без router restore claim.
