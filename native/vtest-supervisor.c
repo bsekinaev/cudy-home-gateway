@@ -67,6 +67,12 @@ static int fixed(int rc, const char *status) {
     printf("{\"schema_version\":1,\"status\":\"%s\"}\n", status);
     return rc;
 }
+static int prechild_failure(int base, int rc, const char *status) {
+    /* Caller owns active and no child has been created. Never leave a phantom
+     * orphan fence; failed cleanup remains explicit and fail-closed. */
+    if (unlinkat(base, "active", 0) || sync_fd(base)) return fixed(70, "WRITE_FAILED");
+    return fixed(rc, status);
+}
 static int private_fd(int fd, mode_t kind, mode_t mode) {
     struct stat st;
     return fd >= 0 && fstat(fd, &st) == 0 && (st.st_mode & S_IFMT) == kind &&
@@ -204,15 +210,25 @@ int main(int argc, char **argv) {
      * leaves it in place; a new engine cannot overlap an orphan's death. */
     int active = openat(base, "active", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (active < 0) return fixed(70, "RECOVERY_REQUIRED");
-    if (write_all(active, argv[1], 32) || sync_fd(active) || sync_fd(base)) return fixed(70, "WRITE_FAILED");
+    if (write_all(active, argv[1], 32) || sync_fd(active) || sync_fd(base)) {
+        close(active);
+        return prechild_failure(base, 70, "WRITE_FAILED");
+    }
     close(active);
     if (cancelled) {
         if (unlinkat(base, "active", 0) || sync_fd(base)) return fixed(70, "WRITE_FAILED");
         return fixed(130, "CANCELLED");
     }
     int intent = openat(directory, "execution.intent", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (intent < 0) return fixed(75, "RUN_ALREADY_CONSUMED");
-    if (write_all(intent, "EXECUTING\n", 10) || sync_fd(intent) || sync_fd(directory)) return fixed(70, "WRITE_FAILED");
+    if (intent < 0) {
+        int exists = errno == EEXIST;
+        return prechild_failure(base, exists ? 75 : 70,
+                                exists ? "RUN_ALREADY_CONSUMED" : "WRITE_FAILED");
+    }
+    if (write_all(intent, "EXECUTING\n", 10) || sync_fd(intent) || sync_fd(directory)) {
+        close(intent); /* Partial one-shot intent is retained; no exec occurred. */
+        return prechild_failure(base, 70, "WRITE_FAILED");
+    }
     close(intent);
     if (cancelled) {
         if (unlinkat(directory, "execution.intent", 0) || sync_fd(directory) ||

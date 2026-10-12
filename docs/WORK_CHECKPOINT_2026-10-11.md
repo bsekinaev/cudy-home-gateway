@@ -60,3 +60,8 @@ global active fence, так как child не существует. 22 native te
 
 pipe2/signal-mask resource failure до fork снимает own global fence, сохраняя
 one-shot intent; child отсутствует. EMFILE regression, 22 native tests PASS.
+
+12.10: 24 native tests PASS. Active/intent creation/write/fsync failures before
+fork now release and sync the owned global fence. EEXIST distinguished from
+ENOSPC/EIO; partial intent retained without launching child. Actual ELF hook
+faults plus cancel/fork/pipe/SIGKILL regressions. Not installed; vtest disabled.
