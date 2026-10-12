@@ -69,7 +69,7 @@ manifest() {
     END {if(bad || NR!=n)exit 1}' "$1" || fail
 }
 BASE="$ROOT/etc/home-gateway-deploy"
-[ -d "$BASE" ] && [ ! -L "$BASE" ] && [ "$(stat -c '%u:%a' "$BASE")" = "$owner:700" ] || fail
+[ -d "$BASE" ] && [ ! -L "$BASE" ] && [ "$(stat -c '%u:%g:%a' "$BASE")" = "$owner:$group:700" ] || fail
 for path in "$BASE/active" "$ROOT/tmp/home-gateway-deploy.lock"; do
     [ ! -e "$path" ] && [ ! -L "$path" ] || fail
 done
@@ -80,7 +80,7 @@ grep -Eq '^tx\.[a-zA-Z0-9]{1,32}$' "$BASE/latest" || fail
 id=$(cat "$BASE/latest")
 [ "$(stat -c %s "$BASE/latest")" -eq "$((${#id} + 1))" ] || fail
 TX="$BASE/$id"
-[ -d "$TX" ] && [ ! -L "$TX" ] && [ "$(stat -c '%u:%a' "$TX")" = "$owner:700" ] || fail
+[ -d "$TX" ] && [ ! -L "$TX" ] && [ "$(stat -c '%u:%g:%a' "$TX")" = "$owner:$group:700" ] || fail
 [ ! -e "$TX/inventory-version" ] && [ ! -L "$TX/inventory-version" ] || fail
 safe "$TX/phase" 600
 [ "$(stat -c %s "$TX/phase")" -eq 10 ] && [ "$(cat "$TX/phase")" = COMMITTED ] || fail

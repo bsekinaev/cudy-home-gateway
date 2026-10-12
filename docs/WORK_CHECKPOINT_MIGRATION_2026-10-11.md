@@ -43,3 +43,8 @@ COMMITTED repeat также revalidates после acquisition. 28 migration tes
 foreign empty/prefix refusal, phase-specific rollback ownership, canonical latest,
 bound full legacy journal и GID. Private staging same-filesystem rename проверяется
 на host; production coordinator/procd/boot и mount layout остаются BLOCKED.
+
+12.10: 39 migration / 71 combined deploy tests PASS. Preparation publication
+fenced with final legacy revalidation; real competing legacy apply and SIGKILL
+after preparation fence tested. PREPARED reset permitted before any live writes.
+Exact phase bytes and all receiver postchecks enforced; target still BLOCKED.

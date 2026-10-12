@@ -525,6 +525,73 @@ m.apply()
         with patch('migration_lab.os.getegid', return_value=os.getegid() + 17):
             with self.assertRaisesRegex(Refused, 'GROUP'): self.m.legacy()
 
+    def test_corrupted_phase_bytes_never_authorize_mutation(self):
+        self.prepare(); before = self.freeze(self.root / 'usr')
+        for raw in (b'PREPARED \n', b'\nPREPARED\n', b'PREPARED\n\n', b'PREPARED\xc2\xa0\n'):
+            (self.m.state / 'phase').write_bytes(raw)
+            for operation in (self.m.apply, self.m.rollback):
+                with self.assertRaisesRegex(Refused, 'PHASE'): operation()
+                self.assertEqual(self.freeze(self.root / 'usr'), before)
+                self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+
+    def test_rollback_postcheck_includes_wrapper_and_recovery_init(self):
+        import migration_lab
+        self.prepare(); self.m.apply(); real = migration_lab.write
+        def faulty_write(path, data, permissions):
+            real(path, data, permissions)
+            if path == self.root / RECEIVERS[1]: path.write_bytes(b'faulty receiver write\n')
+        with patch.object(migration_lab, 'write', faulty_write):
+            with self.assertRaisesRegex(Refused, 'FILE_DRIFT'): self.m.rollback()
+        self.assertEqual(self.m.current_phase(), 'RESTORING')
+        self.assertTrue((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.fixture.put(self.root / RECEIVERS[1], self.previous[RECEIVERS[1]], mode(RECEIVERS[1]))
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK'); self.assert_previous()
+
+    def test_preparation_revalidates_under_fence_after_real_legacy_deploy(self):
+        real = self.m.fence; live = {p: (self.root / p).read_bytes() for p in OLD}
+        live[OLD[3]] += b'# competing deployment\n'
+        wire = [f'HGDEPLOY1 {COMMIT}\n'.encode()]
+        for rel in OLD:
+            data = live[rel]
+            wire += [f'{mode(rel):04o} {len(data)} {digest(data)}\n'.encode(), base64.b64encode(data) + b'\n']
+        payload = b''.join(wire) + b'END\n'
+        def competing():
+            result = self.legacy('apply', payload)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            return real()
+        with patch.object(self.m, 'fence', competing):
+            with self.assertRaisesRegex(Refused, 'LEGACY_CHANGED'): self.prepare()
+        self.assertEqual(self.m.current_phase(), 'PREPARING')
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        for rel, data in live.items(): self.assertEqual((self.root / rel).read_bytes(), data)
+        self.prepare()
+
+    def test_prepared_state_can_reset_after_later_legacy_drift(self):
+        self.prepare()
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assert_previous(); self.prepare()
+
+    def test_sigkill_after_preparation_fence_can_reset_safely(self):
+        self.m.close()
+        script = """import os,signal,sys
+import migration_lab
+m=migration_lab.Migration(sys.argv[1]); real=m.phase
+def crash(value):
+    if value == 'PREPARED': os.kill(os.getpid(),signal.SIGKILL)
+    real(value)
+m.phase=crash
+m.prepare(sys.argv[2],sys.argv[3])
+"""
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).parent.resolve()))
+        result = subprocess.run([os.sys.executable, '-c', script, str(self.root), str(self.candidate), self.sha],
+                                capture_output=True, env=env, timeout=30)
+        self.assertEqual(result.returncode, -9, result.stderr)
+        self.m = Migration(self.root); self.addCleanup(self.m.close)
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.assert_previous(); self.prepare()
+
 
 if __name__ == '__main__':
     unittest.main()

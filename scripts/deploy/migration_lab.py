@@ -264,6 +264,13 @@ class Migration:
     def phase(self, value):
         write(self.state / 'phase', (value + '\n').encode(), 0o600)
 
+    def current_phase(self):
+        raw = read(self.state / 'phase', 0o600)
+        values = ('PREPARING', 'PREPARATION_RESETTING', 'PREPARED', 'APPLYING',
+                  'COMMITTED', 'RESTORING', 'ROLLED_BACK')
+        require(raw in {(value + '\n').encode() for value in values}, 'PHASE')
+        return raw[:-1].decode('ascii')
+
     def prepare(self, candidate, sha256):
         require(not (self.state / 'receipt.json').exists(), 'ALREADY_PREPARED')
         require(not (self.state / 'phase').exists(), 'INCOMPLETE_PREPARATION')
@@ -285,8 +292,14 @@ class Migration:
                 write(dst, data, mode(rel))
         receipt['new'] = records
         write(self.state / 'receipt.json', json.dumps(receipt, sort_keys=True).encode(), 0o600)
-        self.load()
-        self.phase('PREPARED')
+        lock = self.fence()
+        try:
+            self.load()
+            fresh, _ = self.legacy()
+            require(all(fresh[k] == receipt[k] for k in fresh), 'LEGACY_CHANGED')
+            self.phase('PREPARED')
+        finally:
+            self.unfence(lock)  # Preparation has never changed live runtime.
         return 'PREPARED'
 
     def clean_temporaries(self, r):
@@ -328,10 +341,13 @@ class Migration:
                 require(b'PREPARING\n'.startswith(raw) or b'PREPARATION_RESETTING\n'.startswith(raw), 'PHASE')
                 pending.unlink(); sync_dir(pending.parent)
             return 'PREPARATION_RESET'
-        require(read(phase_path, 0o600) in (b'PREPARING\n', b'PREPARATION_RESETTING\n'), 'PHASE')
+        require(read(phase_path, 0o600) in (b'PREPARING\n', b'PREPARATION_RESETTING\n', b'PREPARED\n'), 'PHASE')
         self.legacy()  # Preparation never has authority to mutate live files.
         lock = self.root / 'tmp/home-gateway-deploy.lock'
-        require(not lock.exists() and not lock.is_symlink(), 'DEPLOYMENT_BUSY')
+        if lock.exists() or lock.is_symlink():
+            owned_lock = self.fence()  # Accept only this receipt's intact fence.
+            self.legacy()
+            self.unfence(owned_lock)
         files = {'lock': 0o600, 'phase': 0o600, 'receipt.json': 0o600, 'pending/owner': 0o600}
         for area, inventory in (('old', OLD + RECEIVERS), ('new', ALL)):
             for rel in inventory:
@@ -428,7 +444,7 @@ class Migration:
 
     def apply(self):
         r = self.load()
-        phase = read(self.state / 'phase', 0o600).decode().strip()
+        phase = self.current_phase()
         require(phase in ('PREPARED', 'COMMITTED'), 'RECOVERY_REQUIRED')
         if phase == 'COMMITTED':
             self.check_new(r)
@@ -469,7 +485,7 @@ class Migration:
 
     def rollback(self):
         r = self.load()
-        phase = read(self.state / 'phase', 0o600).decode().strip()
+        phase = self.current_phase()
         require(phase in ('PREPARED', 'APPLYING', 'COMMITTED', 'RESTORING', 'ROLLED_BACK'), 'PHASE')
         lock = self.fence()
         try:
@@ -505,6 +521,7 @@ class Migration:
                 dst.unlink()
                 sync_dir(dst.parent)
         write(latest, r['latest'].encode(), 0o600)
+        verify_files(self.root, r['old'])
         self.legacy()
         self.phase('ROLLED_BACK')
         self.unfence(lock)
@@ -528,7 +545,7 @@ def main():
             result = migration.reset_preparation()
         elif args.operation == 'status':
             receipt = migration.load()
-            result = read(migration.state / 'phase', 0o600).decode().strip()
+            result = migration.current_phase()
             require(result in ('PREPARED', 'APPLYING', 'COMMITTED', 'RESTORING', 'ROLLED_BACK'), 'PHASE')
             if result == 'COMMITTED':
                 migration.check_new(receipt)
