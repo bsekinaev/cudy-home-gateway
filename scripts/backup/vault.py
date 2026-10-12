@@ -86,7 +86,13 @@ class Vault:
             if not readonly:
                 self.db.execute('PRAGMA synchronous=FULL')
                 require(self.db.execute('PRAGMA journal_mode=DELETE').fetchone()[0] == 'delete', 'INVALID_CATALOG')
-            if not existing:
+            empty_schema = self.db.execute("SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'").fetchall() == []
+            initialize = not existing or (not readonly and create and empty_schema and
+                                          self.db.execute('PRAGMA user_version').fetchone()[0] == 0)
+            if initialize:
+                with os.scandir(self.fd) as entries:
+                    require(all(entry.name in ('vault.lock', 'vault.sqlite', 'vault.sqlite-journal')
+                                for entry in entries), 'CATALOG_MISSING_RECOVERY_REQUIRED')
                 self.db.executescript('''BEGIN IMMEDIATE;
                 CREATE TABLE copies (sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                     id TEXT UNIQUE NOT NULL, digest TEXT NOT NULL, inventory_digest TEXT NOT NULL,
@@ -180,7 +186,12 @@ class Vault:
         except BaseException:
             self.db.execute('ROLLBACK')
             raise
-        os.fsync(self.fd)
+        try:
+            os.fsync(self.fd)
+        except OSError:
+            # SQL COMMIT is complete; rotation is no longer an ordinary failure.
+            return False
+        return True
 
     def garbage_collect(self):
         records = self.verified_records()
@@ -231,7 +242,13 @@ class Vault:
         require(hashlib.sha256(private_read(copied_manifest, MAX_INVENTORY)).hexdigest() ==
                 manifest_digest, 'INVENTORY_CHECKSUM_MISMATCH')
         verify(self.path / (identifier + '.tar.gz'), digest, inventory(copied_manifest))
-        self.commit_copy(identifier, digest, manifest_digest)
+        durable = self.commit_copy(identifier, digest, manifest_digest)
+        if durable is False:
+            # Keep retired backups when catalog directory durability is unknown.
+            # An exact retry can verify/recover later without another rotation.
+            return dict(schema_version=1, status='COMMITTED_DURABILITY_UNKNOWN',
+                        committed=True, durability_error=True, copies=min(len(records) + 1, 5),
+                        cleanup_pending=True, transaction_consistent=False, restore_supported=False)
         return self.finish_import('STORED', min(len(records) + 1, 5))
 
     def finish_import(self, status, copies):
@@ -315,7 +332,7 @@ def main():
         print(json.dumps(dict(schema_version=1, status=str(error) if isinstance(error, BackupError) else 'VAULT_UNAVAILABLE')))
         return 1
     print(json.dumps(result, sort_keys=True))
-    return 1 if result.get('integrity_error') else 0
+    return 1 if result.get('integrity_error') or result.get('durability_error') else 0
 
 
 if __name__ == '__main__': raise SystemExit(main())

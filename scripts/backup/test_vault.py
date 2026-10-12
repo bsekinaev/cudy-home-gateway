@@ -80,6 +80,43 @@ class VaultTests(unittest.TestCase):
         self.make_archive(b'next-import'); self.store()
         for name,data in pairs.items(): self.assertEqual((self.path / name).read_bytes(), data)
 
+    def test_empty_catalog_initialization_can_retry_without_losing_files(self):
+        self.path.mkdir(mode=0o700)
+        database = self.path / 'vault.sqlite'
+        database.touch(mode=0o600)
+        self.assertEqual(self.store()['status'], 'STORED')
+        with vault.Vault(self.path, readonly=True) as store:
+            self.assertEqual(store.show()['copies'], 1)
+
+    def test_empty_catalog_with_archive_is_never_reinitialized(self):
+        self.path.mkdir(mode=0o700)
+        (self.path / 'vault.sqlite').touch(mode=0o600)
+        unknown = self.path / ('0' * 32 + '.tar.gz')
+        unknown.write_bytes(self.archive.read_bytes()); unknown.chmod(0o600)
+        with self.assertRaisesRegex(BackupError, 'CATALOG_MISSING_RECOVERY_REQUIRED'):
+            self.store()
+        self.assertEqual(unknown.read_bytes(), self.archive.read_bytes())
+
+    def test_post_commit_directory_sync_failure_reports_committed_and_retry_deduplicates(self):
+        for i in range(5): self.make_archive(str(i).encode()); self.store()
+        old_files = {p.name: p.read_bytes() for p in self.path.glob('*.tar.gz')}
+        self.make_archive(b'postcommit-sync-fault')
+        with vault.Vault(self.path) as store:
+            real = vault.os.fsync
+            def fail_after_commit(fd):
+                if fd == store.fd and any(r[1] == self.digest for r in store.records()):
+                    raise OSError('injected directory EIO after SQL commit')
+                return real(fd)
+            with patch.object(vault.os, 'fsync', side_effect=fail_after_commit):
+                result = store.import_archive(self.archive, self.digest, self.inventory)
+            self.assertEqual(result['status'], 'COMMITTED_DURABILITY_UNKNOWN')
+            self.assertTrue(result['committed']); self.assertTrue(result['durability_error'])
+            for name, data in old_files.items():
+                self.assertEqual((self.path / name).read_bytes(), data)
+            accepted = store.records()
+            retry = store.import_archive(self.archive, self.digest, self.inventory)
+            self.assertEqual(retry['status'], 'ALREADY_STORED')
+            self.assertEqual(store.records(), accepted)
     def test_empty_corrupt_catalog_never_deletes_committed_pair(self):
         self.store()
         pairs = {p.name: p.read_bytes() for p in self.path.iterdir() if vault.COPY.fullmatch(p.name)}

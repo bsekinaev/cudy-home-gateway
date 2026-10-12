@@ -59,3 +59,8 @@ Active post-commit corruption возвращает COMMITTED_INTEGRITY_ERROR (co
 true, integrity_error true, CLI failure), не cleanup-only success; старые
 archive copies не удаляются. Partial cleanup retries retain cleanup_pending.
 57 backup tests PASS, без router restore claim.
+
+12.10: 60 backup tests PASS (30 verifier + 30 vault). Directory fsync failure
+after SQL COMMIT reports COMMITTED_DURABILITY_UNKNOWN/committed=true and retains
+retired backups; exact retry deduplicates. Empty interrupted schema initialization
+retry permitted only for strict no-archive state, never over unknown copies.
