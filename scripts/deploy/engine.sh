@@ -17,6 +17,16 @@ ARMED=0
 PATH=${HG_TEST_BIN:+$HG_TEST_BIN:}/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 unset HG_LIBDIR ENV BASH_ENV
+# A durable migration phase survives /tmp loss at boot. Never enter deployment
+# until the separately installed admission boundary verifies a terminal receipt.
+if [ -e "$ROOT/etc/home-gateway-migration" ] || [ -L "$ROOT/etc/home-gateway-migration" ]; then
+    admission="$ROOT/usr/libexec/home-gateway-deploy/migration-admission.sh"
+    [ -f "$admission" ] && [ ! -L "$admission" ] &&
+        [ "$(stat -c '%u:%g:%a:%h' "$admission")" = '0:0:700:1' ] || exit 73
+    if [ -n "$ROOT" ]; then /bin/sh "$admission" --test-root "$ROOT" || exit 73
+    else /bin/sh "$admission" || exit 73
+    fi
+fi
 files() {
     cat <<'EOF'
 etc/init.d/home-gateway-telegram

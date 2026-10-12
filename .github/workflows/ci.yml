@@ -124,3 +124,44 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
+
+  isolated-openwrt:
+    name: Networkless OpenWrt procd and reboot smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install host VM tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 e2fsprogs
+      - name: Fetch public immutable inputs and pinned signed repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir vm-inputs
+          curl --fail --location --retry 3 https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-25.12.5-x86-64-generic-kernel.bin -o vm-inputs/kernel.bin
+          curl --fail --location --retry 3 https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-25.12.5-x86-64-generic-ext4-rootfs.img.gz -o vm-inputs/rootfs.img.gz
+          for name in packages.adb coreutils-9.9-r2.apk coreutils-stat-9.9-r2.apk coreutils-timeout-9.9-r2.apk; do
+            curl --fail --location --retry 3 "https://downloads.openwrt.org/releases/25.12.5/packages/x86_64/packages/$name" -o "vm-inputs/$name"
+          done
+          # run_vm validates every fixed SHA before opening QEMU. If the mutable
+          # vendor repository index moves, refuse; never refresh its pin silently.
+      - name: Run synthetic native restore, procd actions and reboot admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" > vm-report.json
+          cat vm-report.json
+      - name: Upload public report only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: isolated-openwrt-${{ github.sha }}
+          path: vm-report.json
+          if-no-files-found: ignore
+          retention-days: 30

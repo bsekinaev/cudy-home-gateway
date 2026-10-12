@@ -9,6 +9,13 @@ POLLER=/usr/lib/home-gateway/telegram-poller.uc
 GATEWAY=/usr/bin/gateway
 
 start_service() {
+	# /tmp locks disappear at reboot; migration admission lives on overlay.
+	if [ -e /etc/home-gateway-migration ] || [ -L /etc/home-gateway-migration ]; then
+		local admission=/usr/libexec/home-gateway-deploy/migration-admission.sh
+		[ -f "$admission" ] && [ ! -L "$admission" ] &&
+			[ "$(stat -c '%u:%g:%a:%h' "$admission")" = '0:0:700:1' ] || return 1
+		/bin/sh "$admission" || return 1
+	fi
 	# Do not start the poller on a mixed tree after an interrupted deployment.
 	if [ -f /etc/home-gateway-deploy/active ]; then
 		local tx phase

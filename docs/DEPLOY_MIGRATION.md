@@ -5,19 +5,25 @@ Linux host-only rehearsal настоящих файловых операций/r
 не устанавливается; rehearsal CLI не имеет SSH и требует disposable lab marker.
 Ни один новый механизм не запускается автоматически из Gateway, Telegram или CD.
 
-## Подтверждённый владельцем baseline 11.10.2026
+## Подтверждённый владельцем baseline 12.10.2026
 
-CUDY TR3000, OpenWrt 25.12.5, BusyBox ash 1.37.0, Gateway 0.5.0-dev,
-selftest 58 PASS/0 FAIL, Telegram procd running. HGDEPLOY2/actions/notifications
-отсутствуют; latest COMMITTED, active отсутствует; оба SHA manifests проходят,
-18 файлов, inventory-version отсутствует, deployment state root/0700.
-Это не приёмка нового кода и не разрешение на установку.
+CUDY TR3000 256MB v1, OpenWrt 25.12.5, kernel 6.12.94, ash 1.37.0,
+Gateway 0.5.0-dev: selftest 58 PASS/0 FAIL, doctor 11 OK/0 WARN/0 FAIL.
+Telegram отвечает на read-only status; это не acceptance dispatcher/actions.
+RAM 212 MiB, overlay 145.3 MiB. Working VPN/DNS/ASATA не изменять;
+MAIN route и Redmi egress UNKNOWN не считать неисправностью.
+Legacy latest COMMITTED, active отсутствует, 18 файлов, inventory-version
+отсутствует, deployment state root/0700. Ethernet SSH проверен ранее;
+для ручного migration window нужен доступный резерв восстановления.
 
-Owner private sysupgrade archive: readable/SHA256 PASS, 137 записей (133 files,
-4 links), содержит PassWall2/vtest/ASATA. Separate HG archive содержит 3 files и
-2 dirs, SHA PASS, исходные 0700/0600. **Sysupgrade исключает /etc/home-gateway:**
-critical persistence blocker. Ни один restore не проверен. Архивы не запрашивать,
-не помещать в GitHub, CI, artifacts или Telegram.
+Владелец исправил sysupgrade inclusion `/etc/home-gateway/`, сохранив исходный
+sysupgrade.conf. `sysupgrade -l`: 139 entries, 3 HG files. Настоящий backup:
+140 entries, 3 private HG files, TAR.GZ читается; CUDY/Windows SHA совпадают,
+Windows tar.exe verification PASS. SHA256:
+`986ceab1b0ed4eb06df359adf5f333348f25d929d27d4aed456452c07259ef33`.
+WINDOWS_BACKUP_VERIFICATION=PASS; **RESTORE=NOT_TESTED**.
+Существуют независимые owner-private backups. Архивы/секреты не запрашивать
+и не публиковать в GitHub, CI или Telegram.
 
 ## Реализовано вне роутера
 
@@ -62,15 +68,18 @@ Owner evidence от 12.10.2026: SHA256 production
 сообщённому владельцем digest; router read/execute не выполнялись.
 Mismatch gate не сработал. При любом последующем несовпадении — STOP до выяснения
 причины; перепривязка pin к неизвестному receiver запрещена.
-Production migration остаётся BLOCKED: wrapper/init identity и metadata,
-coordinator, disposable OpenWrt/procd/boot/restore acceptance и резервный LAN
-не подтверждены этим digest. Service/ucode fixtures не являются доказательством
+Owner identity PASS для всех трёх c921c2d файлов; wrapper SHA256
+`d8694eb76c86f16dbae2599e8d68e20dfcf9d8334a488f0f407c84264099946f`,
+recovery init SHA256 `5b747dff42649914e4b231de2d5ade0171eedad40d5fb53f43e4d869d08a2630`.
+Оба digest независимо пересчитаны из точных git blobs c921c2d и совпали.
+Production migration остаётся BLOCKED: coordinator, target metadata/preflight,
+disposable OpenWrt/procd/boot/rollback acceptance и доступный recovery window. Service/ucode fixtures не являются доказательством
 procd/target semantics; production runtime отдельно проверяется pinned ucode/ash CI.
 Host BusyBox 1.36.1 не доказывает BusyBox 1.37.0 target PASS.
 
 ## План будущей установки и rollback — только для согласования
 
-1. Подтвердить резервный проводной LAN-доступ (сейчас подтверждён только Wi-Fi SSH).
+1. Обеспечить доступный резерв восстановления в окне: Ethernet SSH уже проверен ранее.
    Сохранить оба owner private backups вне роутера; не запускать restore/sysupgrade.
 2. Получить отдельное разрешение на конкретное окно/операции. Independently pin
    установленный receiver/wrapper/init, exact 18 inventory/metadata; неизвестный
@@ -85,10 +94,9 @@ Host BusyBox 1.36.1 не доказывает BusyBox 1.37.0 target PASS.
    /etc/home-gateway snapshot. Отдельный migration journal/fence; не менять формат
    исходного журнала, не подделывать inventory-version, не заменять только receiver.
 6. Установить проверенный согласованный 20-file runtime и receiver в этом окне,
-   проверить SHA/uid/gid/mode/ash/ucode, post-check и Telegram running. Внести
-   /etc/home-gateway/ в persistence; приватно проверить фактический sysupgrade list
-   и inclusion всех трёх файлов. Новый bootstrap уже содержит allowlist path, но
-   повторный bootstrap старого CUDY запрещён и проблема ещё не исправлена на target.
+   проверить SHA/uid/gid/mode/ash/ucode, post-check и Telegram running. Сохранить
+   уже исправленный владельцем /etc/home-gateway/ persistence; inclusion трёх
+   файлов и backup integrity подтверждены. Повторный bootstrap запрещён.
 7. При сбое выполнить migration-specific verified rollback под той же exclusion:
    old 18 runtime + старый receiver/wrapper/init + исходный latest; убрать только
    actions/notifications, вернуть прежнее состояние Telegram. Не менять VPN/UCI/nft.
@@ -97,7 +105,7 @@ Host BusyBox 1.36.1 не доказывает BusyBox 1.37.0 target PASS.
    vtest/MAIN changes требуют отдельных разрешений. Stable tag до приёмки запрещён.
 
 Точная следующая задача: port coordinator на BusyBox/OpenWrt без Python и
-подтвердить wrapper/init identity и metadata; затем isolated procd/boot
+проверить target metadata без повторного запроса подтверждённых identity; затем isolated procd/boot
 fault tests. Только после этого предлагать владельцу конкретный production apply.
 
 Review fixes (12.10): временные файлы создаются в отдельном private 0700 staging

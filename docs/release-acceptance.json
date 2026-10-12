@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "version": "1.0.0",
+  "runtime_tree": null,
+  "gates": {
+    "ci_review": {
+      "status": "BLOCKED",
+      "scope": "CI",
+      "reference": null
+    },
+    "migration_boot_recovery": {
+      "status": "BLOCKED",
+      "scope": "ISOLATED_OPENWRT",
+      "reference": null
+    },
+    "vtest_ownership_limits": {
+      "status": "BLOCKED",
+      "scope": "ISOLATED_OPENWRT",
+      "reference": null
+    },
+    "main_transactions_rollback": {
+      "status": "BLOCKED",
+      "scope": "ISOLATED_OPENWRT",
+      "reference": null
+    },
+    "backup_snapshot_restore": {
+      "status": "BLOCKED",
+      "scope": "ISOLATED_OPENWRT",
+      "reference": null
+    },
+    "asata_writer_coordination": {
+      "status": "BLOCKED",
+      "scope": "ISOLATED_OPENWRT",
+      "reference": null
+    },
+    "installed_runtime_smoke": {
+      "status": "BLOCKED",
+      "scope": "LIVE",
+      "reference": null
+    },
+    "telegram_delivery": {
+      "status": "BLOCKED",
+      "scope": "LIVE",
+      "reference": null
+    },
+    "safe_actions": {
+      "status": "BLOCKED",
+      "scope": "LIVE",
+      "reference": null
+    },
+    "sysupgrade_persistence": {
+      "status": "BLOCKED",
+      "scope": "LIVE",
+      "reference": null
+    },
+    "lan_recovery": {
+      "status": "BLOCKED",
+      "scope": "LIVE",
+      "reference": null
+    },
+    "reboot_restore": {
+      "status": "BLOCKED",
+      "scope": "LIVE",
+      "reference": null
+    },
+    "soak": {
+      "status": "BLOCKED",
+      "scope": "LIVE",
+      "reference": null
+    },
+    "owner_release_approval": {
+      "status": "BLOCKED",
+      "scope": "OWNER",
+      "reference": null
+    }
+  }
+}
