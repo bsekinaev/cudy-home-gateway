@@ -26,6 +26,9 @@ RECEIVERS = ('usr/libexec/home-gateway-deploy/engine.sh',
 ALL = NEW + RECEIVERS
 MAX_FILE = 262144
 LEGACY_SHA = '4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e'
+LEGACY_PINS = dict(zip(RECEIVERS, (LEGACY_SHA,
+    'd8694eb76c86f16dbae2599e8d68e20dfcf9d8334a488f0f407c84264099946f',
+    '5b747dff42649914e4b231de2d5ade0171eedad40d5fb53f43e4d869d08a2630')))
 
 
 class Refused(ValueError):
@@ -226,7 +229,7 @@ class Migration:
         for rel in ADDED:
             require(not (self.root / rel).exists() and not (self.root / rel).is_symlink(), 'ADDED_ALREADY_EXISTS')
         previous = {rel: read(self.root / rel, mode(rel)) for rel in OLD + RECEIVERS}
-        require(digest(previous[RECEIVERS[0]]) == LEGACY_SHA, 'LEGACY_RECEIVER_IDENTITY')
+        require(all(digest(previous[p]) == sha for p, sha in LEGACY_PINS.items()), 'LEGACY_RECEIVER_IDENTITY')
         receipt = dict(latest=latest.decode(), backup_sha=digest(raw_backup), new_sha=digest(raw_new),
                        commit=read(tx / 'commit', 0o600).decode(),
                        was_running=read(tx / 'was-running', 0o600).decode(),
@@ -248,7 +251,7 @@ class Migration:
             require(isinstance(records, dict) and set(records) == set(inventory), 'RECEIPT_INVENTORY')
             require(all(isinstance(s, str) and re.fullmatch('[0-9a-f]{64}', s) for s in records.values()), 'RECEIPT_DIGEST')
             verify_files(self.state / key, records)
-        require(receipt['old'][RECEIVERS[0]] == LEGACY_SHA, 'LEGACY_RECEIVER_IDENTITY')
+        require(all(receipt['old'][p] == sha for p, sha in LEGACY_PINS.items()), 'LEGACY_RECEIVER_IDENTITY')
         tx = self.base / receipt['latest'].strip()
         checked(tx, True, 0o700)
         require(read(tx / 'phase', 0o600) == b'COMMITTED\n', 'LEGACY_CHANGED')

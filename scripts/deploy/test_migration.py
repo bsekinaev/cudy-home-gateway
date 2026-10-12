@@ -27,7 +27,7 @@ class MigrationTests(unittest.TestCase):
             (self.root / p).unlink()
         self.assertEqual(digest(LEGACY.read_bytes()), '4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e')
         for rel in RECEIVERS:
-            data = LEGACY.read_bytes() if rel == RECEIVERS[0] else b'#!/bin/sh\nexit 0\n'
+            data = (LEGACY if rel == RECEIVERS[0] else LEGACY.with_name('legacy-wrapper.sh' if rel == RECEIVERS[1] else 'legacy-recovery.init')).read_bytes()
             self.fixture.put(self.root / rel, data, mode(rel))
         # Create an authentic COMMITTED 18-file journal using the original receiver.
         self.old = {p: (self.root / p).read_bytes() for p in OLD + RECEIVERS}
@@ -94,6 +94,26 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         for p in OLD:
             self.assertEqual((self.root / p).read_bytes(), self.old[p])
+
+    def test_trusted_wrapper_and_init_mismatch_refused_before_prepare(self):
+        cmd = os.environ.get('HG_TEST_SHELL', '/bin/sh').split() + [str(Path(__file__).with_name('legacy-preflight.sh')), '--test-root', str(self.root), digest(LEGACY.read_bytes())]
+        for rel in RECEIVERS[1:]:
+            path = self.root / rel
+            original = path.read_bytes()
+            path.write_bytes(original + b'# drift\n')
+            with self.assertRaises(Refused): self.m.legacy()
+            result = subprocess.run(cmd, env=self.fixture.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            path.write_bytes(original)
+        self.assert_previous()
+
+    def test_preflight_cannot_repin_unknown_engine(self):
+        p = self.root / RECEIVERS[0]
+        p.write_bytes(p.read_bytes() + b'# unknown receiver\n')
+        cmd = os.environ.get('HG_TEST_SHELL', '/bin/sh').split() + [str(Path(__file__).with_name('legacy-preflight.sh')), '--test-root', str(self.root), digest(p.read_bytes())]
+        result = subprocess.run(cmd, env=self.fixture.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        with self.assertRaises(Refused): self.m.legacy()
 
     def test_corrupted_new_and_backup_manifests(self):
         for name in ('new.sha256', 'backup.sha256'):

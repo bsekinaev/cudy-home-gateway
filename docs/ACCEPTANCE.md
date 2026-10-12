@@ -44,17 +44,17 @@ PASS ниже относится только к указанному automated/
 разрешения владельца. Ни одна строка BLOCKED не может быть закрыта предположением,
 старым target selftest или успешным host mock test.
 
-## Baseline владельца 11.10.2026 и новый P0
+## Baseline владельца 12.10.2026 и P0
 
 | Критерий | Offline | CUDY / блокер |
 |---|---|---|
-| HGDEPLOY1 18 → HGDEPLOY2 20 | 28 migration rehearsal tests, read-only BusyBox preflight | BLOCKED: production coordinator, exact receiver identity, target procd/boot |
-| /etc/home-gateway sysupgrade inclusion | Новый bootstrap содержит allowlist path; existing persistence contracts | FAIL в owner backup: отсутствуют 3 HG files; исправление/restore не применены |
-| Резервный LAN-доступ | Не проверяется host CI | BLOCKED: Wi-Fi SSH подтверждён, кабельный резерв не проверен |
+| HGDEPLOY1 18 → HGDEPLOY2 20 | 40 migration rehearsal tests, read-only BusyBox preflight | All 3 trusted identities PASS; BLOCKED: production coordinator, target procd/boot |
+| /etc/home-gateway sysupgrade inclusion | Новый bootstrap содержит allowlist path; existing persistence contracts | Owner PASS: inclusion 3 files, 140-entry real backup, Windows SHA/tar verification; restore NOT TESTED |
+| Резервный LAN-доступ | Не проверяется host CI | Ethernet SSH ранее PASS; доступный резерв требуется в actual migration window |
 
 Подробный план установки/rollback: [DEPLOY_MIGRATION.md](DEPLOY_MIGRATION.md).
-Штатный backup 137 entries / 133 files / 4 links и отдельный HG backup
-проверены владельцем по чтению/SHA, не по restore. Private archives не публиковать.
+Новый штатный backup 140 entries, включая 3 private HG files, и независимые HG
+backups проверены владельцем по чтению/SHA, не по restore. Private archives не публиковать.
 
 Review fixes: own stale temporaries проверяются по exact snapshot prefix, metadata
 и reserved names, только под migration/deploy fence; symlink/unrelated data

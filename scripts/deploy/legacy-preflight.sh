@@ -16,6 +16,7 @@ export PATH
 pin=$1
 [ "${#pin}" -eq 64 ] && ! printf '%s' "$pin" | grep -q '[^0-9a-f]' || exit 64
 fail() { echo 'LEGACY_PREFLIGHT=REFUSED' >&2; exit 70; }
+[ "$pin" = 4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e ] || fail
 oldfiles() {
     cat <<'EOF'
 etc/init.d/home-gateway-telegram
@@ -104,4 +105,6 @@ done
 for rel in engine.sh wrapper.sh; do safe "$ROOT/usr/libexec/home-gateway-deploy/$rel" 700; done
 safe "$ROOT/etc/init.d/home-gateway-deploy-recover" 755
 [ "$(sha256sum "$ROOT/usr/libexec/home-gateway-deploy/engine.sh" | cut -d ' ' -f1)" = "$pin" ] || fail
+[ "$(sha256sum "$ROOT/usr/libexec/home-gateway-deploy/wrapper.sh" | cut -d ' ' -f1)" = d8694eb76c86f16dbae2599e8d68e20dfcf9d8334a488f0f407c84264099946f ] || fail
+[ "$(sha256sum "$ROOT/etc/init.d/home-gateway-deploy-recover" | cut -d ' ' -f1)" = 5b747dff42649914e4b231de2d5ade0171eedad40d5fb53f43e4d869d08a2630 ] || fail
 echo 'LEGACY_PREFLIGHT=VERIFIED INVENTORY=18 MUTATIONS=0 MIGRATION_ACCEPTED=false'

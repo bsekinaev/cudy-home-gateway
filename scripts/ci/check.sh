@@ -123,6 +123,9 @@ pass 'Safe Actions confirmation/replay/crash contracts'
 python3 -m unittest discover -s scripts/ownership -p 'test_*.py' -v ||
     fail 'Native foreground process ownership contracts'
 pass 'Native foreground process ownership contracts'
+python3 -m unittest discover -s scripts/openwrt -p 'test_*.py' -v ||
+    fail 'Isolated VM report integrity contracts'
+pass 'Isolated VM report integrity contracts'
 
 # Ensure public runtime never contains universal remote shell primitives.
 if git grep -n -I -E \

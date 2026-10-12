@@ -9,6 +9,8 @@ import re
 import subprocess
 import tarfile
 
+from acceptance import check as check_stable_acceptance
+
 
 def git(repo, *args):
     return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.PIPE)
@@ -50,6 +52,16 @@ def build(repo, ref, output):
     if len(versions) != 1:
         raise ValueError("Expected one literal HG_VERSION in common.sh")
     version = versions[0].decode()
+    if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+        check_stable_acceptance(repo, commit, version)
+    stable_tags = {tag for tag in git(repo, 'tag', '--points-at', commit).decode().splitlines()
+                   if re.fullmatch(r'v?[0-9]+\.[0-9]+\.[0-9]+', tag)}
+    if re.fullmatch(r'(?:refs/tags/)?v?[0-9]+\.[0-9]+\.[0-9]+', ref):
+        stable_tags.add(ref.removeprefix('refs/tags/'))
+    for tag in stable_tags:
+        if version != tag.removeprefix('v'):
+            raise ValueError('STABLE_TAG_RUNTIME_VERSION_MISMATCH')
+        check_stable_acceptance(repo, commit, version)
     manifest = {
         "schema_version": 1, "project": "cudy-home-gateway",
         "version": version, "commit": commit, "commit_timestamp": timestamp,
