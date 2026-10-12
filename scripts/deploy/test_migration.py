@@ -592,6 +592,29 @@ m.prepare(sys.argv[2],sys.argv[3])
         self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
         self.assert_previous(); self.prepare()
 
+    def test_sigkill_during_preparation_acquisition_marker_can_reset(self):
+        self.m.close()
+        script = """import os,signal,sys
+import migration_lab
+m=migration_lab.Migration(sys.argv[1]); real=migration_lab.os.replace
+def crash(source,target):
+    if target.name == 'migration-lab-fence': os.kill(os.getpid(),signal.SIGKILL)
+    real(source,target)
+migration_lab.os.replace=crash
+m.prepare(sys.argv[2],sys.argv[3])
+"""
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).parent.resolve()))
+        result = subprocess.run([os.sys.executable, '-c', script, str(self.root), str(self.candidate), self.sha],
+                                capture_output=True, env=env, timeout=30)
+        self.assertEqual(result.returncode, -9, result.stderr)
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.assertTrue(list((self.root / 'tmp').glob('hg-migration-acquire.*')))
+        self.m = Migration(self.root); self.addCleanup(self.m.close)
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assertFalse(list((self.root / 'tmp').glob('hg-migration-acquire.*')))
+        self.assertEqual({p.name for p in (self.m.state / 'pending').iterdir()}, {'owner'})
+        self.assert_previous(); self.prepare()
+
 
 if __name__ == '__main__':
     unittest.main()

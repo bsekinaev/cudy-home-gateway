@@ -48,3 +48,6 @@ bound full legacy journal и GID. Private staging same-filesystem rename про�
 fenced with final legacy revalidation; real competing legacy apply and SIGKILL
 after preparation fence tested. PREPARED reset permitted before any live writes.
 Exact phase bytes and all receiver postchecks enforced; target still BLOCKED.
+
+40 migration / 72 deploy PASS: reset recovers partial preparation acquisition
+marker before discarding receipt. Exact current HEAD needs CI/review again.

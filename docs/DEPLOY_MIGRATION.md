@@ -43,7 +43,7 @@ critical persistence blocker. Ни один restore не проверен. Ар�
   ALREADY_COMMITTED. После нового v2 deployment миграционный rollback запрещён:
   сначала требуется отдельное согласованное восстановление той транзакции.
 
-39 isolated tests PASS: реальные FS/rename/fsync/flock, BusyBox ash legacy
+40 isolated tests PASS: реальные FS/rename/fsync/flock, BusyBox ash legacy
 apply/rollback/preflight, SIGKILL, interrupted rollback, exact inventories,
 corrupted manifests/receipts/snapshots, traversal/symlink/hardlink, missing files,
 drift/modes, повторный запуск и conflict с новым deployment. Caller/owner mismatch
@@ -145,3 +145,7 @@ fence before PREPARED, and preparation-only fences/reset are recoverable.
 Canonical phase bytes are mandatory, preflight checks directory GID, and rollback
 postcheck verifies all 18 runtime files plus engine/wrapper/recovery init.
 39 migration + 32 deploy = 71 tests PASS on upstream BusyBox ash1.37.0.
+
+Final preparation crash boundary: reset recovers receipt-owned acquisition
+staging/pending marker via fence before removing receipt; actual SIGKILL during
+preparation marker rename tested. 40 migration + 32 deployment = 72 PASS.

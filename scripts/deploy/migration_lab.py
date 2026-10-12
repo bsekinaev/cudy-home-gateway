@@ -344,10 +344,15 @@ class Migration:
         require(read(phase_path, 0o600) in (b'PREPARING\n', b'PREPARATION_RESETTING\n', b'PREPARED\n'), 'PHASE')
         self.legacy()  # Preparation never has authority to mutate live files.
         lock = self.root / 'tmp/home-gateway-deploy.lock'
-        if lock.exists() or lock.is_symlink():
+        # A durable receipt precedes acquisition. Even when the live lock is
+        # absent, fence() recovers its receipt-owned private pending marker and
+        # staging directory before reset deletes the receipt needed as proof.
+        if (self.state / 'receipt.json').exists() or (self.state / 'receipt.json').is_symlink():
             owned_lock = self.fence()  # Accept only this receipt's intact fence.
             self.legacy()
             self.unfence(owned_lock)
+        else:
+            require(not lock.exists() and not lock.is_symlink(), 'DEPLOYMENT_BUSY')
         files = {'lock': 0o600, 'phase': 0o600, 'receipt.json': 0o600, 'pending/owner': 0o600}
         for area, inventory in (('old', OLD + RECEIVERS), ('new', ALL)):
             for rel in inventory:
