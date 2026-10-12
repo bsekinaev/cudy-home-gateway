@@ -149,6 +149,35 @@ rotation/restore ещё отсутствуют. См. [BACKUP.md](BACKUP.md); LI
 * документация установки и восстановления;
 * демонстрационный сценарий для портфолио.
 
+### P0 11.10.2026: legacy deployment migration
+
+Owner baseline: working 0.5.0-dev / old 18-file journal; HGDEPLOY2 и новые модули
+не установлены. Read-only preflight и 28-test host migration rehearsal реализованы
+отдельно; production coordinator/target procd/boot остаются BLOCKED. Не заменять
+receiver отдельно, не подделывать inventory-version, не повторять bootstrap.
+/etc/home-gateway sysupgrade omission (3 files) — critical blocker; новый
+bootstrap allowlist исправлен, на target не применён. См. DEPLOY_MIGRATION.md.
+
+Review fixes: own stale temporaries проверяются по exact snapshot prefix, metadata
+и reserved names, только под migration/deploy fence; symlink/unrelated data
+не удаляются. Actual SIGKILL до rename + relative-root refusal regressions.
+
+Review: reset-preparation валидирует partial private tree и текущий legacy,
+сохраняет flock inode/RESETTING phase до окончания очистки. Fence снимается
+атомарным rename intact directory в receipt-owned sibling, cleanup повторяемый.
+Interrupted prepare/reset/fence teardown negative tests; target migration BLOCKED.
+
+Fence acquisition готовится в receipt-owned sibling и публикуется Linux
+renameat2(RENAME_NOREPLACE), без unsafe fallback; own partial stage recoverable.
+Legacy/rollback validation повторяется после acquisition под exclusion.
+28 migration regressions включают actual SIGKILL pre-publish и foreign lock race.
+
+Pre-mutation refusal на PREPARED/COMMITTED/ROLLED_BACK снимает только свой
+fence; interrupted APPLYING/RESTORING остаётся fenced. Newer deployment/drift
+не блокируется отвергнутым rollback. 28 migration tests PASS.
+
+Temporary validation включена в conditional-unfence для pre-mutation refusal;
+COMMITTED repeat также revalidates после acquisition. 28 migration tests PASS.
 11.10.2026: новые private PassWall helpers статически изучены. Отдельный native
 foreground ownership primitive разработан (seccomp/PDEATHSIG/locks/crash fence),
 но не установлен/не wired в Gateway. Native tests не заменяют actual Xray/OpenWrt

@@ -1,0 +1,620 @@
+"""Real filesystem/BusyBox legacy receiver migration rehearsals; no CUDY access."""
+import base64
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+import subprocess
+import unittest
+from unittest.mock import patch
+
+from migration_lab import Migration, Refused, OLD, NEW, ALL, ADDED, RECEIVERS, digest, mode
+import test_deploy
+COMMIT = test_deploy.COMMIT
+
+LEGACY = Path(__file__).with_name('fixtures') / 'legacy-engine-18.sh'
+
+
+class MigrationTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = test_deploy.DeployTests('test_plan_never_changes_runtime')
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.root, self.base = self.fixture.root, self.fixture.base
+        self.base.chmod(0o700)
+        (self.root / '.hg-migration-lab').write_bytes(b'DISPOSABLE_HG_MIGRATION_LAB\n')
+        for p in ADDED:
+            (self.root / p).unlink()
+        self.assertEqual(digest(LEGACY.read_bytes()), '4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e')
+        for rel in RECEIVERS:
+            data = LEGACY.read_bytes() if rel == RECEIVERS[0] else b'#!/bin/sh\nexit 0\n'
+            self.fixture.put(self.root / rel, data, mode(rel))
+        # Create an authentic COMMITTED 18-file journal using the original receiver.
+        self.old = {p: (self.root / p).read_bytes() for p in OLD + RECEIVERS}
+        self.live = dict(self.old)
+        self.live['usr/lib/home-gateway/common.sh'] += b'# installed legacy update\n'
+        wire = [f'HGDEPLOY1 {COMMIT}\n'.encode()]
+        for rel in OLD:
+            data = self.live[rel]
+            wire += [f'{mode(rel):04o} {len(data)} {digest(data)}\n'.encode(), base64.b64encode(data) + b'\n']
+        wire = b''.join(wire) + b'END\n'
+        result = self.legacy('apply', wire)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.tx = self.base / (self.base / 'latest').read_text().strip()
+        self.journal = self.freeze(self.tx)
+        self.previous = {p: (self.root / p).read_bytes() for p in OLD + RECEIVERS}
+        self.candidate = self.root / 'candidate'
+        for rel in ALL:
+            if rel == RECEIVERS[0]:
+                data = Path(__file__).with_name('engine.sh').read_bytes()
+            else:
+                data = self.previous.get(rel, b'// new module\n') + b'\n# candidate\n'
+            self.fixture.put(self.candidate / rel, data, mode(rel))
+        raw = ''.join(f'{digest((self.candidate / p).read_bytes())}  {p}\n' for p in ALL).encode()
+        self.fixture.put(self.candidate / 'migration.sha256', raw, 0o600)
+        self.sha = digest(raw)
+        self.m = Migration(self.root)
+        self.addCleanup(self.m.close)
+
+    def freeze(self, base):
+        return {str(p.relative_to(base)): (p.read_bytes(), p.stat().st_mode & 0o777)
+                for p in base.rglob('*') if p.is_file()}
+
+    def legacy(self, operation, wire=None):
+        cmd = os.environ.get('HG_TEST_SHELL', '/bin/sh').split() + [str(LEGACY), '--test-root', str(self.root), operation]
+        if wire is not None:
+            cmd += [COMMIT, digest(wire)]
+        return subprocess.run(cmd, input=wire, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              env=self.fixture.env, timeout=30)
+
+    def prepare(self):
+        self.assertEqual(self.m.prepare(self.candidate, self.sha), 'PREPARED')
+
+    def assert_previous(self):
+        for p, data in self.previous.items():
+            self.assertEqual((self.root / p).read_bytes(), data)
+            self.assertEqual((self.root / p).stat().st_mode & 0o777, mode(p))
+        for p in ADDED:
+            self.assertFalse((self.root / p).exists())
+        self.assertEqual(self.freeze(self.tx), self.journal)
+        self.assertTrue(self.fixture.running.exists())
+
+    def test_apply_idempotent_rollback_and_legacy_rollback_preserved(self):
+        self.prepare()
+        self.assert_previous()
+        self.assertEqual(self.m.apply(), 'COMMITTED')
+        self.assertEqual(self.m.apply(), 'ALREADY_COMMITTED')
+        self.assertEqual(self.freeze(self.tx), self.journal)
+        for p in ALL:
+            self.assertEqual((self.root / p).read_bytes(), (self.candidate / p).read_bytes())
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK')
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK')
+        self.assert_previous()
+        result = self.legacy('rollback')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        for p in OLD:
+            self.assertEqual((self.root / p).read_bytes(), self.old[p])
+
+    def test_corrupted_new_and_backup_manifests(self):
+        for name in ('new.sha256', 'backup.sha256'):
+            path = self.tx / name
+            old = path.read_bytes()
+            path.write_bytes(b'0' * 64 + old[64:])
+            with self.assertRaises(Refused):
+                self.m.legacy()
+            path.write_bytes(old)
+        self.assert_previous()
+
+    def test_manifest_traversal_duplicates_wrong_inventory(self):
+        p = self.tx / 'new.sha256'
+        original = p.read_bytes()
+        for raw in (original.replace(b'usr/bin/gateway', b'../../etc/shadow'),
+                    original + original.splitlines(True)[0], b''):
+            p.write_bytes(raw)
+            with self.assertRaises(Refused):
+                self.m.legacy()
+        p.write_bytes(original)
+        self.assert_previous()
+
+    def test_wrong_phase_active_and_mixed_format(self):
+        p = self.tx / 'phase'
+        p.write_bytes(b'APPLYING\n')
+        with self.assertRaises(Refused):
+            self.m.legacy()
+        p.write_bytes(b'COMMITTED\n')
+        (self.tx / 'inventory-version').write_bytes(b'HGDEPLOY2\n')
+        with self.assertRaises(Refused):
+            self.m.legacy()
+        (self.tx / 'inventory-version').unlink()
+        (self.base / 'active').symlink_to('/nonexistent')
+        with self.assertRaises(Refused):
+            self.m.legacy()
+        (self.base / 'active').unlink()
+        self.assert_previous()
+
+    def test_symlink_runtime_parent_journal_and_hardlink(self):
+        p = self.root / OLD[1]
+        saved = p.read_bytes()
+        p.unlink()
+        p.symlink_to(self.root / OLD[2])
+        with self.assertRaises(Refused):
+            self.m.legacy()
+        p.unlink()
+        self.fixture.put(p, saved, mode(OLD[1]))
+        os.link(p, self.root / 'hardlink')
+        with self.assertRaises(Refused):
+            self.m.legacy()
+        (self.root / 'hardlink').unlink()
+        parent = self.root / 'usr/lib/home-gateway'
+        parent.rename(self.root / 'saved-library')
+        parent.symlink_to(self.root / 'saved-library')
+        with self.assertRaises(Refused):
+            self.m.legacy()
+        parent.unlink()
+        (self.root / 'saved-library').rename(parent)
+        latest = self.base / 'latest'
+        data = latest.read_bytes()
+        latest.unlink()
+        latest.symlink_to(self.root / 'missing')
+        with self.assertRaises(Refused):
+            self.m.legacy()
+        latest.unlink()
+        self.fixture.put(latest, data, 0o600)
+        self.assert_previous()
+
+    def test_missing_file_drift_mode_and_owner(self):
+        p = self.root / OLD[3]
+        data = p.read_bytes()
+        p.unlink()
+        with self.assertRaises(OSError):
+            self.m.legacy()
+        self.fixture.put(p, data + b'drift', mode(OLD[3]))
+        with self.assertRaises(Refused):
+            self.m.legacy()
+        self.fixture.put(p, data, 0o600)
+        with self.assertRaises(Refused):
+            self.m.legacy()
+        p.chmod(mode(OLD[3]))
+        # This runtime maps only UID 0; exercise caller/actual stat mismatch
+        # without pretending chown to an unmapped UID succeeded.
+        with patch('migration_lab.os.geteuid', return_value=os.geteuid() + 17):
+            with self.assertRaisesRegex(Refused, 'OWNER'):
+                self.m.legacy()
+        self.assert_previous()
+
+    def test_candidate_hash_and_missing_member(self):
+        with self.assertRaises(Refused):
+            self.m.prepare(self.candidate, '0' * 64)
+        (self.candidate / ADDED[0]).unlink()
+        with self.assertRaises(OSError):
+            self.m.prepare(self.candidate, self.sha)
+        self.assert_previous()
+
+    def test_repeat_preparation_and_parallel_lock_refused(self):
+        self.prepare()
+        with self.assertRaises(Refused):
+            self.m.prepare(self.candidate, self.sha)
+        with self.assertRaisesRegex(Refused, 'MIGRATION_BUSY'):
+            Migration(self.root)
+        self.assert_previous()
+
+    def test_drift_after_preparation_refuses_before_write(self):
+        self.prepare()
+        p = self.root / OLD[3]
+        saved = p.read_bytes()
+        p.write_bytes(saved + b'drift')
+        with self.assertRaises(Refused):
+            self.m.apply()
+        self.assertEqual((self.m.state / 'phase').read_text(), 'PREPARED\n')
+        p.write_bytes(saved)
+        self.assert_previous()
+
+    def test_interrupted_apply_retains_fence_and_recovers_previous(self):
+        self.prepare()
+        import migration_lab
+        real = migration_lab.write
+        count = 0
+        def fail(path, data, permissions):
+            nonlocal count
+            real(path, data, permissions)
+            if str(path).endswith('usr/lib/home-gateway/actions.uc'):
+                count += 1
+                raise SystemExit('crash after real rename')
+        with patch.object(migration_lab, 'write', fail), self.assertRaises(SystemExit):
+            self.m.apply()
+        self.assertEqual(count, 1)
+        self.assertEqual((self.m.state / 'phase').read_text(), 'APPLYING\n')
+        self.assertNotEqual(self.legacy('recover').returncode, 0)
+        with self.assertRaisesRegex(Refused, 'RECOVERY_REQUIRED'):
+            self.m.apply()
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK')
+        self.assert_previous()
+
+    def test_interrupted_rollback_can_repeat(self):
+        self.prepare()
+        self.m.apply()
+        import migration_lab
+        real = migration_lab.write
+        def fail(path, data, permissions):
+            real(path, data, permissions)
+            if path == self.root / OLD[3]:
+                raise SystemExit('crash')
+        with patch.object(migration_lab, 'write', fail), self.assertRaises(SystemExit):
+            self.m.rollback()
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK')
+        self.assert_previous()
+
+    def test_corrupted_snapshot_and_receipt_refuse_rollback(self):
+        self.prepare()
+        self.m.apply()
+        p = self.m.state / 'old' / OLD[3]
+        p.write_bytes(p.read_bytes() + b'drift')
+        before = self.freeze(self.root / 'usr')
+        with self.assertRaises(Refused):
+            self.m.rollback()
+        self.assertEqual(self.freeze(self.root / 'usr'), before)
+        (self.m.state / 'receipt.json').write_text('{}')
+        with self.assertRaises(Refused):
+            self.m.rollback()
+
+    def test_later_v2_deployment_refuses_migration_rollback(self):
+        self.prepare()
+        self.m.apply()
+        self.fixture.put(self.base / 'latest', b'tx.newv2\n', 0o600)
+        with self.assertRaisesRegex(Refused, 'NEW_DEPLOYMENT_EXISTS'):
+            self.m.rollback()
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+
+    def test_external_deploy_lock_and_partial_fence_refused(self):
+        self.prepare()
+        lock = self.root / 'tmp/home-gateway-deploy.lock'
+        lock.mkdir(mode=0o700)
+        with self.assertRaisesRegex(Refused, 'DEPLOYMENT_BUSY'):
+            self.m.apply()
+        self.assert_previous()
+
+    def test_actual_sigkill_during_apply_then_reopen_rollback(self):
+        self.prepare()
+        self.m.close()
+        script = """import os,signal,sys
+from pathlib import Path
+import migration_lab
+m=migration_lab.Migration(sys.argv[1])
+real=migration_lab.write
+def crash(path,data,permissions):
+    real(path,data,permissions)
+    if path == m.root / 'usr/lib/home-gateway/actions.uc':
+        os.kill(os.getpid(), signal.SIGKILL)
+migration_lab.write=crash
+m.apply()
+"""
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).parent.resolve()))
+        result = subprocess.run([os.sys.executable, '-c', script, str(self.root)], env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        self.assertEqual(result.returncode, -9, result.stderr)
+        self.m = Migration(self.root)
+        self.addCleanup(self.m.close)
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK')
+        self.assert_previous()
+
+    def test_real_busybox_readonly_preflight_and_drift_refusal(self):
+        cmd = os.environ.get('HG_TEST_SHELL', '/bin/sh').split() + [str(Path(__file__).with_name('legacy-preflight.sh')), '--test-root', str(self.root), digest(LEGACY.read_bytes())]
+        before = self.freeze(self.base)
+        result = subprocess.run(cmd, capture_output=True, env=self.fixture.env, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b'MUTATIONS=0', result.stdout)
+        self.assertEqual(self.freeze(self.base), before)
+        (self.root / OLD[3]).write_bytes(b'drift')
+        result = subprocess.run(cmd, capture_output=True, env=self.fixture.env, timeout=30)
+        self.assertEqual(result.returncode, 70)
+        self.assertNotIn(b'common.sh', result.stderr)
+
+    def test_actual_sigkill_before_rename_cleans_owned_temporary(self):
+        self.prepare()
+        self.m.close()
+        script = """import os,signal,sys
+import migration_lab
+m=migration_lab.Migration(sys.argv[1])
+real=migration_lab.os.replace
+def crash(source,target):
+    if target == m.root / 'usr/lib/home-gateway/actions.uc':
+        os.kill(os.getpid(), signal.SIGKILL)
+    real(source,target)
+migration_lab.os.replace=crash
+m.apply()
+"""
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).parent.resolve()))
+        result = subprocess.run([os.sys.executable, '-c', script, str(self.root)], env=env,
+                                capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, -9, result.stderr)
+        from migration_lab import owned_temporary
+        tmp = owned_temporary(self.root / ADDED[0])
+        self.assertTrue(tmp.exists())
+        self.m = Migration(self.root); self.addCleanup(self.m.close)
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK')
+        self.assertFalse(tmp.exists())
+        self.assert_previous()
+
+    def test_unowned_temporary_or_wrong_contents_never_removed(self):
+        self.prepare()
+        tmp = self.root / (ADDED[0] + '.migration-new')
+        self.fixture.put(tmp, b'not-receipt-data', mode(ADDED[0]))
+        with self.assertRaisesRegex(Refused, 'TEMPORARY_DRIFT'):
+            self.m.rollback()
+        self.assertEqual(tmp.read_bytes(), b'not-receipt-data')
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        tmp.unlink(); tmp.symlink_to(self.root / OLD[0])
+        with self.assertRaisesRegex(Refused, 'TEMPORARY_DRIFT'):
+            self.m.rollback()
+        self.assertTrue(tmp.is_symlink())
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        tmp.unlink()
+        self.assert_previous()
+
+    def test_readonly_preflight_refuses_relative_root_immediately(self):
+        cmd = os.environ.get('HG_TEST_SHELL', '/bin/sh').split() + [str(Path(__file__).with_name('legacy-preflight.sh')), '--test-root', 'lab', digest(LEGACY.read_bytes())]
+        result = subprocess.run(cmd, capture_output=True, env=self.fixture.env, timeout=3)
+        self.assertEqual(result.returncode, 64)
+
+    def test_interrupted_preparation_can_reset_and_prepare_again(self):
+        import migration_lab
+        real = migration_lab.write
+        def crash(path,data,permissions):
+            real(path,data,permissions)
+            if path == self.m.state / 'old' / OLD[0]: raise SystemExit('prepare crash')
+        with patch.object(migration_lab, 'write', crash), self.assertRaises(SystemExit):
+            self.m.prepare(self.candidate, self.sha)
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assert_previous()
+        self.prepare()
+        self.assertEqual(self.m.apply(), 'COMMITTED')
+
+    def test_preparation_reset_refuses_unknown_and_symlink(self):
+        self.m.phase('PREPARING')
+        path = self.m.state / 'unknown'
+        path.write_bytes(b'not-owned')
+        with self.assertRaisesRegex(Refused, 'UNKNOWN_PREPARATION_PATH'): self.m.reset_preparation()
+        self.assertTrue(path.exists()); path.unlink()
+        path = self.m.state / 'old'; path.symlink_to(self.root / 'usr')
+        with self.assertRaises(Refused): self.m.reset_preparation()
+        self.assertTrue(path.is_symlink()); path.unlink()
+        self.assert_previous()
+
+    def test_unfence_crash_after_rename_or_marker_unlink_is_recoverable(self):
+        self.prepare()
+        import migration_lab
+        with patch.object(self.m, 'cleanup_retired_fence', side_effect=[None, None, SystemExit]):
+            with self.assertRaises(SystemExit): self.m.apply()
+        retired = self.m.retired_fence()
+        self.assertTrue(retired.is_dir())
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        # Simulate the next teardown boundary: marker removed, owned retired dir exists.
+        (retired / 'migration-lab-fence').unlink()
+        self.assertEqual(self.m.apply(), 'ALREADY_COMMITTED')
+        self.assertFalse(retired.exists())
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK')
+        self.assert_previous()
+
+    def test_preparation_reset_interruption_can_retry_without_phase_loss(self):
+        import migration_lab
+        real_write = migration_lab.write
+        def crash(path,data,permissions):
+            real_write(path,data,permissions)
+            if path == self.m.state / 'old' / OLD[0]: raise SystemExit('prepare crash')
+        with patch.object(migration_lab, 'write', crash), self.assertRaises(SystemExit): self.prepare()
+        real_sync = migration_lab.sync_dir
+        def stop(path):
+            real_sync(path)
+            if path == self.m.state / 'old' / 'etc/init.d': raise SystemExit('reset crash')
+        with patch.object(migration_lab, 'sync_dir', stop), self.assertRaises(SystemExit): self.m.reset_preparation()
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assert_previous(); self.prepare()
+
+    def test_actual_sigkill_during_fence_creation_can_retry_safely(self):
+        self.prepare(); self.m.close()
+        script = """import os,signal,sys
+import migration_lab
+m=migration_lab.Migration(sys.argv[1]); real=migration_lab.os.replace
+def crash(source,target):
+    if target.name == 'migration-lab-fence': os.kill(os.getpid(), signal.SIGKILL)
+    real(source,target)
+migration_lab.os.replace=crash
+m.apply()
+"""
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).parent.resolve()))
+        result = subprocess.run([os.sys.executable,'-c',script,str(self.root)], env=env, capture_output=True,timeout=30)
+        self.assertEqual(result.returncode,-9,result.stderr)
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.m = Migration(self.root); self.addCleanup(self.m.close)
+        self.assertEqual(self.m.apply(), 'COMMITTED')
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK'); self.assert_previous()
+
+    def test_atomic_fence_publish_never_replaces_foreign_empty_lock(self):
+        self.prepare()
+        import migration_lab
+        real = migration_lab.rename_noreplace
+        lock = self.root / 'tmp/home-gateway-deploy.lock'
+        def competing(source,target):
+            lock.mkdir(mode=0o700)
+            return real(source,target)
+        with patch.object(migration_lab,'rename_noreplace',competing):
+            with self.assertRaisesRegex(Refused,'DEPLOYMENT_BUSY'): self.m.apply()
+        self.assertTrue(lock.is_dir()); self.assertEqual(list(lock.iterdir()),[])
+        self.assert_previous()
+
+    def test_drift_between_read_and_fence_releases_prepared_guard(self):
+        self.prepare()
+        import migration_lab
+        real = self.m.fence
+        path = self.root / OLD[3]; saved = path.read_bytes()
+        def changed():
+            lock = real(); path.write_bytes(saved + b'concurrent-writer'); return lock
+        with patch.object(self.m,'fence',changed):
+            with self.assertRaises(Refused): self.m.apply()
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.assertEqual((self.m.state / 'phase').read_text(),'PREPARED\n')
+        path.write_bytes(saved); self.assert_previous()
+
+    def test_committed_temporary_refusal_releases_admission(self):
+        self.prepare();self.m.apply()
+        tmp=self.root/(ADDED[0]+'.migration-new')
+        self.fixture.put(tmp,b'foreign-temporary',mode(ADDED[0]))
+        with self.assertRaisesRegex(Refused,'TEMPORARY_DRIFT'):self.m.apply()
+        self.assertFalse((self.root/'tmp/home-gateway-deploy.lock').exists())
+        self.assertEqual(tmp.read_bytes(),b'foreign-temporary')
+
+    def test_real_root_and_no_sentinel_refused(self):
+        with self.assertRaises(Refused):
+            Migration('/')
+        (self.root / '.hg-migration-lab').unlink()
+        with self.assertRaises(OSError):
+            Migration(self.root)
+
+    def test_foreign_empty_or_matching_prefix_temporary_is_never_unlinked(self):
+        self.prepare()
+        tmp = self.root / (ADDED[0] + '.migration-new')
+        for data in (b'', (self.candidate / ADDED[0]).read_bytes()[:5]):
+            self.fixture.put(tmp, data, mode(ADDED[0]))
+            with self.assertRaisesRegex(Refused, 'TEMPORARY_DRIFT'): self.m.rollback()
+            self.assertEqual(tmp.read_bytes(), data)
+            self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+            tmp.unlink()
+        self.assert_previous()
+
+    def test_prepared_and_rolledback_refuse_foreign_candidate_bytes(self):
+        self.prepare()
+        for phase in ('PREPARED', 'ROLLED_BACK'):
+            self.m.phase(phase)
+            p = self.root / ADDED[0]
+            self.fixture.put(p, (self.candidate / ADDED[0]).read_bytes(), mode(ADDED[0]))
+            with self.assertRaisesRegex(Refused, 'FILE_DRIFT'): self.m.rollback()
+            self.assertEqual(p.read_bytes(), (self.candidate / ADDED[0]).read_bytes())
+            self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+            p.unlink()
+        self.assert_previous()
+
+    def test_full_legacy_journal_is_bound_before_rollback_writes(self):
+        self.prepare(); self.m.apply()
+        before = self.freeze(self.root / 'usr')
+        for name, value in (('inventory-version', b'HGDEPLOY2\n'),
+                            ('commit', b'1' * 40 + b'\n'), ('was-running', b'0\n')):
+            p = self.tx / name; original = p.read_bytes() if p.exists() else None
+            self.fixture.put(p, value, 0o600)
+            with self.assertRaises(Refused): self.m.rollback()
+            self.assertEqual(self.freeze(self.root / 'usr'), before)
+            if original is None: p.unlink()
+            else: p.write_bytes(original)
+
+    def test_unknown_receiver_identity_refuses_preparation(self):
+        p = self.root / RECEIVERS[0]
+        p.write_bytes(p.read_bytes() + b'# unknown receiver\n')
+        with self.assertRaisesRegex(Refused, 'LEGACY_RECEIVER_IDENTITY'): self.prepare()
+
+    def test_preflight_pointer_bytes_are_canonical(self):
+        cmd = os.environ.get('HG_TEST_SHELL', '/bin/sh').split() + [
+            str(Path(__file__).with_name('legacy-preflight.sh')), '--test-root', str(self.root), digest(LEGACY.read_bytes())]
+        latest = self.base / 'latest'; original = latest.read_bytes()
+        for value in (original.rstrip(b'\n'), original + b'\n', b'tx.' + b'a' * 33 + b'\n', b'tx.a.b\n'):
+            latest.write_bytes(value)
+            result = subprocess.run(cmd, capture_output=True, env=self.fixture.env, timeout=5)
+            self.assertEqual(result.returncode, 70, result.stdout)
+        latest.write_bytes(original)
+
+    def test_group_mismatch_is_refused(self):
+        with patch('migration_lab.os.getegid', return_value=os.getegid() + 17):
+            with self.assertRaisesRegex(Refused, 'GROUP'): self.m.legacy()
+
+    def test_corrupted_phase_bytes_never_authorize_mutation(self):
+        self.prepare(); before = self.freeze(self.root / 'usr')
+        for raw in (b'PREPARED \n', b'\nPREPARED\n', b'PREPARED\n\n', b'PREPARED\xc2\xa0\n'):
+            (self.m.state / 'phase').write_bytes(raw)
+            for operation in (self.m.apply, self.m.rollback):
+                with self.assertRaisesRegex(Refused, 'PHASE'): operation()
+                self.assertEqual(self.freeze(self.root / 'usr'), before)
+                self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+
+    def test_rollback_postcheck_includes_wrapper_and_recovery_init(self):
+        import migration_lab
+        self.prepare(); self.m.apply(); real = migration_lab.write
+        def faulty_write(path, data, permissions):
+            real(path, data, permissions)
+            if path == self.root / RECEIVERS[1]: path.write_bytes(b'faulty receiver write\n')
+        with patch.object(migration_lab, 'write', faulty_write):
+            with self.assertRaisesRegex(Refused, 'FILE_DRIFT'): self.m.rollback()
+        self.assertEqual(self.m.current_phase(), 'RESTORING')
+        self.assertTrue((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.fixture.put(self.root / RECEIVERS[1], self.previous[RECEIVERS[1]], mode(RECEIVERS[1]))
+        self.assertEqual(self.m.rollback(), 'ROLLED_BACK'); self.assert_previous()
+
+    def test_preparation_revalidates_under_fence_after_real_legacy_deploy(self):
+        real = self.m.fence; live = {p: (self.root / p).read_bytes() for p in OLD}
+        live[OLD[3]] += b'# competing deployment\n'
+        wire = [f'HGDEPLOY1 {COMMIT}\n'.encode()]
+        for rel in OLD:
+            data = live[rel]
+            wire += [f'{mode(rel):04o} {len(data)} {digest(data)}\n'.encode(), base64.b64encode(data) + b'\n']
+        payload = b''.join(wire) + b'END\n'
+        def competing():
+            result = self.legacy('apply', payload)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            return real()
+        with patch.object(self.m, 'fence', competing):
+            with self.assertRaisesRegex(Refused, 'LEGACY_CHANGED'): self.prepare()
+        self.assertEqual(self.m.current_phase(), 'PREPARING')
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        for rel, data in live.items(): self.assertEqual((self.root / rel).read_bytes(), data)
+        self.prepare()
+
+    def test_prepared_state_can_reset_after_later_legacy_drift(self):
+        self.prepare()
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assert_previous(); self.prepare()
+
+    def test_sigkill_after_preparation_fence_can_reset_safely(self):
+        self.m.close()
+        script = """import os,signal,sys
+import migration_lab
+m=migration_lab.Migration(sys.argv[1]); real=m.phase
+def crash(value):
+    if value == 'PREPARED': os.kill(os.getpid(),signal.SIGKILL)
+    real(value)
+m.phase=crash
+m.prepare(sys.argv[2],sys.argv[3])
+"""
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).parent.resolve()))
+        result = subprocess.run([os.sys.executable, '-c', script, str(self.root), str(self.candidate), self.sha],
+                                capture_output=True, env=env, timeout=30)
+        self.assertEqual(result.returncode, -9, result.stderr)
+        self.m = Migration(self.root); self.addCleanup(self.m.close)
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.assert_previous(); self.prepare()
+
+    def test_sigkill_during_preparation_acquisition_marker_can_reset(self):
+        self.m.close()
+        script = """import os,signal,sys
+import migration_lab
+m=migration_lab.Migration(sys.argv[1]); real=migration_lab.os.replace
+def crash(source,target):
+    if target.name == 'migration-lab-fence': os.kill(os.getpid(),signal.SIGKILL)
+    real(source,target)
+migration_lab.os.replace=crash
+m.prepare(sys.argv[2],sys.argv[3])
+"""
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).parent.resolve()))
+        result = subprocess.run([os.sys.executable, '-c', script, str(self.root), str(self.candidate), self.sha],
+                                capture_output=True, env=env, timeout=30)
+        self.assertEqual(result.returncode, -9, result.stderr)
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        self.assertTrue(list((self.root / 'tmp').glob('hg-migration-acquire.*')))
+        self.m = Migration(self.root); self.addCleanup(self.m.close)
+        self.assertEqual(self.m.reset_preparation(), 'PREPARATION_RESET')
+        self.assertFalse(list((self.root / 'tmp').glob('hg-migration-acquire.*')))
+        self.assertEqual({p.name for p in (self.m.state / 'pending').iterdir()}, {'owner'})
+        self.assert_previous(); self.prepare()
+
+
+if __name__ == '__main__':
+    unittest.main()

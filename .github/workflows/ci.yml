@@ -99,6 +99,9 @@ jobs:
           HG_TEST_BUSYBOX: busybox
         run: python3 -m unittest discover -s scripts/deploy -p 'test_*.py' -v
 
+      - name: Regression on pinned upstream BusyBox 1.37.0
+        run: ./scripts/ci/check-busybox137.sh
+
       - name: Build release bundle
         run: python3 scripts/release/build.py --ref HEAD --output dist
 

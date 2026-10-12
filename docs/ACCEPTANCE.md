@@ -43,3 +43,36 @@ PASS ниже относится только к указанному automated/
 Изменение MAIN, restore конфигурации, reboot и sysupgrade требуют отдельного
 разрешения владельца. Ни одна строка BLOCKED не может быть закрыта предположением,
 старым target selftest или успешным host mock test.
+
+## Baseline владельца 11.10.2026 и новый P0
+
+| Критерий | Offline | CUDY / блокер |
+|---|---|---|
+| HGDEPLOY1 18 → HGDEPLOY2 20 | 28 migration rehearsal tests, read-only BusyBox preflight | BLOCKED: production coordinator, exact receiver identity, target procd/boot |
+| /etc/home-gateway sysupgrade inclusion | Новый bootstrap содержит allowlist path; existing persistence contracts | FAIL в owner backup: отсутствуют 3 HG files; исправление/restore не применены |
+| Резервный LAN-доступ | Не проверяется host CI | BLOCKED: Wi-Fi SSH подтверждён, кабельный резерв не проверен |
+
+Подробный план установки/rollback: [DEPLOY_MIGRATION.md](DEPLOY_MIGRATION.md).
+Штатный backup 137 entries / 133 files / 4 links и отдельный HG backup
+проверены владельцем по чтению/SHA, не по restore. Private archives не публиковать.
+
+Review fixes: own stale temporaries проверяются по exact snapshot prefix, metadata
+и reserved names, только под migration/deploy fence; symlink/unrelated data
+не удаляются. Actual SIGKILL до rename + relative-root refusal regressions.
+
+Review: reset-preparation валидирует partial private tree и текущий legacy,
+сохраняет flock inode/RESETTING phase до окончания очистки. Fence снимается
+атомарным rename intact directory в receipt-owned sibling, cleanup повторяемый.
+Interrupted prepare/reset/fence teardown negative tests; target migration BLOCKED.
+
+Fence acquisition готовится в receipt-owned sibling и публикуется Linux
+renameat2(RENAME_NOREPLACE), без unsafe fallback; own partial stage recoverable.
+Legacy/rollback validation повторяется после acquisition под exclusion.
+28 migration regressions включают actual SIGKILL pre-publish и foreign lock race.
+
+Pre-mutation refusal на PREPARED/COMMITTED/ROLLED_BACK снимает только свой
+fence; interrupted APPLYING/RESTORING остаётся fenced. Newer deployment/drift
+не блокируется отвергнутым rollback. 28 migration tests PASS.
+
+Temporary validation включена в conditional-unfence для pre-mutation refusal;
+COMMITTED repeat также revalidates после acquisition. 28 migration tests PASS.

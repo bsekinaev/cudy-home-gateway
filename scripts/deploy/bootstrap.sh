@@ -68,7 +68,7 @@ uci commit dropbear
 /etc/init.d/home-gateway-deploy-recover enable
 # Preserve application code, receiver and local Tailscale/Dropbear fixes during sysupgrade.
 touch /etc/sysupgrade.conf
-for item in /etc/home-gateway-deploy/ /usr/libexec/home-gateway-deploy/ \
+for item in /etc/home-gateway/ /etc/home-gateway-deploy/ /usr/libexec/home-gateway-deploy/ \
     /etc/init.d/home-gateway-deploy-recover /etc/init.d/home-gateway-telegram \
     /usr/bin/gateway /usr/bin/home-gateway-ci-smoke /usr/lib/home-gateway/ \
     /etc/init.d/dropbear /etc/init.d/tailscale \

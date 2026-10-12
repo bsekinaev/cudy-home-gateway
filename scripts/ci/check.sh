@@ -64,7 +64,7 @@ for file in \
     scripts/deploy/*.sh \
     scripts/deploy/recovery.init \
     scripts/router-preflight.sh \
-    scripts/ci/check.sh \
+    scripts/ci/*.sh \
     src/usr/bin/gateway \
     src/etc/init.d/home-gateway-telegram \
     src/usr/lib/home-gateway/*.sh
