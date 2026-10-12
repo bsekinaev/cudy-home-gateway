@@ -84,6 +84,7 @@ def inject(image, workspace, commit, packages):
     put('/opt/hg-vm-lab/packages/repositories', b'/opt/hg-vm-lab/packages/packages.adb\n', 0o600)
     for source in ('migration-admission.sh', 'engine.sh'):
         put('/usr/libexec/home-gateway-deploy/' + source, git('show', commit + ':scripts/deploy/' + source), 0o700)
+    put('/opt/hg-vm-lab/legacy-engine.sh', git('show', commit + ':scripts/deploy/fixtures/legacy-engine-18.sh'), 0o700)
     smoke = git('show', commit + ':scripts/openwrt/guest-smoke.sh')
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
     put('/opt/hg-vm-lab/guest-smoke.sh', smoke, 0o700)

@@ -28,10 +28,16 @@ if [ ! -f "$LAB/reboot-pending" ]; then
     check busybox_version sh -c 'ash --help 2>&1 | grep -q "BusyBox v1.37.0"'
     check vendor_prerequisites apk --repositories-file /opt/hg-vm-lab/packages/repositories --no-network add coreutils-stat=9.9-r2 coreutils-timeout=9.9-r2
     cat /tmp/hg-vm-lab/check.out
+    sha256sum /etc/config/network /etc/config/firewall /etc/config/dhcp > /tmp/hg-vm-lab/network-config.sha256
+    ip route show > /tmp/hg-vm-lab/routes.before
+    nft -s list ruleset > /tmp/hg-vm-lab/nft.before
     timeout -k 1 1 /bin/true >/tmp/hg-vm-lab/timeout-probe 2>&1
     printf 'HGVM_DIAG=timeout_k_rc:%s\n' "$?"
     check procd_pid1 sh -c '[ "$(cat /proc/1/comm)" = procd ]'
     check ubus_service ubus list service
+    mkdir -m 700 /etc/home-gateway-deploy
+    check unfenced_receiver_status sh /usr/libexec/home-gateway-deploy/engine.sh status
+    check unfenced_legacy_status sh /opt/hg-vm-lab/legacy-engine.sh status
     check runtime_inventory sha256sum -c /opt/hg-vm-lab/runtime.sha256
     check runtime_shell_compile sh -c 'for p in /usr/bin/gateway /usr/lib/home-gateway/*.sh; do ash -n "$p" || exit; done'
     check runtime_ucode_compile sh -c 'for p in /usr/lib/home-gateway/*.uc; do ucode -c -o /tmp/hg-vm-lab/check.uc "$p" || exit; done'
@@ -99,7 +105,13 @@ EOF
     chmod 600 /etc/home-gateway-migration/phase
     mkdir /etc/home-gateway-migration/fence
     ln -s /etc/home-gateway-migration/fence /tmp/home-gateway-deploy.lock
+    check fence_blocks_real_legacy sh -c '! sh /opt/hg-vm-lab/legacy-engine.sh status'
     check persistent_admission_blocks sh -c '! sh /usr/libexec/home-gateway-deploy/migration-admission.sh'
+    check network_config_unchanged sha256sum -c /tmp/hg-vm-lab/network-config.sha256
+    ip route show > /tmp/hg-vm-lab/routes.after
+    nft -s list ruleset > /tmp/hg-vm-lab/nft.after
+    check routes_unchanged cmp -s /tmp/hg-vm-lab/routes.before /tmp/hg-vm-lab/routes.after
+    check nft_unchanged cmp -s /tmp/hg-vm-lab/nft.before /tmp/hg-vm-lab/nft.after
     cat /proc/sys/kernel/random/boot_id > "$LAB/old-boot"
     touch "$LAB/reboot-pending"
     sync
@@ -110,10 +122,19 @@ fi
 
 check reboot_drops_ram_fence sh -c '[ ! -e /tmp/home-gateway-deploy.lock ] && [ ! -L /tmp/home-gateway-deploy.lock ]'
 check reboot_blocks_interrupted_apply sh -c '! sh /usr/libexec/home-gateway-deploy/migration-admission.sh'
-check receiver_blocks_interrupted_migration sh -c '! sh /usr/libexec/home-gateway-deploy/engine.sh status'
+check receiver_blocks_interrupted_migration sh -c 'sh /usr/libexec/home-gateway-deploy/engine.sh status; [ "$?" = 73 ]'
 check telegram_blocks_interrupted_migration sh -c '! /etc/init.d/home-gateway-telegram start'
 ubus call service list '{"name":"home-gateway-telegram","verbose":true}' > /tmp/hg-vm-lab/telegram-procd.json
 check telegram_has_no_procd_instances ucode -e 'import * as fs from "fs"; let data=json(fs.readfile("/tmp/hg-vm-lab/telegram-procd.json")); exit(length(keys(data["home-gateway-telegram"]?.instances || {})) == 0 ? 0 : 1);'
+chmod 644 /etc/home-gateway-migration/phase
+check admission_wrong_mode sh -c '! sh /usr/libexec/home-gateway-deploy/migration-admission.sh'
+chmod 600 /etc/home-gateway-migration/phase
+chown 65534:65534 /etc/home-gateway-migration/phase
+check admission_wrong_uid_gid sh -c '! sh /usr/libexec/home-gateway-deploy/migration-admission.sh'
+chown 0:0 /etc/home-gateway-migration/phase
+ln /etc/home-gateway-migration/phase /etc/home-gateway-migration/phase-hardlink
+check admission_hardlink sh -c '! sh /usr/libexec/home-gateway-deploy/migration-admission.sh'
+rm /etc/home-gateway-migration/phase-hardlink
 check reboot_changed_boot sh -c '[ "$(cat /etc/hg-vm-lab/old-boot)" != "$(cat /proc/sys/kernel/random/boot_id)" ]'
 check reboot_persisted_hg sh -c 'for area in config secrets state; do [ "$(cat /etc/home-gateway/$area/vm-proof)" = SYNTHETIC_VM_BACKUP_PROOF ] || exit 1; done'
 check recovery_projects_pending action show
