@@ -148,3 +148,9 @@ rotation/restore ещё отсутствуют. См. [BACKUP.md](BACKUP.md); LI
 * soak-test без функциональных изменений;
 * документация установки и восстановления;
 * демонстрационный сценарий для портфолио.
+
+11.10.2026: новые private PassWall helpers статически изучены. Отдельный native
+foreground ownership primitive разработан (seccomp/PDEATHSIG/locks/crash fence),
+но не установлен/не wired в Gateway. Native tests не заменяют actual Xray/OpenWrt
+acceptance, config/traffic/budget/runner/progress/notification остаются BLOCKED.
+См. VTEST.md и PASSWALL_SOURCE_AUDIT_2026-10-11.md.

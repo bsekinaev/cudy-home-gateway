@@ -24,8 +24,7 @@ App startup читает UCI и выбирает binaries ещё до command di
 читает global DNS и использует Lua API. Нельзя считать run_socks/no_run чистыми
 функциями или запускать их на workstation без target dependencies. Broad provider
 cleanup по command substring/PID file не доказывает ownership и не используется.
-Native primitive разрабатывается отдельно в draft PR #17:
-https://github.com/bsekinaev/cudy-home-gateway/pull/17; не установлен/не вызывает provider.
+Native primitive в VTEST.md создаёт отдельную основу, не включает provider.
 
 PassWall init restart выполняет общий stop/start. App stop убивает процессы по
 общим шаблонам, чистит runtime/locks и может затронуть DNS/netfilter. Для 0.8 нужны
