@@ -8,7 +8,7 @@ PROG=/usr/bin/ucode
 POLLER=/usr/lib/home-gateway/telegram-poller.uc
 GATEWAY=/usr/bin/gateway
 
-start_service() {
+hg_runtime_admitted() {
 	# /tmp locks disappear at reboot; migration admission lives on overlay.
 	if [ -e /etc/home-gateway-migration ] || [ -L /etc/home-gateway-migration ]; then
 		local admission=/usr/libexec/home-gateway-deploy/migration-admission.sh
@@ -25,6 +25,16 @@ start_service() {
 		phase="$(cat "/etc/home-gateway-deploy/$tx/phase")"
 		case "$phase" in CHECKING|COMMITTED|RESTORED) ;; *) return 1 ;; esac
 	fi
+}
+
+# rc.common closes the service after start_service and otherwise masks its exit
+# status. Recheck via its supported service_started hook to report refusal too.
+service_started() {
+	hg_runtime_admitted
+}
+
+start_service() {
+	hg_runtime_admitted || return 1
 	[ -x "$PROG" ] || return 1
 	[ -r "$POLLER" ] || return 1
 	[ -x "$GATEWAY" ] || return 1

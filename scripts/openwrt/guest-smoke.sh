@@ -112,6 +112,8 @@ check reboot_drops_ram_fence sh -c '[ ! -e /tmp/home-gateway-deploy.lock ] && [ 
 check reboot_blocks_interrupted_apply sh -c '! sh /usr/libexec/home-gateway-deploy/migration-admission.sh'
 check receiver_blocks_interrupted_migration sh -c '! sh /usr/libexec/home-gateway-deploy/engine.sh status'
 check telegram_blocks_interrupted_migration sh -c '! /etc/init.d/home-gateway-telegram start'
+ubus call service list '{"name":"home-gateway-telegram","verbose":true}' > /tmp/hg-vm-lab/telegram-procd.json
+check telegram_has_no_procd_instances ucode -e 'import * as fs from "fs"; let data=json(fs.readfile("/tmp/hg-vm-lab/telegram-procd.json")); exit(length(keys(data["home-gateway-telegram"]?.instances || {})) == 0 ? 0 : 1);'
 check reboot_changed_boot sh -c '[ "$(cat /etc/hg-vm-lab/old-boot)" != "$(cat /proc/sys/kernel/random/boot_id)" ]'
 check reboot_persisted_hg sh -c 'for area in config secrets state; do [ "$(cat /etc/home-gateway/$area/vm-proof)" = SYNTHETIC_VM_BACKUP_PROOF ] || exit 1; done'
 check recovery_projects_pending action show
