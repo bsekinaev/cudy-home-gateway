@@ -327,7 +327,8 @@ m.apply()
         result = subprocess.run([os.sys.executable, '-c', script, str(self.root)], env=env,
                                 capture_output=True, timeout=30)
         self.assertEqual(result.returncode, -9, result.stderr)
-        tmp = self.root / (ADDED[0] + '.migration-new')
+        from migration_lab import owned_temporary
+        tmp = owned_temporary(self.root / ADDED[0])
         self.assertTrue(tmp.exists())
         self.m = Migration(self.root); self.addCleanup(self.m.close)
         self.assertEqual(self.m.rollback(), 'ROLLED_BACK')
@@ -343,7 +344,7 @@ m.apply()
         self.assertEqual(tmp.read_bytes(), b'not-receipt-data')
         self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
         tmp.unlink(); tmp.symlink_to(self.root / OLD[0])
-        with self.assertRaisesRegex(Refused, 'SYMLINK'):
+        with self.assertRaisesRegex(Refused, 'TEMPORARY_DRIFT'):
             self.m.rollback()
         self.assertTrue(tmp.is_symlink())
         self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
@@ -469,6 +470,60 @@ m.apply()
         (self.root / '.hg-migration-lab').unlink()
         with self.assertRaises(OSError):
             Migration(self.root)
+
+    def test_foreign_empty_or_matching_prefix_temporary_is_never_unlinked(self):
+        self.prepare()
+        tmp = self.root / (ADDED[0] + '.migration-new')
+        for data in (b'', (self.candidate / ADDED[0]).read_bytes()[:5]):
+            self.fixture.put(tmp, data, mode(ADDED[0]))
+            with self.assertRaisesRegex(Refused, 'TEMPORARY_DRIFT'): self.m.rollback()
+            self.assertEqual(tmp.read_bytes(), data)
+            self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+            tmp.unlink()
+        self.assert_previous()
+
+    def test_prepared_and_rolledback_refuse_foreign_candidate_bytes(self):
+        self.prepare()
+        for phase in ('PREPARED', 'ROLLED_BACK'):
+            self.m.phase(phase)
+            p = self.root / ADDED[0]
+            self.fixture.put(p, (self.candidate / ADDED[0]).read_bytes(), mode(ADDED[0]))
+            with self.assertRaisesRegex(Refused, 'FILE_DRIFT'): self.m.rollback()
+            self.assertEqual(p.read_bytes(), (self.candidate / ADDED[0]).read_bytes())
+            self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+            p.unlink()
+        self.assert_previous()
+
+    def test_full_legacy_journal_is_bound_before_rollback_writes(self):
+        self.prepare(); self.m.apply()
+        before = self.freeze(self.root / 'usr')
+        for name, value in (('inventory-version', b'HGDEPLOY2\n'),
+                            ('commit', b'1' * 40 + b'\n'), ('was-running', b'0\n')):
+            p = self.tx / name; original = p.read_bytes() if p.exists() else None
+            self.fixture.put(p, value, 0o600)
+            with self.assertRaises(Refused): self.m.rollback()
+            self.assertEqual(self.freeze(self.root / 'usr'), before)
+            if original is None: p.unlink()
+            else: p.write_bytes(original)
+
+    def test_unknown_receiver_identity_refuses_preparation(self):
+        p = self.root / RECEIVERS[0]
+        p.write_bytes(p.read_bytes() + b'# unknown receiver\n')
+        with self.assertRaisesRegex(Refused, 'LEGACY_RECEIVER_IDENTITY'): self.prepare()
+
+    def test_preflight_pointer_bytes_are_canonical(self):
+        cmd = os.environ.get('HG_TEST_SHELL', '/bin/sh').split() + [
+            str(Path(__file__).with_name('legacy-preflight.sh')), '--test-root', str(self.root), digest(LEGACY.read_bytes())]
+        latest = self.base / 'latest'; original = latest.read_bytes()
+        for value in (original.rstrip(b'\n'), original + b'\n', b'tx.' + b'a' * 33 + b'\n', b'tx.a.b\n'):
+            latest.write_bytes(value)
+            result = subprocess.run(cmd, capture_output=True, env=self.fixture.env, timeout=5)
+            self.assertEqual(result.returncode, 70, result.stdout)
+        latest.write_bytes(original)
+
+    def test_group_mismatch_is_refused(self):
+        with patch('migration_lab.os.getegid', return_value=os.getegid() + 17):
+            with self.assertRaisesRegex(Refused, 'GROUP'): self.m.legacy()
 
 
 if __name__ == '__main__':

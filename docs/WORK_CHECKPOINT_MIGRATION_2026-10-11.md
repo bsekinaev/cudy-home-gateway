@@ -37,3 +37,9 @@ fence; interrupted APPLYING/RESTORING остаётся fenced. Newer deployment/
 
 Temporary validation включена в conditional-unfence для pre-mutation refusal;
 COMMITTED repeat также revalidates после acquisition. 28 migration tests PASS.
+
+12.10: owner engine digest MATCH опубликован в dfd7d33; production gate не снят.
+34 migration tests PASS: private staged temporaries вместо shared pathname,
+foreign empty/prefix refusal, phase-specific rollback ownership, canonical latest,
+bound full legacy journal и GID. Private staging same-filesystem rename проверяется
+на host; production coordinator/procd/boot и mount layout остаются BLOCKED.

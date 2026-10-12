@@ -25,6 +25,7 @@ RECEIVERS = ('usr/libexec/home-gateway-deploy/engine.sh',
              'etc/init.d/home-gateway-deploy-recover')
 ALL = NEW + RECEIVERS
 MAX_FILE = 262144
+LEGACY_SHA = '4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e'
 
 
 class Refused(ValueError):
@@ -56,6 +57,7 @@ def checked(path, directory=False, expected_mode=None):
             require(stat.S_ISDIR(st.st_mode), 'PARENT_TYPE')
             require(not st.st_mode & 0o022 or st.st_mode & stat.S_ISVTX, 'WRITABLE_PARENT')
     st = path.lstat()
+    require(st.st_gid == os.getegid(), 'GROUP')
     require(stat.S_ISDIR(st.st_mode) if directory else stat.S_ISREG(st.st_mode), 'FILE_TYPE')
     if not directory:
         require(st.st_nlink == 1 and st.st_size <= MAX_FILE, 'FILE_METADATA')
@@ -96,11 +98,24 @@ def mkdir(path):
     sync_dir(path.parent)
 
 
+def owned_temporary(path):
+    # Temporaries never occupy a shared runtime pathname. This dedicated private
+    # staging namespace is protected by the migration flock and owner metadata.
+    for root in path.parents:
+        if (root / '.hg-migration-lab').is_file():
+            require(read(root / '.hg-migration-lab') == b'DISPOSABLE_HG_MIGRATION_LAB\n', 'LAB_ROOT_ONLY')
+            pending = root / 'etc/home-gateway-migration-lab/pending'
+            checked(pending, True, 0o700)
+            require(read(pending / 'owner', 0o600) == b'', 'TEMPORARY_OWNER')
+            return pending / (digest(str(path.relative_to(root)).encode()) + '.migration-new')
+    raise Refused('LAB_ROOT_ONLY')
+
+
 def write(path, data, permissions):
     checked(path.parent, directory=True)
     if path.exists() or path.is_symlink():
         checked(path)
-    tmp = path.with_name(path.name + '.migration-new')
+    tmp = owned_temporary(path)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, permissions)
     try:
         os.fchmod(fd, permissions)
@@ -110,6 +125,7 @@ def write(path, data, permissions):
             os.fsync(out.fileno())
         os.replace(tmp, path)
         sync_dir(path.parent)
+        sync_dir(tmp.parent)
     except BaseException:
         if tmp.exists() and not tmp.is_symlink():
             tmp.unlink()
@@ -172,6 +188,19 @@ class Migration:
         except BlockingIOError:
             os.close(self.lockfd)
             raise Refused('MIGRATION_BUSY') from None
+        pending = self.state / 'pending'
+        if not pending.exists():
+            pending.mkdir(mode=0o700); sync_dir(self.state)
+        checked(pending, True, 0o700)
+        owner = pending / 'owner'
+        if not owner.exists():
+            require(not list(pending.iterdir()), 'TEMPORARY_OWNER')
+            fd = os.open(owner, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'wb') as out:
+                # Empty private marker has no partial-content initialization gap.
+                os.fsync(out.fileno())
+            sync_dir(pending)
+        require(read(owner, 0o600) == b'', 'TEMPORARY_OWNER')
 
     def close(self):
         if self.lockfd is not None:
@@ -197,7 +226,10 @@ class Migration:
         for rel in ADDED:
             require(not (self.root / rel).exists() and not (self.root / rel).is_symlink(), 'ADDED_ALREADY_EXISTS')
         previous = {rel: read(self.root / rel, mode(rel)) for rel in OLD + RECEIVERS}
+        require(digest(previous[RECEIVERS[0]]) == LEGACY_SHA, 'LEGACY_RECEIVER_IDENTITY')
         receipt = dict(latest=latest.decode(), backup_sha=digest(raw_backup), new_sha=digest(raw_new),
+                       commit=read(tx / 'commit', 0o600).decode(),
+                       was_running=read(tx / 'was-running', 0o600).decode(),
                        old={p: digest(b) for p, b in previous.items()})
         return receipt, previous
 
@@ -206,7 +238,9 @@ class Migration:
             receipt = json.loads(read(self.state / 'receipt.json', 0o600))
         except (ValueError, UnicodeError, RecursionError):
             raise Refused('RECEIPT_FORMAT') from None
-        require(isinstance(receipt, dict) and set(receipt) == {'latest', 'backup_sha', 'new_sha', 'old', 'new'}, 'RECEIPT_FORMAT')
+        require(isinstance(receipt, dict) and set(receipt) == {'latest', 'backup_sha', 'new_sha', 'commit', 'was_running', 'old', 'new'}, 'RECEIPT_FORMAT')
+        require(isinstance(receipt['commit'], str) and re.fullmatch(r'[0-9a-f]{40}\n', receipt['commit']), 'COMMIT')
+        require(receipt['was_running'] in ('0\n', '1\n'), 'WAS_RUNNING')
         require(isinstance(receipt['latest'], str) and re.fullmatch(r'tx\.[a-zA-Z0-9]{1,32}\n', receipt['latest']), 'TX_ID')
         require(all(isinstance(receipt[k], str) and re.fullmatch('[0-9a-f]{64}', receipt[k]) for k in ('backup_sha', 'new_sha')), 'RECEIPT_DIGEST')
         for key, inventory in (('old', OLD + RECEIVERS), ('new', ALL)):
@@ -214,9 +248,13 @@ class Migration:
             require(isinstance(records, dict) and set(records) == set(inventory), 'RECEIPT_INVENTORY')
             require(all(isinstance(s, str) and re.fullmatch('[0-9a-f]{64}', s) for s in records.values()), 'RECEIPT_DIGEST')
             verify_files(self.state / key, records)
+        require(receipt['old'][RECEIVERS[0]] == LEGACY_SHA, 'LEGACY_RECEIVER_IDENTITY')
         tx = self.base / receipt['latest'].strip()
         checked(tx, True, 0o700)
         require(read(tx / 'phase', 0o600) == b'COMMITTED\n', 'LEGACY_CHANGED')
+        require(not (tx / 'inventory-version').exists() and not (tx / 'inventory-version').is_symlink(), 'MIXED_FORMAT')
+        require(read(tx / 'commit', 0o600).decode() == receipt['commit'] and
+                read(tx / 'was-running', 0o600).decode() == receipt['was_running'], 'LEGACY_CHANGED')
         for name, key in (('backup.sha256', 'backup_sha'), ('new.sha256', 'new_sha')):
             require(digest(read(tx / name, 0o600)) == receipt[key], 'LEGACY_CHANGED')
         verify_files(tx / 'backup', parse_manifest(read(tx / 'backup.sha256', 0o600), OLD))
@@ -252,8 +290,8 @@ class Migration:
         return 'PREPARED'
 
     def clean_temporaries(self, r):
-        # Only fixed reserved names that were absent at prepare; accept partial
-        # writes only when they are exact prefixes of this receipt's own bytes.
+        # Prefix recovery is permitted only inside the private owned staging
+        # namespace. Any shared reserved temporary, even empty, is foreign.
         expected = []
         for rel in ALL:
             data = [read(self.state / 'new' / rel, mode(rel))]
@@ -265,11 +303,15 @@ class Migration:
         expected.append((self.state / 'phase', 0o600, [(p + '\n').encode() for p in phases]))
         remove = []
         for path, permissions, values in expected:
-            tmp = path.with_name(path.name + '.migration-new')
+            foreign = path.with_name(path.name + '.migration-new')
+            require(not foreign.exists() and not foreign.is_symlink(), 'TEMPORARY_DRIFT')
+            tmp = owned_temporary(path)
             if tmp.exists() or tmp.is_symlink():
                 data = read(tmp, permissions)
                 require(any(value.startswith(data) for value in values), 'TEMPORARY_DRIFT')
                 remove.append(tmp)
+        allowed = {'owner'} | {owned_temporary(path).name for path, _, _ in expected}
+        require(set(p.name for p in (self.state / 'pending').iterdir()) <= allowed, 'TEMPORARY_DRIFT')
         # Validate the entire list before deleting anything.
         for tmp in remove:
             tmp.unlink()
@@ -278,23 +320,25 @@ class Migration:
     def reset_preparation(self):
         phase_path = self.state / 'phase'
         if not phase_path.exists() and not phase_path.is_symlink():
-            require(set(p.name for p in self.state.iterdir()) <= {'lock', 'phase.migration-new'}, 'PHASE')
-            pending = self.state / 'phase.migration-new'
+            require(set(p.name for p in self.state.iterdir()) <= {'lock', 'pending'}, 'PHASE')
+            pending = owned_temporary(phase_path)
+            require(set(p.name for p in pending.parent.iterdir()) <= {'owner', pending.name}, 'PHASE')
             if pending.exists() or pending.is_symlink():
                 raw = read(pending, 0o600)
                 require(b'PREPARING\n'.startswith(raw) or b'PREPARATION_RESETTING\n'.startswith(raw), 'PHASE')
-                pending.unlink(); sync_dir(self.state)
+                pending.unlink(); sync_dir(pending.parent)
             return 'PREPARATION_RESET'
         require(read(phase_path, 0o600) in (b'PREPARING\n', b'PREPARATION_RESETTING\n'), 'PHASE')
         self.legacy()  # Preparation never has authority to mutate live files.
         lock = self.root / 'tmp/home-gateway-deploy.lock'
         require(not lock.exists() and not lock.is_symlink(), 'DEPLOYMENT_BUSY')
-        files = {'lock': 0o600, 'phase': 0o600, 'phase.migration-new': 0o600,
-                 'receipt.json': 0o600, 'receipt.json.migration-new': 0o600}
+        files = {'lock': 0o600, 'phase': 0o600, 'receipt.json': 0o600, 'pending/owner': 0o600}
         for area, inventory in (('old', OLD + RECEIVERS), ('new', ALL)):
             for rel in inventory:
                 files[area + '/' + rel] = mode(rel)
-                files[area + '/' + rel + '.migration-new'] = mode(rel)
+        for rel, permissions in list(files.items()):
+            if rel not in ('lock', 'pending/owner'):
+                files['pending/' + owned_temporary(self.state / rel).name] = permissions
         directories = {str(parent) for name in files for parent in Path(name).parents if str(parent) != '.'}
         remove_files, remove_dirs = [], []
         for parent, dirs, names in os.walk(self.state, followlinks=False):
@@ -302,13 +346,19 @@ class Migration:
             for name in dirs:
                 path = Path(parent) / name; rel = str(path.relative_to(self.state))
                 require(rel in directories, 'UNKNOWN_PREPARATION_PATH')
-                checked(path, True, 0o700); remove_dirs.append(path)
+                checked(path, True, 0o700)
+                if rel != 'pending': remove_dirs.append(path)
             for name in names:
                 path = Path(parent) / name; rel = str(path.relative_to(self.state))
                 require(rel in files, 'UNKNOWN_PREPARATION_PATH')
                 checked(path, expected_mode=files[rel])
-                if rel != 'lock': remove_files.append(path)
+                if rel not in ('lock', 'pending/owner'): remove_files.append(path)
         # All paths validated first; keep flock inode and phase until completion.
+        phase_tmp = owned_temporary(phase_path)
+        if phase_tmp in remove_files:
+            raw = read(phase_tmp, 0o600)
+            require(b'PREPARATION_RESETTING\n'.startswith(raw), 'PHASE')
+            phase_tmp.unlink(); sync_dir(phase_tmp.parent); remove_files.remove(phase_tmp)
         self.phase('PREPARATION_RESETTING')
         for path in remove_files:
             if path == phase_path: continue
@@ -357,6 +407,10 @@ class Migration:
             else:
                 staging.mkdir(mode=0o700); sync_dir(staging.parent)
             marker = staging / 'migration-lab-fence'
+            temporary = owned_temporary(marker)
+            if temporary.exists() or temporary.is_symlink():
+                require(proof.startswith(read(temporary, 0o600)), 'FENCE_CHANGED')
+                temporary.unlink(); sync_dir(temporary.parent)
             if not marker.exists(): write(marker, proof, 0o600)
             rename_noreplace(staging, lock)
             sync_dir(lock.parent)
@@ -426,10 +480,17 @@ class Migration:
             # Interrupted apply can contain only old/new bytes at each known path.
             for rel in ALL:
                 dst = self.root / rel
-                if not dst.exists() and not dst.is_symlink():
-                    require(rel in ADDED, 'MISSING_RUNTIME')
+                if phase in ('PREPARED', 'ROLLED_BACK'):
+                    if rel in ADDED:
+                        require(not dst.exists() and not dst.is_symlink(), 'FILE_DRIFT')
+                        continue
+                    require(digest(read(dst, mode(rel))) == r['old'][rel], 'FILE_DRIFT')
                     continue
-                require(digest(read(dst, mode(rel))) in {r['new'][rel], r['old'].get(rel)}, 'FILE_DRIFT')
+                if not dst.exists() and not dst.is_symlink():
+                    require(rel in ADDED and phase in ('APPLYING', 'RESTORING'), 'MISSING_RUNTIME')
+                    continue
+                allowed = {r['new'][rel]} if phase == 'COMMITTED' else {r['new'][rel], r['old'].get(rel)}
+                require(digest(read(dst, mode(rel))) in allowed, 'FILE_DRIFT')
             self.clean_temporaries(r)
         except (OSError, ValueError, TypeError, KeyError):
             if phase in ('PREPARED', 'COMMITTED', 'ROLLED_BACK'):

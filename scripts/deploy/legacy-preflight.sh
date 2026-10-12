@@ -75,9 +75,10 @@ for path in "$BASE/active" "$ROOT/tmp/home-gateway-deploy.lock"; do
 done
 safe "$BASE/latest" 600
 [ "$(stat -c %s "$BASE/latest")" -le 40 ] || fail
+grep -Eq '^tx\.[a-zA-Z0-9]{1,32}$' "$BASE/latest" || fail
+[ "$(wc -l < "$BASE/latest")" -eq 1 ] || fail
 id=$(cat "$BASE/latest")
-case "$id" in tx.*) ;; *) fail;; esac
-case "$id" in *[!a-zA-Z0-9.]*|*..*|tx.) fail;; esac
+[ "$(stat -c %s "$BASE/latest")" -eq "$((${#id} + 1))" ] || fail
 TX="$BASE/$id"
 [ -d "$TX" ] && [ ! -L "$TX" ] && [ "$(stat -c '%u:%a' "$TX")" = "$owner:700" ] || fail
 [ ! -e "$TX/inventory-version" ] && [ ! -L "$TX/inventory-version" ] || fail
