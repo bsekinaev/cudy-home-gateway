@@ -242,7 +242,7 @@ hg_vtest_inspect_json() {
     source_confirmed=false
     if [ "$digest" = 'cab3ffda3cdbdff192c3a91729b806c3998f2340418306ce5c4af67573fb6279' ]; then
         source_confirmed=true
-        audit_reason='DEPENDENCIES_AND_CLEANUP_UNAUDITED'
+        audit_reason='ISOLATED_PROVIDER_ADAPTER_REQUIRED'
     fi
     if [ -f "$cron_path" ] && [ ! -L "$cron_path" ] && [ -r "$cron_path" ] &&
        hg_vtest_size_within "$cron_path" 65536; then

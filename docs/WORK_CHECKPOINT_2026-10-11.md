@@ -1,0 +1,70 @@
+# Контрольная точка Issue #7 — 11 октября 2026
+
+Принятая новая версия отсутствует: runtime 0.5.0-dev. CUDY/MAIN/nft/sysupgrade,
+production deploy и v1.0.0 tag не изменены.
+
+PR #14 merged 87cff2aa8043730f9b70836e27a01c52b9f8779b:
+https://github.com/bsekinaev/cudy-home-gateway/pull/14
+HEAD 2d45916, CI 38133278411 SUCCESS, repeat review без новых findings.
+156 actual local tests PASS. Resource quarantine/latest maintenance/shared paths/
+legacy journals исправлены. Target opt-in/bootstrap/LIVE ждут владельца.
+
+PR #15 merged 8a8a37de5443bee5ee988a3b0623bb3589a8a07d:
+https://github.com/bsekinaev/cudy-home-gateway/pull/15
+HEAD c54fd4b, CI 38133879687 SUCCESS, review без findings.
+165 actual combined tests PASS. Read-only planner/ACCEPTANCE.md; полноценные
+MAIN snapshot/preflight/apply/postcheck/rollback/reboot recovery не реализованы.
+
+PR #16 fresh merged-main HEAD 58b90e875e40ce3d4d5e0e7f6fdfbbd15f686962:
+https://github.com/bsekinaev/cudy-home-gateway/pull/16
+Все 6 findings исправлены, 17 backup tests/182 combined PASS; GitHub CI/review
+этого HEAD требуется проверить перед merge. Host-only verifier — partial 0.9.
+
+Новый ownership primitive: фиксированный Xray/config fd, seccomp no new processes
+с native threads; trusted paths, no inherited FD, PDEATHSIG, exact unreaped child
+signals, timeout/cancel, global lock/crash fence/run consumption. 22 native tests
+PASS (actual C/ELF/processes), включая alternate syscall ABI. Default disabled,
+не установлен и не включён в release inventory. Provider run всё ещё blocked.
+Фактическая полная CI проверка baseline #15 с primitive: 133 state/CLI/native
+contracts, плюс release/deploy checks; это не target acceptance. Private originals
+не попали в GitHub; 15 manifest SHA и 4 новых hashes/7 ash syntaxes проверены.
+
+Продолжение: проверить #16 CI/review и merge; git fetch origin; объединить свежий
+main в feature/0.6-provider-ownership, сохранить все suites, повторить CI/review.
+Затем закончить audited config generator/pinned native cross-build/curl budgets,
+worker progress/results/notifications, offline backup vault/restore и writer
+coordination. Owner LIVE gates перечислены в ACCEPTANCE.md; stable tag запрещён.
+
+## Дополнение после review
+
+Исправлены четыре findings: bounded post-KILL wait с сохранением fence,
+prelaunch cancel/exec-grant handshake, inherited SIGCHLD=IGNORE и signal mask.
+22 actual native tests PASS; production runner не активирован.
+Новый baseline владельца 11.10: HGDEPLOY1, 18 файлов, COMMITTED, active ABSENT;
+HGDEPLOY2/actions/notifications ABSENT. Миграция P0 — отдельная ветка.
+Штатный backup исключает /etc/home-gateway: critical blocker.
+PR16 исправлен до 23 backup tests, текущий HEAD 1a3a835; CI/review проверять заново.
+
+Дополнительное review: EINTR при intent persistence повторяется до sync;
+prelaunch cancel очищает собственный intent/fence. Fixture PID публикуется
+атомарным rename; test readiness не наблюдает пустой PID file.
+
+12.10: PR16 merged main7a134a3, 30 verifier tests; native19 suite объединён
+со свежим main, provider remains default DISABLED/target acceptance pending.
+Next: current merged CI/review then PR17 merge; никаких real CUDY changes.
+
+Review: cancellation handler и grant используют один always-lock-free atomic
+state после unblock; authorization linearizes at CAS, pipe transport следует
+после уже принятого решения. fork failure сохраняет one-shot intent, но снимает
+global active fence, так как child не существует. 22 native tests PASS.
+
+pipe2/signal-mask resource failure до fork снимает own global fence, сохраняя
+one-shot intent; child отсутствует. EMFILE regression, 22 native tests PASS.
+
+12.10: 24 native tests PASS. Active/intent creation/write/fsync failures before
+fork now release and sync the owned global fence. EEXIST distinguished from
+ENOSPC/EIO; partial intent retained without launching child. Actual ELF hook
+faults plus cancel/fork/pipe/SIGKILL regressions. Not installed; vtest disabled.
+
+12.10: 25 native tests PASS; active creation ENOSPC reports WRITE_FAILED,
+not orphan RECOVERY_REQUIRED. Existing active/EEXIST still fails closed.

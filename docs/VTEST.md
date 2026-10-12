@@ -65,10 +65,10 @@ Telegram не управляет путями.
 ## Блокеры runner
 
 Исходник вызывает привилегированные `/usr/share/passwall2/utils.sh` и
-`/usr/share/passwall2/app.sh run_socks`. Точные private copies предоставлены 11 октября 2026 и статически проверены:
-[PASSWALL_SOURCE_AUDIT_2026-10-11.md](PASSWALL_SOURCE_AUDIT_2026-10-11.md).
-Наличие копий не разрешает запуск: eval, shared runtime и asynchronous exec
-не обеспечивают ownership; Lua generators и target binary pinning ещё не проверены.
+`/usr/share/passwall2/app.sh run_socks`. Точные private copies предоставлены 11 октября 2026 и статически проверены.
+Аудит: [PASSWALL_SOURCE_AUDIT_2026-10-11.md](PASSWALL_SOURCE_AUDIT_2026-10-11.md).
+Их наличие не разрешает запуск: eval, shared runtime, asynchronous launch и
+неполученные Lua generators требуют безопасного отдельного адаптера.
 Cleanup использует широкий `busybox pgrep -f` и TERM/KILL; требуется ограничить
 владение процессами и исключить MAIN/Torrent. Lock directory/PID требует защиты
 от stale lock, PID reuse и SIGKILL. До этого quick/full/capability возвращают 70.
@@ -78,3 +78,43 @@ TLS verification и capability semantics требуют отдельной пр�
 Следующая реализация: безопасное владение process tree, lock/timeout/crash recovery,
 аудит PassWall helpers, progress и delivery результата. Нельзя заменять benchmark
 проверкой наличия curl или успешным doctor. LIVE — только с разрешением владельца.
+
+## Native ownership primitive — partial, не активирован
+
+`native/vtest-supervisor.c` реализует управление собственным foreground Xray child:
+фиксированные binary/run root, no shell/pgrep/PID input; kernel flock; fsync RAM
+fence + run consumption до fork; no retry after crash. PR_SET_PDEATHSIG закрывает
+parent death race. PID нельзя переиспользовать до waitpid; сигналов после reap нет.
+Seccomp проверяет syscall architecture, отвергает alternate ABI и новые процессы
+(fork/vfork/non-thread clone/clone3); native threads разрешены. Descriptor cleanup
+через close_range, core/file/CPU/FD limits; TERM затем KILL; fixed JSON output.
+SIGCHLD disposition и signal mask сбрасываются. До exec child ждёт разрешение
+по private pipe; pending cancel до grant не запускает provider и не расходует run.
+После KILL ожидание ограничено двумя секундами; unreaped child оставляет
+RECOVERY_REQUIRED и crash fence, без ложного сообщения об остановке.
+
+22 native isolated tests компилируют тот же код с фиксированным fixture executable:
+SIGKILL parent, timeout с TERM-ignoring child, cancel, unrelated service preservation,
+concurrency/replay/global fence, fork rejection/threads, descriptor cleanup и
+unsafe directories/config/FIFO/symlink. Fixture — только compile-time test boundary,
+production путь фиксирован `/usr/bin/xray`, default DISABLED.
+
+Этот helper НЕ устанавливается, не включён в release/runtime inventory, не вызывается
+Gateway/Telegram. Cross-build и actual Xray/Go/seccomp/kernel behavior на disposable
+OpenWrt пока не проверены. Отсутствуют pinned executable/config generator, audit
+UCI schemas, curl/TLS/traffic/memory budget, worker journal/progress/notifications
+и owner-authorized target acceptance. Crash fence нельзя автоматически снимать:
+high-level recovery должен подтвердить отсутствие owned process, либо дождаться
+reboot (без benchmark auto rerun). Stage 0.6 не принят, run_supported=false.
+
+Дополнительное review: EINTR при intent persistence повторяется до sync;
+prelaunch cancel очищает собственный intent/fence. Fixture PID публикуется
+атомарным rename; test readiness не наблюдает пустой PID file.
+
+Review: cancellation handler и grant используют один always-lock-free atomic
+state после unblock; authorization linearizes at CAS, pipe transport следует
+после уже принятого решения. fork failure сохраняет one-shot intent, но снимает
+global active fence, так как child не существует. 22 native tests PASS.
+
+pipe2/signal-mask resource failure до fork снимает own global fence, сохраняя
+one-shot intent; child отсутствует. EMFILE regression, 22 native tests PASS.
