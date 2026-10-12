@@ -18,9 +18,9 @@ class AdmissionTests(unittest.TestCase):
         (self.root / 'tmp').mkdir()
         self.base = self.root / 'etc/home-gateway-migration'
 
-    def run_gate(self):
+    def run_gate(self, *flags):
         command = os.environ.get('HG_TEST_SHELL', '/bin/sh').split()
-        return subprocess.run(command + [str(SCRIPT), '--test-root', str(self.root)],
+        return subprocess.run(command + [str(SCRIPT), '--test-root', str(self.root), *flags],
                               capture_output=True, timeout=5).returncode
 
     def state(self, phase='COMMITTED', receipt=True):
@@ -74,6 +74,73 @@ class AdmissionTests(unittest.TestCase):
         p.unlink(); (self.base / 'other').write_bytes(original)
         p.symlink_to('other')
         self.assertNotEqual(self.run_gate(), 0)
+
+    def test_terminal_recover_accepts_only_canonical_pid_lease_without_cleanup(self):
+        self.state()
+        fence = self.root / 'tmp/home-gateway-deploy.lock'; fence.mkdir(mode=0o700)
+        pid = fence / 'pid'; pid.write_text('999999999\n'); pid.chmod(0o600)
+        self.assertNotEqual(self.run_gate(), 0)
+        self.assertEqual(self.run_gate('--receiver-recover'), 0)
+        self.assertEqual(pid.read_bytes(), b'999999999\n')
+        for raw in (b'0\n', b'12', b'12\n\n', b'../pid\n'):
+            pid.write_bytes(raw)
+            self.assertNotEqual(self.run_gate('--receiver-recover'), 0)
+        pid.write_text('999999999\n')
+        self.state('APPLYING')
+        self.assertNotEqual(self.run_gate('--receiver-recover'), 0)
+        self.assertTrue(fence.is_dir())
+
+    def test_terminal_receipt_never_admits_migration_symlink_as_receiver_lease(self):
+        self.state()
+        fence = self.root / 'tmp/home-gateway-deploy.lock'
+        fence.symlink_to(self.base)
+        self.assertNotEqual(self.run_gate('--receiver-recover'), 0)
+        self.assertTrue(fence.is_symlink())
+
+    def test_telegram_checking_restored_require_exact_hgdeploy2_runtime(self):
+        import hashlib
+        import test_deploy
+        fixture = test_deploy.DeployTests('test_plan_never_changes_runtime')
+        fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        self.root = fixture.root; self.base = self.root / 'etc/home-gateway-migration'
+        fixture.base.chmod(0o700)
+        self.state()
+        tx = fixture.base / 'tx.vm'; tx.mkdir(mode=0o700)
+        for name, raw in {'inventory-version': b'HGDEPLOY2\n', 'phase': b'CHECKING\n'}.items(): fixture.put(tx / name, raw, 0o600)
+        fixture.put(fixture.base / 'active', 'tx.vm\n', 0o600)
+        manifest = ''.join(hashlib.sha256((self.root / rel).read_bytes()).hexdigest() + '  ' + rel + '\n' for rel in test_deploy.PATHS)
+        for name in ('new.sha256', 'backup.sha256'): fixture.put(tx / name, manifest, 0o600)
+        fence = self.root / 'tmp/home-gateway-deploy.lock'; fence.mkdir(mode=0o700)
+        fixture.put(fence / 'pid', str(os.getpid()) + '\n', 0o600)
+        for phase in ('CHECKING', 'RESTORED', 'COMMITTED'):
+            fixture.put(tx / 'phase', phase + '\n', 0o600)
+            self.assertEqual(self.run_gate('--telegram-start'), 0, phase)
+        fixture.put(tx / 'phase', 'APPLYING\n', 0o600)
+        self.assertNotEqual(self.run_gate('--telegram-start'), 0)
+        fixture.put(tx / 'phase', 'CHECKING\n', 0o600)
+        fixture.put(tx / 'inventory-version', 'HGDEPLOY1\n', 0o600)
+        self.assertNotEqual(self.run_gate('--telegram-start'), 0)
+        fixture.put(tx / 'inventory-version', 'HGDEPLOY2\n', 0o600)
+        target = self.root / test_deploy.PATHS[-1]
+        target.write_bytes(target.read_bytes() + b'# drift\n')
+        self.assertNotEqual(self.run_gate('--telegram-start'), 0)
+
+    def test_later_hgdeploy2_sigkill_recovery_after_terminal_migration(self):
+        import test_deploy
+        fixture = test_deploy.DeployTests('test_plan_never_changes_runtime')
+        fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        self.root = fixture.root; self.base = self.root / 'etc/home-gateway-migration'
+        self.state()
+        fixture.put(self.root / 'usr/libexec/home-gateway-deploy/migration-admission.sh', SCRIPT.read_bytes(), 0o700)
+        fixture.new[test_deploy.PATHS[0]] += b'# new init\n'
+        fixture.put(fixture.bin / 'mv', '#!/bin/sh\n/bin/mv "$@" || exit 1\ncase "$*" in *"' + str(self.root / test_deploy.PATHS[0]) + '"*) kill -KILL "$PPID";; esac\n', 0o755)
+        self.assertNotEqual(fixture.run_engine('apply').returncode, 0)
+        self.assertTrue((fixture.base / 'active').exists())
+        (fixture.bin / 'mv').unlink()
+        result = fixture.run_engine('recover')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        fixture.assert_old()
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
 
     def test_noncanonical_terminal_bytes_refused(self):
         self.state()

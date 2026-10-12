@@ -14,7 +14,7 @@ hg_runtime_admitted() {
 		local admission=/usr/libexec/home-gateway-deploy/migration-admission.sh
 		[ -f "$admission" ] && [ ! -L "$admission" ] &&
 			[ "$(stat -c '%u:%g:%a:%h' "$admission")" = '0:0:700:1' ] || return 1
-		/bin/sh "$admission" || return 1
+		/bin/sh "$admission" --telegram-start || return 1
 	fi
 	# Do not start the poller on a mixed tree after an interrupted deployment.
 	if [ -f /etc/home-gateway-deploy/active ]; then

@@ -54,9 +54,12 @@ def build(repo, ref, output):
     version = versions[0].decode()
     if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
         check_stable_acceptance(repo, commit, version)
+    stable_tags = {tag for tag in git(repo, 'tag', '--points-at', commit).decode().splitlines()
+                   if re.fullmatch(r'v?[0-9]+\.[0-9]+\.[0-9]+', tag)}
     if re.fullmatch(r'(?:refs/tags/)?v?[0-9]+\.[0-9]+\.[0-9]+', ref):
-        tag_version = ref.removeprefix('refs/tags/').removeprefix('v')
-        if version != tag_version:
+        stable_tags.add(ref.removeprefix('refs/tags/'))
+    for tag in stable_tags:
+        if version != tag.removeprefix('v'):
             raise ValueError('STABLE_TAG_RUNTIME_VERSION_MISMATCH')
         check_stable_acceptance(repo, commit, version)
     manifest = {

@@ -44,6 +44,14 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'STABLE_TAG_RUNTIME_VERSION_MISMATCH'):
             build(self.repo, 'v1.0.0', self.root / 'out')
 
+    def test_head_and_sha_cannot_bypass_stable_tag_version_mismatch(self):
+        self.stable(); self.save(self.record())
+        self.git('tag', '-a', 'v1.0.1', '-m', 'synthetic mismatched stable tag')
+        for ref in ('HEAD', self.git('rev-parse', 'HEAD').decode().strip()):
+            with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, 'STABLE_TAG_RUNTIME_VERSION_MISMATCH'):
+                build(self.repo, ref, self.root / 'out')
+        self.assertFalse((self.root / 'out').exists())
+
     def test_every_critical_gate_must_pass_in_required_scope(self):
         self.stable(); record = self.record()
         for gate in GATES:

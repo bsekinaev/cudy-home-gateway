@@ -141,6 +141,37 @@ check recovery_projects_pending action show
 phase=$(json_value /etc/home-gateway/state/actions.json 'data.records[length(data.records)-1].phase')
 check reboot_pending_expires test "$phase" = EXPIRED
 check reboot_does_not_restart_fixture test ! -e /tmp/hg-vm-lab/service-starts
+# Synthetic terminal migration receipt: exercise subsequent receiver/service
+# admission, not a claim that this VM performed the complete 18-to-20 migration.
+printf 'COMMITTED\n' > /etc/home-gateway-migration/phase
+printf 'HG_MIGRATION_ADMITTED_V1 COMMITTED\n' > /etc/home-gateway-migration/admission
+chmod 600 /etc/home-gateway-migration/phase /etc/home-gateway-migration/admission
+# The durable-state extension may have reacquired its own RAM fence above.
+if [ -L /tmp/home-gateway-deploy.lock ]; then
+    [ "$(readlink /tmp/home-gateway-deploy.lock)" = /etc/home-gateway-migration/fence ] || exit 78
+    rm /tmp/home-gateway-deploy.lock
+fi
+mkdir -m 700 /etc/home-gateway-deploy/tx.vmgate /tmp/home-gateway-deploy.lock
+printf '%s\n' "$$" > /tmp/home-gateway-deploy.lock/pid
+printf 'tx.vmgate\n' > /etc/home-gateway-deploy/active
+printf 'HGDEPLOY2\n' > /etc/home-gateway-deploy/tx.vmgate/inventory-version
+sed 's@  /@  @' /opt/hg-vm-lab/runtime.sha256 > /etc/home-gateway-deploy/tx.vmgate/new.sha256
+cp /etc/home-gateway-deploy/tx.vmgate/new.sha256 /etc/home-gateway-deploy/tx.vmgate/backup.sha256
+printf 'CHECKING\n' > /etc/home-gateway-deploy/tx.vmgate/phase
+chmod 600 /tmp/home-gateway-deploy.lock/pid /etc/home-gateway-deploy/active /etc/home-gateway-deploy/tx.vmgate/*
+check terminal_telegram_checking sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start
+printf 'APPLYING\n' > /etc/home-gateway-deploy/tx.vmgate/phase
+check terminal_telegram_blocks_mixed_apply sh -c '! sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start'
+printf 'RESTORED\n' > /etc/home-gateway-deploy/tx.vmgate/phase
+check terminal_telegram_restored sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start
+check terminal_telegram_procd_start /etc/init.d/home-gateway-telegram start
+ubus call service list '{"name":"home-gateway-telegram","verbose":true}' > /tmp/hg-vm-lab/telegram-terminal.json
+check terminal_telegram_instances ucode -e 'import * as fs from "fs"; let d=json(fs.readfile("/tmp/hg-vm-lab/telegram-terminal.json")); exit(length(keys(d["home-gateway-telegram"]?.instances || {})) == 2 ? 0 : 1);'
+check terminal_telegram_procd_stop /etc/init.d/home-gateway-telegram stop
+rm /etc/home-gateway-deploy/active
+printf '999999999\n' > /tmp/home-gateway-deploy.lock/pid
+check terminal_receiver_stale_recovery sh /usr/libexec/home-gateway-deploy/engine.sh recover
+check terminal_receiver_lease_removed test ! -e /tmp/home-gateway-deploy.lock
 total=$(wc -l < "$LAB/checks.log")
 failed=$(grep -c ':FAIL$' "$LAB/checks.log" || true)
 [ "$failed" -eq 0 ] && status=PASS || status=FAIL

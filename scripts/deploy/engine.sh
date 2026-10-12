@@ -21,10 +21,14 @@ unset HG_LIBDIR ENV BASH_ENV
 # until the separately installed admission boundary verifies a terminal receipt.
 if [ -e "$ROOT/etc/home-gateway-migration" ] || [ -L "$ROOT/etc/home-gateway-migration" ]; then
     admission="$ROOT/usr/libexec/home-gateway-deploy/migration-admission.sh"
+    admission_owner=0; admission_group=0
+    if [ -n "$ROOT" ]; then admission_owner=$(id -u); admission_group=$(id -g); fi
+    set_admission_scope=
+    [ "${1:-}" != recover ] || set_admission_scope=--receiver-recover
     [ -f "$admission" ] && [ ! -L "$admission" ] &&
-        [ "$(stat -c '%u:%g:%a:%h' "$admission")" = '0:0:700:1' ] || exit 73
-    if [ -n "$ROOT" ]; then /bin/sh "$admission" --test-root "$ROOT" || exit 73
-    else /bin/sh "$admission" || exit 73
+        [ "$(stat -c '%u:%g:%a:%h' "$admission")" = "$admission_owner:$admission_group:700:1" ] || exit 73
+    if [ -n "$ROOT" ]; then /bin/sh "$admission" --test-root "$ROOT" $set_admission_scope || exit 73
+    else /bin/sh "$admission" $set_admission_scope || exit 73
     fi
 fi
 files() {
@@ -163,7 +167,8 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     case "$owner" in ''|*[!0-9]*) fail 'lock incomplete; inspect locally';; esac
     if kill -0 "$owner" 2>/dev/null; then fail 'another deployment is running'; fi
     [ "$command" = recover ] || fail 'stale lock; run recover'
-    rm -rf "$LOCK"
+    rm -f "$LOCK/pid" || fail 'stale lease cleanup failed'
+    rmdir "$LOCK" || fail 'unknown lock contents; inspect locally'
     mkdir "$LOCK" || fail 'lock race'
 fi
 printf '%s\n' "$$" > "$LOCK/pid"
