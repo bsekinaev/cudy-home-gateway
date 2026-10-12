@@ -109,6 +109,10 @@ class VaultTests(unittest.TestCase):
                 return real(fd)
             with patch.object(vault.os, 'fsync', side_effect=fail_after_commit):
                 result = store.import_archive(self.archive, self.digest, self.inventory)
+                accepted_before_retry = store.records()
+                blocked_retry = store.import_archive(self.archive, self.digest, self.inventory)
+                self.assertEqual(blocked_retry['status'], 'COMMITTED_DURABILITY_UNKNOWN')
+                self.assertEqual(store.records(), accepted_before_retry)
             self.assertEqual(result['status'], 'COMMITTED_DURABILITY_UNKNOWN')
             self.assertTrue(result['committed']); self.assertTrue(result['durability_error'])
             for name, data in old_files.items():
@@ -117,6 +121,24 @@ class VaultTests(unittest.TestCase):
             retry = store.import_archive(self.archive, self.digest, self.inventory)
             self.assertEqual(retry['status'], 'ALREADY_STORED')
             self.assertEqual(store.records(), accepted)
+
+    def test_readonly_show_uses_noncreating_readonly_lock(self):
+        self.store(); real = vault.os.open
+        observed = []
+        def opened(path, flags, *args, **kwargs):
+            if path == 'vault.lock':
+                observed.append(flags)
+                self.assertEqual(flags & os.O_ACCMODE, os.O_RDONLY)
+                self.assertFalse(flags & os.O_CREAT)
+            return real(path, flags, *args, **kwargs)
+        with patch.object(vault.os, 'open', side_effect=opened):
+            with vault.Vault(self.path, readonly=True) as store:
+                self.assertEqual(store.show()['copies'], 1)
+        self.assertEqual(len(observed), 1)
+        (self.path / 'vault.lock').unlink()
+        with self.assertRaises(FileNotFoundError):
+            vault.Vault(self.path, readonly=True)
+        self.assertFalse((self.path / 'vault.lock').exists())
     def test_empty_corrupt_catalog_never_deletes_committed_pair(self):
         self.store()
         pairs = {p.name: p.read_bytes() for p in self.path.iterdir() if vault.COPY.fullmatch(p.name)}

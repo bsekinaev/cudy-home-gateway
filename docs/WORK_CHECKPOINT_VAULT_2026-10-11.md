@@ -64,3 +64,7 @@ archive copies не удаляются. Partial cleanup retries retain cleanup_p
 after SQL COMMIT reports COMMITTED_DURABILITY_UNKNOWN/committed=true and retains
 retired backups; exact retry deduplicates. Empty interrupted schema initialization
 retry permitted only for strict no-archive state, never over unknown copies.
+
+12.10: 61 backup tests PASS. GC requires directory durability barrier BEFORE
+any unlink, including exact retry/recover after sustained fsync EIO; retired
+backups remain intact. Readonly show opens an existing lock O_RDONLY/no O_CREAT.

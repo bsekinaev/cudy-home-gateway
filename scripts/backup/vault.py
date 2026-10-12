@@ -19,6 +19,10 @@ COPY = re.compile(r'([0-9a-f]{32})\.(tar\.gz|inventory\.json)')
 MAX_DB = 2 * 1024 * 1024
 
 
+class DurabilityError(BackupError):
+    pass
+
+
 def directory(path, create=False):
     """Validate each opened ancestor before creating a private child; no chmod."""
     raw = str(path)
@@ -61,7 +65,8 @@ class Vault:
         self.lock = self.db = None
         try:
             self.validate_entries()
-            self.lock = os.open('vault.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+            flags = os.O_RDONLY if readonly else os.O_RDWR | os.O_CREAT
+            self.lock = os.open('vault.lock', flags | os.O_NOFOLLOW | os.O_CLOEXEC,
                                 0o600, dir_fd=self.fd)
             st = os.fstat(self.lock)
             require(stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and
@@ -196,6 +201,12 @@ class Vault:
     def garbage_collect(self):
         records = self.verified_records()
         self.validate_entries()  # Reject unsafe candidates before any unlink.
+        try:
+            os.fsync(self.fd)
+        except OSError:
+            # Even retries/recover need a successful durability barrier before
+            # deleting a copy whose catalog reference was retired by COMMIT.
+            raise DurabilityError('CATALOG_DURABILITY_UNKNOWN') from None
         referenced = {identifier + suffix for identifier, *_ in records for suffix in ('.tar.gz', '.inventory.json')}
         removed = 0
         with os.scandir(self.fd) as entries:
@@ -258,6 +269,10 @@ class Vault:
             self.verified_records()
             preserved = self.preserved_unknown()
             pending = bool(self.pending_retirements())
+        except DurabilityError:
+            return dict(schema_version=1, status='COMMITTED_DURABILITY_UNKNOWN',
+                        committed=True, durability_error=True, copies=copies,
+                        cleanup_pending=True, transaction_consistent=False, restore_supported=False)
         except (BackupError, OSError, sqlite3.Error, ValueError):
             # The catalog commit already happened. Do not turn it into a failed
             # import that callers will retry and rotate again. Exact hash+inventory
