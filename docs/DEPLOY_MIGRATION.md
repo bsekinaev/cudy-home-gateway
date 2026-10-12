@@ -53,8 +53,18 @@ drift/modes, повторный запуск и conflict с новым deploymen
 Fixture `fixtures/legacy-engine-18.sh` — исходный public receiver из `c921c2d`,
 SHA256 `4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e`.
 Публичный `v0.5.0-dev` receiver уже содержит **19**, поэтому нельзя считать его
-точной копией установленного 18-file receiver. Совпадение target bytes ещё не
-подтверждено. Service/ucode fixtures в filesystem тестах не являются доказательством
+точной копией установленного 18-file receiver.
+Owner evidence от 12.10.2026: SHA256 production
+`/usr/libexec/home-gateway-deploy/engine.sh` совпадает с указанным SHA256 fixture.
+Проверен файл из GitHub PR #18 на exact HEAD
+`966c9b4498019b1ceaac83236c974c30e3362024`: base64 декодирован без преобразования
+переводов строк, SHA256 вычислен локально. Это подтверждает identity engine по
+сообщённому владельцем digest; router read/execute не выполнялись.
+Mismatch gate не сработал. При любом последующем несовпадении — STOP до выяснения
+причины; перепривязка pin к неизвестному receiver запрещена.
+Production migration остаётся BLOCKED: wrapper/init identity и metadata,
+coordinator, disposable OpenWrt/procd/boot/restore acceptance и резервный LAN
+не подтверждены этим digest. Service/ucode fixtures не являются доказательством
 procd/target semantics; production runtime отдельно проверяется pinned ucode/ash CI.
 Host BusyBox 1.36.1 не доказывает BusyBox 1.37.0 target PASS.
 
@@ -87,7 +97,7 @@ Host BusyBox 1.36.1 не доказывает BusyBox 1.37.0 target PASS.
    vtest/MAIN changes требуют отдельных разрешений. Stable tag до приёмки запрещён.
 
 Точная следующая задача: port coordinator на BusyBox/OpenWrt без Python и
-подтвердить exact installed legacy receiver identity; затем isolated procd/boot
+подтвердить wrapper/init identity и metadata; затем isolated procd/boot
 fault tests. Только после этого предлагать владельцу конкретный production apply.
 
 Review fixes: own stale temporaries проверяются по exact snapshot prefix, metadata
