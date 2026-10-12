@@ -65,3 +65,6 @@ one-shot intent; child отсутствует. EMFILE regression, 22 native test
 fork now release and sync the owned global fence. EEXIST distinguished from
 ENOSPC/EIO; partial intent retained without launching child. Actual ELF hook
 faults plus cancel/fork/pipe/SIGKILL regressions. Not installed; vtest disabled.
+
+12.10: 25 native tests PASS; active creation ENOSPC reports WRITE_FAILED,
+not orphan RECOVERY_REQUIRED. Existing active/EEXIST still fails closed.

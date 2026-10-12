@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
     /* Global RAM fence precedes durable run consumption and fork. A crash
      * leaves it in place; a new engine cannot overlap an orphan's death. */
     int active = openat(base, "active", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (active < 0) return fixed(70, "RECOVERY_REQUIRED");
+    if (active < 0) return fixed(70, errno == EEXIST ? "RECOVERY_REQUIRED" : "WRITE_FAILED");
     if (write_all(active, argv[1], 32) || sync_fd(active) || sync_fd(base)) {
         close(active);
         return prechild_failure(base, 70, "WRITE_FAILED");

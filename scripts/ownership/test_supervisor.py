@@ -329,6 +329,23 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 77)
         self.assertEqual(json.loads(result.stdout)['status'], 'DISABLED')
 
+    def test_active_creation_enospc_does_not_claim_orphan_recovery(self):
+        hook = self.base / 'active-open-failed.c'
+        hook.write_text('#define _GNU_SOURCE\n#include <fcntl.h>\n#include <stdarg.h>\n'
+            '#include <errno.h>\n#include <string.h>\n#include <sys/syscall.h>\n#include <unistd.h>\n'
+            'int __wrap_openat(int dir,const char *path,int flags,...) { mode_t mode=0; '
+            'if(flags&O_CREAT) { va_list args;va_start(args,flags);mode=va_arg(args,int);va_end(args); } '
+            'if(!strcmp(path,"active")) { errno=ENOSPC;return -1; } '
+            'return syscall(SYS_openat,dir,path,flags,mode); }\n')
+        self.compile(SOURCE, self.executable, ['-DHG_TEST_BUILD', '-Wl,--wrap=openat',
+            '-DXRAY_PATH="' + str(self.fixture) + '"', '-DRUN_BASE="' + str(self.runs) + '"'], [hook])
+        result = self.cli()
+        self.assertEqual(result.returncode, 70, result.stdout)
+        self.assertIn('WRITE_FAILED', result.stdout)
+        self.assertFalse((self.runs / 'active').exists())
+        self.assertFalse((self.run / 'execution.intent').exists())
+        self.assertFalse((self.run / 'pid').exists())
+
     def test_active_and_intent_storage_failures_never_leave_orphan_fence(self):
         for fail_at in (1, 2, 3, 4):
             with self.subTest(fsync_call=fail_at):
