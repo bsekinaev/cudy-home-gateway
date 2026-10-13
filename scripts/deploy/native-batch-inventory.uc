@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 function refuse(code) { die('NATIVE_BATCH_INVENTORY_REFUSED=' + code + '\n'); }
 let root = ARGV[0];
-if (length(ARGV) != 1 || !match(root, /^\/tmp\/hg-native-batch\.[A-Za-z0-9]+$/)) refuse('ROOT');
+if (length(ARGV) != 1 || !match(root, /^\/tmp\/hg-native-batch\.[A-Za-z0-9_-]+$/)) refuse('ROOT');
 let parent = fs.lstat('/tmp'), base = fs.lstat(root);
 if (parent?.type != 'directory' || parent.uid != 0 || !parent.perm.sticky ||
     base?.type != 'directory' || base.uid != 0 || base.gid != 0 || base.mode != 0700) refuse('ROOT_METADATA');
