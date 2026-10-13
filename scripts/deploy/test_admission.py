@@ -25,11 +25,66 @@ class AdmissionTests(unittest.TestCase):
 
     def state(self, phase='COMMITTED', receipt=True):
         self.base.mkdir(mode=0o700, exist_ok=True)
+        marker=self.base / 'marker'
+        marker.write_text('HG_MIGRATION_STATE_V1 11111111-2222-3333-4444-555555555555\n'); marker.chmod(0o600)
+        lock=self.root / 'etc/home-gateway-migration.lock'
+        if not lock.exists(): lock.touch(mode=0o600)
         (self.base / 'phase').write_text(phase + '\n')
         (self.base / 'phase').chmod(0o600)
         if receipt:
-            (self.base / 'admission').write_text('HG_MIGRATION_ADMITTED_V1 ' + phase + '\n')
+            (self.base / 'admission').write_text('HG_MIGRATION_ADMITTED_V2 ' + phase + ' 11111111-2222-3333-4444-555555555555 ' + str(lock.stat().st_ino) + '\n')
             (self.base / 'admission').chmod(0o600)
+
+    def test_terminal_marker_and_guard_identity_required(self):
+        self.state()
+        for path in (self.base / 'marker', self.root / 'etc/home-gateway-migration.lock'):
+            raw=path.read_bytes(); path.unlink()
+            self.assertNotEqual(self.run_gate(), 0)
+            path.write_bytes(raw); path.chmod(0o600)
+            path.chmod(0o644); self.assertNotEqual(self.run_gate(), 0); path.chmod(0o600)
+            path.write_bytes(b'CORRUPT\n'); self.assertNotEqual(self.run_gate(), 0)
+            path.write_bytes(raw)
+        self.state()
+        self.assertEqual(self.run_gate(), 0)
+
+    def test_replaced_valid_marker_or_empty_guard_cannot_reuse_old_receipt(self):
+        self.state()
+        (self.base / 'marker').write_text('HG_MIGRATION_STATE_V1 aaaaaaaa-2222-3333-4444-555555555555\n')
+        self.assertNotEqual(self.run_gate(), 0)
+        self.state()
+        lock=self.root / 'etc/home-gateway-migration.lock'
+        lock.rename(lock.with_name('saved-guard'))
+        lock.touch(mode=0o600)
+        self.assertNotEqual(self.run_gate(), 0)
+
+    def test_terminal_gate_refuses_held_coordinator_guard(self):
+        import fcntl
+        self.state()
+        with (self.root / 'etc/home-gateway-migration.lock').open('rb') as guard:
+            fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertNotEqual(self.run_gate('--telegram-start'), 0)
+            self.assertNotEqual(self.run_gate('--receiver-recover'), 0)
+        self.assertEqual(self.run_gate('--telegram-start'), 0)
+
+    def test_borrowed_start_guard_survives_complete_parent_handshake(self):
+        import json
+        import shlex
+        import shutil
+        self.state()
+        self.assertNotEqual(self.run_gate('--telegram-start', '--held-telegram-guard'), 0)
+        bb=shutil.which(os.environ.get('HG_TEST_BUSYBOX', 'busybox'))
+        command=os.environ.get('HG_TEST_SHELL', '/bin/sh').split()
+        gate=command + [str(SCRIPT), '--test-root', str(self.root), '--telegram-start', '--held-telegram-guard']
+        module=SCRIPT.with_name('migration-state.uc').resolve()
+        code='import { open_state } from ' + json.dumps(str(module)) + '; open_state(ARGV[0], false, ARGV[1]);'
+        probe=['ucode', '-e', code, '--', str(self.root), bb]
+        body=('exec 8< ' + shlex.quote(str(self.root / 'etc/home-gateway-migration.lock')) + '\n' +
+              shlex.join([bb, 'flock', '-n', '8']) + ' || exit 1\n' +
+              shlex.join(gate) + ' || exit 2\nif ' + shlex.join(probe) + '; then exit 3; fi\n' +
+              shlex.join(gate) + ' || exit 4\nexec 8<&-\n' + shlex.join(probe))
+        result=subprocess.run(command + ['-c', body], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('BUSY', result.stderr)
 
     def test_missing_state_allows_and_does_not_create_files(self):
         self.assertEqual(self.run_gate(), 0)

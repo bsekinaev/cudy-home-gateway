@@ -180,7 +180,7 @@ export function open_state(root, create, test_busybox) {
             let p = phase();
             require(p == 'COMMITTED' || p == 'ROLLED_BACK', 'NONTERMINAL');
             require(fs.lstat(BASE + '/phase.new') == null && fs.lstat(BASE + '/admission.new') == null, 'PENDING_ADMISSION');
-            require(read(BASE + '/admission', 128) == 'HG_MIGRATION_ADMITTED_V1 ' + p + '\n', 'NOT_VERIFIED');
+            require(read(BASE + '/admission', 128) == 'HG_MIGRATION_ADMITTED_V2 ' + p + ' ' + trim(substr(MARKER, length('HG_MIGRATION_STATE_V1 '))) + ' ' + lock_stat.inode + '\n', 'NOT_VERIFIED');
             if (fs.lstat(RAM) != null) { owned_fence(); require(fs.unlink(RAM), 'UNLINK_FAILED'); }
             sync([ root + '/tmp' ]);
         },

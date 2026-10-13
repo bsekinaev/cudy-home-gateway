@@ -162,7 +162,7 @@ check reboot_does_not_restart_fixture test ! -e /tmp/hg-vm-lab/service-starts
 # Synthetic terminal migration receipt: exercise subsequent receiver/service
 # admission, not a claim that this VM performed the complete 18-to-20 migration.
 printf 'COMMITTED\n' > /etc/home-gateway-migration/phase
-printf 'HG_MIGRATION_ADMITTED_V1 COMMITTED\n' > /etc/home-gateway-migration/admission
+ucode -e 'import * as fs from "fs"; let nonce=split(trim(fs.readfile("/etc/home-gateway-migration/marker")), " " )[1]; fs.writefile("/etc/home-gateway-migration/admission", "HG_MIGRATION_ADMITTED_V2 COMMITTED " + nonce + " " + fs.lstat("/etc/home-gateway-migration.lock").inode + "\n");'
 chmod 600 /etc/home-gateway-migration/phase /etc/home-gateway-migration/admission
 # The durable-state extension may have reacquired its own RAM fence above.
 if [ -L /tmp/home-gateway-deploy.lock ]; then
@@ -182,7 +182,22 @@ printf 'APPLYING\n' > /etc/home-gateway-deploy/tx.vmgate/phase
 check terminal_telegram_blocks_mixed_apply sh -c '! sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start'
 printf 'RESTORED\n' > /etc/home-gateway-deploy/tx.vmgate/phase
 check terminal_telegram_restored sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start
-check terminal_telegram_procd_start /etc/init.d/home-gateway-telegram start
+# Observe the real procd ubus publication while rc.common still owns FD8.
+mkdir -m 700 /tmp/hg-vm-lab/start-bin
+HG_VM_REAL_UBUS=$(command -v ubus); export HG_VM_REAL_UBUS
+cat > /tmp/hg-vm-lab/start-bin/ubus <<'SHIM'
+#!/bin/sh
+if [ "$1:$2:$3" = call:service:set ]; then
+    ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; open_state("", false, null);' 2>/tmp/hg-vm-lab/start-guard-probe
+    [ "$?" != 0 ] && grep -q BUSY /tmp/hg-vm-lab/start-guard-probe || exit 1
+    touch /tmp/hg-vm-lab/start-guard-held
+fi
+exec "$HG_VM_REAL_UBUS" "$@"
+SHIM
+chmod 700 /tmp/hg-vm-lab/start-bin/ubus
+check terminal_telegram_procd_start env PATH=/tmp/hg-vm-lab/start-bin:/usr/sbin:/usr/bin:/sbin:/bin /etc/init.d/home-gateway-telegram start
+check terminal_startup_serialized test -f /tmp/hg-vm-lab/start-guard-held
+check terminal_workers_do_not_inherit_guard ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; open_state("", false, null);'
 ubus call service list '{"name":"home-gateway-telegram","verbose":true}' > /tmp/hg-vm-lab/telegram-terminal.json
 check terminal_telegram_instances ucode -e 'import * as fs from "fs"; let d=json(fs.readfile("/tmp/hg-vm-lab/telegram-terminal.json")); exit(length(keys(d["home-gateway-telegram"]?.instances || {})) == 2 ? 0 : 1);'
 check terminal_telegram_procd_stop /etc/init.d/home-gateway-telegram stop

@@ -3,7 +3,11 @@
 set -eu
 UCODE=/usr/bin/ucode
 # Explicit disposable fixtures only; production has no executable override.
-if [ "${1:-}" = --test-root ]; then UCODE=${HG_TEST_UCODE_BIN:-$(command -v ucode)}; fi
+if [ "${1:-}" = --test-root ]; then
+    UCODE=${HG_TEST_UCODE_BIN:-$(command -v ucode)}
+    HG_TEST_BUSYBOX=$(command -v "${HG_TEST_BUSYBOX:-busybox}")
+    export HG_TEST_BUSYBOX
+fi
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 exec "$UCODE" -e "$(cat <<'UCODE'
@@ -25,6 +29,8 @@ if (args[0] == '--test-root') {
 let scope='default';
 if (args[0] == '--receiver-recover') { scope='recover'; shift(args); }
 else if (args[0] == '--telegram-start') { scope='telegram'; shift(args); }
+let borrowed=scope == 'telegram' && args[0] == '--held-telegram-guard';
+if (borrowed) shift(args);
 require(length(args) == 0);
 const BASE=root + '/etc/home-gateway-migration', FENCE=root + '/tmp/home-gateway-deploy.lock';
 function checked(path, kind, mode, limit) {
@@ -40,16 +46,41 @@ function checked(path, kind, mode, limit) {
 }
 function read(path, limit) {
     let s=checked(path, 'file', 0600, limit), f=fs.open(path, 're'); require(f != null);
+    let held=fs.stat('/proc/self/fd/' + f.fileno());
+    require(held?.inode == s.inode && held.dev.major == s.dev.major && held.dev.minor == s.dev.minor);
     let raw=f.read(limit+1), closed=f.close(), after=fs.lstat(path);
-    require(closed != null && type(raw) == 'string' && length(raw) == s.size && after?.inode == s.inode && after.size == s.size && after.mtime == s.mtime);
+    require(closed != null && type(raw) == 'string' && length(raw) == s.size && after?.inode == s.inode && after.size == s.size && after.mtime == s.mtime && after.type == s.type && after.dev.major == s.dev.major && after.dev.minor == s.dev.minor && after.uid == s.uid && after.gid == s.gid && after.mode == s.mode && after.nlink == s.nlink);
     return raw;
 }
+const LOCK=root + '/etc/home-gateway-migration.lock';
+let guard=null, identity=null;
+if (fs.lstat(BASE) != null || fs.lstat(LOCK) != null || borrowed) {
+    let st=checked(LOCK, 'file', 0600, 0), held;
+    if (borrowed) {
+        held=fs.stat('/proc/self/fd/8');
+        require(held?.inode == st.inode && held.dev.major == st.dev.major && held.dev.minor == st.dev.minor &&
+            held.uid == owner && held.gid == group && held.mode == 0600 && held.nlink == 1 && held.size == 0);
+        // FD8 belongs to rc.common's parent startup handshake. This child shares
+        // its open file description; it must not unlock or close the parent FD.
+        let bb=root == '' ? '/bin/busybox' : getenv('HG_TEST_BUSYBOX');
+        require(type(bb) == 'string' && length(bb) > 0 && command([ bb, 'flock', '-n', '8' ]) == 0);
+    } else {
+        guard=fs.open(LOCK, 're'); require(guard != null);
+        held=fs.stat('/proc/self/fd/' + guard.fileno());
+        require(held?.inode == st.inode && held.dev.major == st.dev.major && held.dev.minor == st.dev.minor && guard.lock('xn') != null);
+    }
+    require(fs.lstat(LOCK)?.inode == held.inode);
+    identity=st;
+}
 if (fs.lstat(BASE) == null) { require(fs.lstat(FENCE) == null); exit(0); }
-checked(BASE, 'directory', 0700, 0);
+let base_stat=checked(BASE, 'directory', 0700, 0);
+require(identity.dev.major == base_stat.dev.major && identity.dev.minor == base_stat.dev.minor);
+let marker=read(BASE + '/marker', 128);
+require(match(marker, /^HG_MIGRATION_STATE_V1 [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\n$/) != null);
 require(fs.lstat(BASE + '/phase.new') == null && fs.lstat(BASE + '/admission.new') == null);
 let raw=read(BASE + '/phase', 32), phase=trim(raw);
 require((phase == 'COMMITTED' || phase == 'ROLLED_BACK') && raw == phase + '\n');
-require(read(BASE + '/admission', 128) == 'HG_MIGRATION_ADMITTED_V1 ' + phase + '\n');
+require(read(BASE + '/admission', 128) == 'HG_MIGRATION_ADMITTED_V2 ' + phase + ' ' + trim(substr(marker, length('HG_MIGRATION_STATE_V1 '))) + ' ' + identity.inode + '\n');
 let pid=null;
 if (fs.lstat(FENCE) != null) {
     require(scope != 'default'); checked(FENCE, 'directory', 0700, 0);

@@ -228,3 +228,13 @@ isolation and cleanup are NOT confirmed. Do not rerun the old harness or remove
 it never follows symlinks, signals processes or removes locks. Its kernel-holder
 PID output is observational and is not authorization to kill a process.
 Production remains BLOCKED; tmpfs ARM tests are not flash/reboot migration gates.
+
+Terminal admission hardening: receipt V2 binds phase, exact journal UUID and
+persistent guard inode; V1 prototypes are refused, never automatically converted.
+Guard/marker are typed/bounded/read-only checked under kernel serialization.
+Telegram rc.common keeps FD8 exclusively locked from start_service through real
+procd publication and service_started postcheck; PID1-spawned workers do not
+inherit the guard. Failure before instance construction is reported by the hook.
+Guard inode stability on real CUDY overlay across reboot is an unclosed target
+gate: any changed identity must fail closed, not silently refresh the receipt.
+Legacy18 boot/service guard installation still requires the full coordinator.

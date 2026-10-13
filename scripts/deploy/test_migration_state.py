@@ -175,7 +175,7 @@ int chmod(const char *path, mode_t mode) {
     def test_pending_admission_never_releases_terminal_fence(self):
         self.success('s.fence(); s.transition("PREPARED"); s.transition("RESTORING"); s.transition("ROLLED_BACK");')
         admission = self.base / 'admission'
-        admission.write_bytes(b'HG_MIGRATION_ADMITTED_V1 ROLLED_BACK\n'); admission.chmod(0o600)
+        admission.write_bytes(('HG_MIGRATION_ADMITTED_V2 ROLLED_BACK ' + (self.base / 'marker').read_text().split()[1] + ' ' + str((self.root / 'etc/home-gateway-migration.lock').stat().st_ino) + '\n').encode()); admission.chmod(0o600)
         pending = self.base / 'admission.new'
         pending.write_bytes(admission.read_bytes()); pending.chmod(0o600)
         self.assertNotEqual(self.run_state('s.release();', False).returncode, 0)
@@ -214,7 +214,7 @@ int chmod(const char *path, mode_t mode) {
         self.assertNotEqual(self.run_state('s.release();', False).returncode, 0)
         self.assertTrue(self.ram.is_symlink())
         p = self.base / 'admission'
-        p.write_text('HG_MIGRATION_ADMITTED_V1 COMMITTED\n'); p.chmod(0o600)
+        p.write_text('HG_MIGRATION_ADMITTED_V2 COMMITTED ' + (self.base / 'marker').read_text().split()[1] + ' ' + str((self.root / 'etc/home-gateway-migration.lock').stat().st_ino) + '\n'); p.chmod(0o600)
         self.success('s.release();', False); self.success('s.release();', False)
         self.assertFalse(self.ram.is_symlink())
 

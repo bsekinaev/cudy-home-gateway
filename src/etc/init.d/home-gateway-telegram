@@ -8,13 +8,38 @@ PROG=/usr/bin/ucode
 POLLER=/usr/lib/home-gateway/telegram-poller.uc
 GATEWAY=/usr/bin/gateway
 
+HG_START_GUARD=0
+HG_START_ACCEPTED=0
+
+hg_start_guard() {
+    local guard=/etc/home-gateway-migration.lock before held
+    [ -d /etc ] && [ ! -L /etc ] &&
+        [ "$(stat -c '%u:%g' /etc)" = '0:0' ] &&
+        [ "$((0$(stat -c %a /etc) & 022))" = 0 ] || return 1
+    if [ ! -e "$guard" ] && [ ! -L "$guard" ]; then
+        (umask 077; set -C; : > "$guard") 2>/dev/null || return 1
+        busybox fsync "$guard" /etc || return 1
+    fi
+    [ -f "$guard" ] && [ ! -L "$guard" ] &&
+        [ "$(stat -c '%u:%g:%a:%h:%s' "$guard")" = '0:0:600:1:0' ] || return 1
+    before=$(stat -c '%d:%i' "$guard") || return 1
+    exec 8< "$guard" || return 1
+    held=$(stat -Lc '%d:%i' /proc/self/fd/8)
+    if [ "$held" != "$before" ] || ! busybox flock -n 8 ||
+        [ "$(stat -c '%d:%i' "$guard")" != "$before" ]; then
+        exec 8<&-; return 1
+    fi
+    HG_START_GUARD=1
+}
+
 hg_runtime_admitted() {
 	# /tmp locks disappear at reboot; migration admission lives on overlay.
 	if [ -e /etc/home-gateway-migration ] || [ -L /etc/home-gateway-migration ]; then
 		local admission=/usr/libexec/home-gateway-deploy/migration-admission.sh
 		[ -f "$admission" ] && [ ! -L "$admission" ] &&
 			[ "$(stat -c '%u:%g:%a:%h' "$admission")" = '0:0:700:1' ] || return 1
-		/bin/sh "$admission" --telegram-start || return 1
+		[ "$HG_START_GUARD" = 1 ] || return 1
+		/bin/sh "$admission" --telegram-start --held-telegram-guard || return 1
 	fi
 	# Do not start the poller on a mixed tree after an interrupted deployment.
 	if [ -f /etc/home-gateway-deploy/active ]; then
@@ -30,10 +55,17 @@ hg_runtime_admitted() {
 # rc.common closes the service after start_service and otherwise masks its exit
 # status. Recheck via its supported service_started hook to report refusal too.
 service_started() {
-	hg_runtime_admitted
+    local rc=1
+    if [ "$HG_START_GUARD" = 1 ] && [ "$HG_START_ACCEPTED" = 1 ]; then
+        hg_runtime_admitted; rc=$?
+    fi
+    exec 8<&-
+    HG_START_GUARD=0
+    return "$rc"
 }
 
 start_service() {
+	hg_start_guard || return 1
 	hg_runtime_admitted || return 1
 	[ -x "$PROG" ] || return 1
 	[ -r "$POLLER" ] || return 1
@@ -51,4 +83,5 @@ start_service() {
 	procd_set_param respawn 3600 5 5
 	procd_set_param stderr 1
 	procd_close_instance
+	HG_START_ACCEPTED=1
 }
