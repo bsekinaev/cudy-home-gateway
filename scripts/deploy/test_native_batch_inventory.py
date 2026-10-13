@@ -80,6 +80,12 @@ DIR *opendir(const char *path) {
     const char *target = getenv("HG_SWAP_TARGET");
     char resolved[4096], moved[4096];
     ssize_t n = readlink(path, resolved, sizeof(resolved)-1);
+    size_t len = strlen(path);
+    if (n < 0 && len > 2 && len < sizeof(moved) && !strncmp(path, "/proc/self/fd/", 14) &&
+        !strcmp(path + len - 2, "/.")) {
+        memcpy(moved, path, len - 2); moved[len - 2] = 0;
+        n = readlink(moved, resolved, sizeof(resolved)-1);
+    }
     if (n >= 0) resolved[n] = 0; else resolved[0] = 0;
     if (!swapped && owned && (!strcmp(path, owned) || !strcmp(resolved, owned) ||
         (n >= 0 && !strncmp(resolved, owned, strlen(owned)) && !strcmp(resolved + strlen(owned), "/.")))) {
