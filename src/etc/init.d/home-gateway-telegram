@@ -17,6 +17,9 @@ hg_start_guard() {
         [ "$(stat -c '%u:%g' /etc)" = '0:0' ] &&
         [ "$((0$(stat -c %a /etc) & 022))" = 0 ] || return 1
     if [ ! -e "$guard" ] && [ ! -L "$guard" ]; then
+        # Existing journals must never receive a recreated guard, even if an
+        # allocator would reuse the unlinked inode named by an old receipt.
+        [ ! -e /etc/home-gateway-migration ] && [ ! -L /etc/home-gateway-migration ] || return 1
         (umask 077; set -C; : > "$guard") 2>/dev/null || return 1
         busybox fsync "$guard" /etc || return 1
     fi

@@ -189,6 +189,12 @@ printf 'APPLYING\n' > /etc/home-gateway-deploy/tx.vmgate/phase
 check terminal_telegram_blocks_mixed_apply sh -c '! sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start'
 printf 'RESTORED\n' > /etc/home-gateway-deploy/tx.vmgate/phase
 check terminal_telegram_restored sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start
+# Keep the original inode only to restore this disposable fixture afterwards.
+# The assertion is that missing-guard startup must not create ANY replacement.
+mv /etc/home-gateway-migration.lock /etc/hg-vm-lab/saved-migration-guard
+check terminal_missing_guard_start_refused refused /etc/init.d/home-gateway-telegram start
+check terminal_missing_guard_not_recreated sh -c '[ ! -e /etc/home-gateway-migration.lock ] && [ ! -L /etc/home-gateway-migration.lock ]'
+[ ! -e /etc/home-gateway-migration.lock ] && mv /etc/hg-vm-lab/saved-migration-guard /etc/home-gateway-migration.lock
 # Observe the real procd ubus publication while rc.common still owns FD8.
 mkdir -m 700 /tmp/hg-vm-lab/start-bin
 HG_VM_REAL_UBUS=$(command -v ubus); export HG_VM_REAL_UBUS
