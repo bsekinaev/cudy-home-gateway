@@ -254,7 +254,8 @@ esac
         import time
         # Target BusyBox may reject both fractional forms. Exercise the actual
         # contention cleanup with an applet dispatcher that rejects them.
-        bb = os.environ.get('HG_TEST_BUSYBOX') or shutil.which('busybox')
+        bb = shutil.which(os.environ.get('HG_TEST_BUSYBOX', 'busybox'))
+        self.assertIsNotNone(bb)
         probe = self.root / 'fractional-sleep-attempted'
         self.put(self.bin / 'busybox', '#!/bin/sh\nif [ \"$1\" = sleep ]; then case \"$2\" in *.*) touch \"' + str(probe) + '\"; exit 2;; esac; fi\nexec \"' + str(bb) + '\" \"$@\"\n', 0o755)
         ready = self.root / 'cleanup-entered'
