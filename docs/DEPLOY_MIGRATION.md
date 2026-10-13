@@ -188,3 +188,11 @@ state module пока не устанавливается на production и н�
 legacy boot/service admission в едином coordinator, включая interrupted
 RESTORING, полный 18→20→18 roundtrip и Telegram state preservation. Owner SHA,
 backup inclusion и Windows integrity уже подтверждены; owner restore NOT_TESTED.
+
+Native state/admission VM: source `1717823cad5f4e2ac683e8273b6053d536324abc`,
+64 PASS / 0 FAIL, official networkless x86 OpenWrt25.12.5, procd PID1, ash1.37,
+actual SIGKILL/CLOEXEC, overlay-vs-tmpfs fence, reboot re-acquisition and three
+concurrent/stale receiver guard checks. Это synthetic state/admission acceptance,
+не полный migration/rollback или owner restore PASS. GitHub VM input gate
+отклонил изменившийся upstream index; прежний подписанный public `packages.adb`
+с сохранённым SHA теперь vendored для воспроизводимости, без перепривязки pin.

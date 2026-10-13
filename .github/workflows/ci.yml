@@ -142,16 +142,17 @@ jobs:
           mkdir vm-inputs
           curl --fail --location --retry 3 https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-25.12.5-x86-64-generic-kernel.bin -o vm-inputs/kernel.bin
           curl --fail --location --retry 3 https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-25.12.5-x86-64-generic-ext4-rootfs.img.gz -o vm-inputs/rootfs.img.gz
-          for name in packages.adb coreutils-9.9-r2.apk coreutils-stat-9.9-r2.apk coreutils-timeout-9.9-r2.apk; do
+          cp scripts/openwrt/fixtures/packages.adb vm-inputs/packages.adb
+          for name in coreutils-9.9-r2.apk coreutils-stat-9.9-r2.apk coreutils-timeout-9.9-r2.apk; do
             curl --fail --location --retry 3 "https://downloads.openwrt.org/releases/25.12.5/packages/x86_64/packages/$name" -o "vm-inputs/$name"
           done
-          # run_vm validates every fixed SHA before opening QEMU. If the mutable
-          # vendor repository index moves, refuse; never refresh its pin silently.
+          # run_vm validates every fixed SHA before opening QEMU. The signed public
+          # repository index is vendored byte-for-byte; never refresh its pin silently.
       - name: Run synthetic native restore, procd actions and reboot admission
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" > vm-report.json
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" > vm-report.json || { cat vm-report.json; exit 1; }
           cat vm-report.json
       - name: Upload public report only
         if: always()

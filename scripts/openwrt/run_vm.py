@@ -38,13 +38,13 @@ def git(*args):
     return subprocess.check_output(['git', '-C', str(ROOT), *args], stderr=subprocess.PIPE)
 
 
-def validated_input(path, sha):
+def validated_input(path, sha, reason='INPUT_SHA256'):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, 'rb') as file:
         metadata = os.fstat(file.fileno())
         require(stat.S_ISREG(metadata.st_mode) and metadata.st_size <= 16 * 1024 * 1024, 'INPUT_TYPE_OR_SIZE')
         data = file.read(16 * 1024 * 1024 + 1)
-    require(hashlib.sha256(data).hexdigest() == sha, 'INPUT_SHA256')
+    require(hashlib.sha256(data).hexdigest() == sha, reason)
     return data
 
 
@@ -80,7 +80,7 @@ def inject(image, workspace, commit, packages):
         manifest.append(hashlib.sha256(data).hexdigest() + '  /' + path + '\n')
     require(len(manifest) == 20, 'RUNTIME_INVENTORY')
     for name, sha in PACKAGE_SHA.items():
-        put('/opt/hg-vm-lab/packages/' + name, validated_input(packages / name, sha), 0o600)
+        put('/opt/hg-vm-lab/packages/' + name, validated_input(packages / name, sha, 'PACKAGE_INDEX_SHA256' if name == 'packages.adb' else 'PACKAGE_SHA256'), 0o600)
     put('/opt/hg-vm-lab/packages/repositories', b'/opt/hg-vm-lab/packages/packages.adb\n', 0o600)
     for source in ('migration-admission.sh', 'engine.sh'):
         put('/usr/libexec/home-gateway-deploy/' + source, git('show', commit + ':scripts/deploy/' + source), 0o700)
@@ -164,6 +164,20 @@ def run(args):
         return report
 
 
+def failure_report(error):
+    # Expose only fixed public codes, never subprocess output or local paths.
+    reason = str(error) if isinstance(error, ValueError) else ''
+    allowed = {'INPUT_SHA256', 'PACKAGE_INDEX_SHA256', 'PACKAGE_SHA256',
+               'INPUT_TYPE_OR_SIZE', 'DEBUGFS_PATH', 'GUEST_PATH', 'RUNTIME_INVENTORY',
+               'NO_SINGLE_COMPLETION', 'INCOMPLETE_CHECKS', 'COUNT_MISMATCH',
+               'STATUS_MISMATCH', 'EXPANDED_IMAGE_LIMIT', 'CONSOLE_LIMIT', 'VM_EXIT_FAILED'}
+    if reason not in allowed:
+        reason = ('IO_ERROR' if isinstance(error, OSError) else
+                  'VALIDATION_ERROR' if isinstance(error, ValueError) else 'SUBPROCESS_ERROR')
+    return dict(schema_version=1, status='VM_FAILED', scope='ISOLATED_X86_NOT_CUDY',
+                production_supported=False, reason=reason)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--kernel', type=Path, required=True)
@@ -176,9 +190,8 @@ def main():
     parser.add_argument('--diagnostic-log', type=Path, help='Private local diagnostic only; never CI artifact')
     args = parser.parse_args()
     try: report = run(args)
-    except (ValueError, OSError, subprocess.SubprocessError):
-        print(json.dumps(dict(schema_version=1, status='VM_FAILED', scope='ISOLATED_X86_NOT_CUDY',
-                              production_supported=False)))
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        print(json.dumps(failure_report(error)))
         return 1
     print(json.dumps(report, sort_keys=True))
     return 0 if report['status'] == 'PASS' else 1

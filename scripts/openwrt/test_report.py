@@ -1,9 +1,17 @@
 """Reject partial, duplicated or contradictory VM completion evidence."""
 import unittest
-from run_vm import parse_result
+from run_vm import parse_result, failure_report
 
 
 class ReportTests(unittest.TestCase):
+    def test_public_failure_code_without_private_exception_details(self):
+        self.assertEqual(failure_report(ValueError('PACKAGE_INDEX_SHA256'))['reason'], 'PACKAGE_INDEX_SHA256')
+        for message in ('/private/owner/archive', 'PRIVATE_TOKEN'):
+            report = failure_report(ValueError(message))
+            self.assertEqual(report['reason'], 'VALIDATION_ERROR')
+            self.assertNotIn(message, str(report))
+        self.assertEqual(failure_report(OSError('/private/path'))['reason'], 'IO_ERROR')
+
     def test_complete_report(self):
         raw = 'HGVM_CHECK=boot:PASS\r\nHGVM_CHECK=restore:PASS\r\nHGVM_RESULT=PASS TOTAL=2 FAILED=0 SCOPE=ISOLATED_X86_NOT_CUDY\r\n'
         report = parse_result(raw, {'boot', 'restore'})
