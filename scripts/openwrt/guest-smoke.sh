@@ -27,6 +27,13 @@ if [ ! -f "$LAB/reboot-pending" ]; then
     : > "$LAB/checks.log"
     check openwrt_release grep -q "DISTRIB_RELEASE='25.12.5'" /etc/openwrt_release
     check busybox_version sh -c 'ash --help 2>&1 | grep -q "BusyBox v1.37.0"'
+    # Optional fractional syntax is observed, never treated as a prerequisite.
+    for arg in 0.1 .1; do
+        sleep "$arg" >/dev/null 2>&1; plain=$?
+        busybox sleep "$arg" >/dev/null 2>&1; direct=$?
+        printf 'HGVM_SLEEP=%s:plain=%s:busybox=%s\n' "$arg" "$plain" "$direct"
+    done
+    check integer_sleep busybox sleep 1
     check vendor_prerequisites apk --repositories-file /opt/hg-vm-lab/packages/repositories --no-network add coreutils-stat=9.9-r2 coreutils-timeout=9.9-r2
     cat /tmp/hg-vm-lab/check.out
     sha256sum /etc/config/network /etc/config/firewall /etc/config/dhcp > /tmp/hg-vm-lab/network-config.sha256
@@ -107,7 +114,7 @@ EOF
     ucode -e 'import * as fs from "fs"; import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; let s=open_state("", false, null); let p=fs.popen("sleep 5", "r"); fs.writefile("/tmp/hg-vm-lab/migration-held", "HELD\n"); p.read("all");' &
     owned_coordinator=$!
     tries=0
-    while [ ! -f /tmp/hg-vm-lab/migration-held ] && [ "$tries" -lt 30 ]; do sleep .1; tries=$((tries + 1)); done
+    while [ ! -f /tmp/hg-vm-lab/migration-held ] && [ "$tries" -lt 5 ]; do sleep 1; tries=$((tries + 1)); done
     check migration_owner_held test -f /tmp/hg-vm-lab/migration-held
     check migration_exclusive_while_alive refused ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; open_state("", false, null);'
     kill -KILL "$owned_coordinator"

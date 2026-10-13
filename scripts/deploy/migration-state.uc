@@ -66,7 +66,7 @@ export function open_state(root, create, test_busybox) {
     }
     function exclusive(path, bytes) {
         require(fs.lstat(path) == null, 'UNKNOWN_TEMPORARY');
-        let f = fs.open(path, 'wxe');
+        let f = fs.open(path, 'wxe', 0600);
         require(f != null && fs.chmod(path, 0600), 'WRITE_FAILED');
         let ok = f.write(bytes) == length(bytes) && f.flush() != null;
         if (f.close() == null) ok = false;
@@ -89,7 +89,7 @@ export function open_state(root, create, test_busybox) {
     let prior = fs.lstat(LOCK);
     if (prior != null) checked(LOCK, 'file', 0600, 0);
     require(create || prior != null, 'NO_STATE');
-    let guard = fs.open(LOCK, create ? 'ae' : 're');
+    let guard = fs.open(LOCK, create ? 'ae' : 're', 0600);
     require(guard != null && (prior != null || fs.chmod(LOCK, 0600)), 'LOCK_FAILED');
     let lock_stat = checked(LOCK, 'file', 0600, 0);
     let held = fs.stat('/proc/self/fd/' + guard.fileno());

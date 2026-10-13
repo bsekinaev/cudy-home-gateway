@@ -166,9 +166,9 @@ serial_begin() {
         # after the command exits. Bound retries without a watchdog child.
         serial_tries=0
         while ! busybox flock -n 9; do
-            [ "$serial_tries" -lt 50 ] || { exec 9<&-; return 1; }
+            [ "$serial_tries" -lt 5 ] || { exec 9<&-; return 1; }
             serial_tries=$((serial_tries + 1))
-            busybox sleep .1 || { exec 9<&-; return 1; }
+            busybox sleep 1 || { exec 9<&-; return 1; }
         done
     else busybox flock -n 9 || { exec 9<&-; return 1; }
     fi

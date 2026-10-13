@@ -252,6 +252,11 @@ esac
         import fcntl
         import signal
         import time
+        # Target BusyBox may reject both fractional forms. Exercise the actual
+        # contention cleanup with an applet dispatcher that rejects them.
+        bb = os.environ.get('HG_TEST_BUSYBOX') or shutil.which('busybox')
+        probe = self.root / 'fractional-sleep-attempted'
+        self.put(self.bin / 'busybox', '#!/bin/sh\nif [ \"$1\" = sleep ]; then case \"$2\" in *.*) touch \"' + str(probe) + '\"; exit 2;; esac; fi\nexec \"' + str(bb) + '\" \"$@\"\n', 0o755)
         ready = self.root / 'cleanup-entered'
         proceed = self.root / 'cleanup-proceed'
         shim = ('#!/bin/sh\ncase "$*" in *"-rf ' + str(self.root) + '/tmp/hg-deploy."*) '
@@ -273,6 +278,7 @@ esac
             output = child.communicate(timeout=5)[0]
             self.assertEqual(child.returncode, 0, output)
             self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+            self.assertFalse(probe.exists(), 'fractional sleep is not a target prerequisite')
         finally:
             if child.poll() is None: os.killpg(child.pid, signal.SIGKILL)
             child.communicate(timeout=3)

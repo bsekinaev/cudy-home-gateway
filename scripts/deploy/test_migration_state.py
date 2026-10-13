@@ -36,6 +36,37 @@ class MigrationStateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
+    def test_failed_first_chmod_leaves_private_reusable_kernel_lock(self):
+        # Real open(2)/chmod(2), with only chmod fault-injected by the loader.
+        # A permissive caller umask must never expose or strand a 0644 lock.
+        compiler = shutil.which('cc')
+        self.assertIsNotNone(compiler, 'C compiler required for syscall fault injection')
+        source = self.root / 'deny-chmod.c'
+        source.write_text(r'''#define _GNU_SOURCE
+#include <sys/stat.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dlfcn.h>
+int chmod(const char *path, mode_t mode) {
+    const char *deny = getenv("HG_DENY_CHMOD");
+    if (deny && !strcmp(path, deny)) { errno = EIO; return -1; }
+    int (*real_chmod)(const char *, mode_t) = dlsym(RTLD_NEXT, "chmod");
+    return real_chmod(path, mode);
+}
+''')
+        library = self.root / 'deny-chmod.so'
+        subprocess.run([compiler, '-shared', '-fPIC', str(source), '-ldl', '-o', str(library)], check=True)
+        lock = self.root / 'etc/home-gateway-migration.lock'
+        env = dict(os.environ, LD_PRELOAD=str(library), HG_DENY_CHMOD=str(lock))
+        result = subprocess.run(self.command(), env=env, umask=0, capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(lock.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(lock.read_bytes(), b'')
+        self.assertFalse(self.base.exists())
+        self.success('s.fence();')
+        self.assertTrue(self.ram.is_symlink())
+
     def test_closed_guard_and_wrong_root_cannot_mutate_state(self):
         self.success('s.fence();')
         for op in ('s.transition("PREPARED");', 's.fence();', 's.release();', 's.assert_root(ARGV[0]);'):

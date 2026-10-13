@@ -212,3 +212,19 @@ holder. Child-FD regression теперь требует реального вы�
 private staging после checked fsync. Прерванный stage остаётся без adoption/
 cleanup; explicit retry создаёт свежий stage под journal flock. Fsync failure и
 actual SIGKILL до fence publication покрыты отдельными regression tests.
+
+Review/portability follow-up: native guard and private journal files are created
+with explicit mode 0600 at open(2), before chmod; failure of the first chmod
+must leave a private reusable empty guard. Receiver cleanup uses at most five
+integer sleep(1) retries. Fractional sleep syntax is not a target prerequisite.
+
+Owner evidence 2026-10-13: exact dc8d5a4 native module SHA256
+`6aff5c92a974db85fb89ab273f76ccc69f282a3eb347bbe5053230146fa8ac0e`
+(9809 bytes) matched Windows/CUDY. Nine native batch functional checks and
+source/isolation passed, then harness sleep 0.1 failed. SIGKILL recovery, final
+isolation and cleanup are NOT confirmed. Do not rerun the old harness or remove
+`/tmp/hg-native-batch.apCLFG`/signal a PID without verified object/process identity.
+`native-batch-inventory.uc` is an owner-executed bounded read-only metadata step;
+it never follows symlinks, signals processes or removes locks. Its kernel-holder
+PID output is observational and is not authorization to kill a process.
+Production remains BLOCKED; tmpfs ARM tests are not flash/reboot migration gates.
