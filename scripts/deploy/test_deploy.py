@@ -237,13 +237,45 @@ esac
         # must be able to acquire the short kernel guard independently.
         bb = os.environ.get('HG_TEST_BUSYBOX') or shutil.which('busybox')
         serial = self.root / 'tmp/home-gateway-deploy.serial'
+        ack = self.root / 'guard-child-ran'
         self.put(self.root / 'usr/bin/gateway', '#!/bin/sh\n' +
-                 'exec 8< "' + str(serial) + '"\n"' + str(bb) + '" flock -n 8\n', 0o755)
+                 'exec 8< "' + str(serial) + '"\n"' + str(bb) + '" flock -n 8 || exit 1\n' +
+                 'touch "' + str(ack) + '"\n', 0o755)
         self.old['usr/bin/gateway'] = (self.root / 'usr/bin/gateway').read_bytes()
         self.new['usr/bin/gateway'] = self.old['usr/bin/gateway']
-        result = self.run_engine('plan')
+        result = self.run_engine('apply')
         self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(ack.exists())
         self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+
+    def test_owner_cleanup_waits_for_transient_serial_guard(self):
+        import fcntl
+        import signal
+        import time
+        ready = self.root / 'cleanup-entered'
+        proceed = self.root / 'cleanup-proceed'
+        shim = ('#!/bin/sh\ncase "$*" in *"-rf ' + str(self.root) + '/tmp/hg-deploy."*) '
+                'touch "' + str(ready) + '"; while [ ! -f "' + str(proceed) + '" ]; do /bin/sleep .01; done;; esac\nexec /bin/rm "$@"\n')
+        self.put(self.bin / 'rm', shim, 0o755)
+        wire = self.wire()
+        command = os.environ.get('HG_TEST_SHELL', '/bin/sh').split() + [str(ENGINE), '--test-root', str(self.root), 'apply', COMMIT, hashlib.sha256(wire).hexdigest()]
+        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, env=self.env, start_new_session=True)
+        try:
+            child.stdin.write(wire); child.stdin.close(); child.stdin = None
+            deadline = time.monotonic() + 3
+            while not ready.exists() and child.poll() is None and time.monotonic() < deadline: time.sleep(.01)
+            self.assertTrue(ready.exists(), child.poll())
+            with (self.root / 'tmp/home-gateway-deploy.serial').open('rb') as guard:
+                fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                proceed.touch(); time.sleep(.15)
+                self.assertIsNone(child.poll(), 'cleanup must wait instead of stranding its lease')
+            output = child.communicate(timeout=5)[0]
+            self.assertEqual(child.returncode, 0, output)
+            self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+        finally:
+            if child.poll() is None: os.killpg(child.pid, signal.SIGKILL)
+            child.communicate(timeout=3)
 
     def test_sigkill_then_recover(self):
         # Kill the receiver AFTER its first real target rename, leaving a mixed tree.

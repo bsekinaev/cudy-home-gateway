@@ -71,7 +71,7 @@ export function open_state(root, create, test_busybox) {
         let ok = f.write(bytes) == length(bytes) && f.flush() != null;
         if (f.close() == null) ok = false;
         require(ok, 'WRITE_FAILED');
-        checked(path, 'file', 0600, 128); sync([ path, BASE ]);
+        checked(path, 'file', 0600, 128); sync([ path, replace(path, /\/[^/]+$/, '') ]);
     }
     function atomic(name, bytes) {
         let pending = BASE + '/' + name + '.new', final = BASE + '/' + name;
@@ -98,15 +98,23 @@ export function open_state(root, create, test_busybox) {
         fs.lstat(LOCK).inode == held.inode, 'BUSY');
     if (prior == null) sync([ LOCK, root + '/etc' ]);
     if (fs.lstat(BASE) == null) {
-        require(create && fs.mkdir(BASE, 0700), 'CREATE_FAILED');
-        sync([ root + '/etc' ]);
+        require(create, 'NO_STATE');
         let entropy = fs.open('/proc/sys/kernel/random/uuid', 're');
         require(entropy != null, 'ENTROPY');
         let nonce = entropy.read(38); entropy.close();
         MARKER = 'HG_MIGRATION_STATE_V1 ' + nonce;
         require(marker_valid(MARKER), 'ENTROPY');
-        exclusive(BASE + '/marker', MARKER);
-        atomic('phase', 'PREPARING\n');
+        // Publish only a complete, fsynced directory. An interrupted private
+        // initialization is never adopted or deleted: a retry gets a fresh
+        // kernel nonce under the same journal lock. No runtime/fence exists yet.
+        let stage=BASE + '.initializing.' + trim(nonce);
+        require(fs.lstat(stage) == null && fs.mkdir(stage, 0700), 'CREATE_FAILED');
+        sync([ root + '/etc' ]);
+        exclusive(stage + '/marker', MARKER);
+        exclusive(stage + '/phase', 'PREPARING\n');
+        sync([ stage ]);
+        require(fs.lstat(BASE) == null && fs.rename(stage, BASE), 'PUBLISH_FAILED');
+        sync([ root + '/etc' ]);
     }
     checked(BASE, 'directory', 0700, 0);
     require(read(BASE + '/marker', 128) == MARKER, 'UNKNOWN_STATE');
@@ -138,7 +146,7 @@ export function open_state(root, create, test_busybox) {
         assert_root: function(expected) { require(expected == root, 'ROOT_MISMATCH'); held_guard(); },
         phase,
         transition: function(next) {
-            held_guard();
+            held_guard(); owned_fence();
             let current = phase();
             require(index(TRANSITIONS[current], next) >= 0, 'NO_AUTO_REPLAY');
             // Full coordinator must snapshot/verify before PREPARED and must
@@ -163,6 +171,7 @@ export function open_state(root, create, test_busybox) {
             held_guard();
             let p = phase();
             require(p == 'COMMITTED' || p == 'ROLLED_BACK', 'NONTERMINAL');
+            require(fs.lstat(BASE + '/phase.new') == null && fs.lstat(BASE + '/admission.new') == null, 'PENDING_ADMISSION');
             require(read(BASE + '/admission', 128) == 'HG_MIGRATION_ADMITTED_V1 ' + p + '\n', 'NOT_VERIFIED');
             if (fs.lstat(RAM) != null) { owned_fence(); require(fs.unlink(RAM), 'UNLINK_FAILED'); }
             sync([ root + '/tmp' ]);

@@ -160,7 +160,18 @@ serial_begin() {
         [ "$(stat -c '%u:%g:%a:%h:%s' "$SERIAL")" = "$serial_owner:$serial_group:600:1:0" ] || return 1
     serial_inode=$(stat -c '%d:%i' "$SERIAL")
     exec 9< "$SERIAL" || return 1
-    [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" = "$serial_inode" ] && busybox flock -n 9 || { exec 9<&-; return 1; }
+    [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" = "$serial_inode" ] || { exec 9<&-; return 1; }
+    if [ "${1:-}" = wait ]; then
+        # BusyBox timeout's watchdog inherits descriptors and can retain flock
+        # after the command exits. Bound retries without a watchdog child.
+        serial_tries=0
+        while ! busybox flock -n 9; do
+            [ "$serial_tries" -lt 50 ] || { exec 9<&-; return 1; }
+            serial_tries=$((serial_tries + 1))
+            busybox sleep .1 || { exec 9<&-; return 1; }
+        done
+    else busybox flock -n 9 || { exec 9<&-; return 1; }
+    fi
 }
 known_receiver_lease() {
     [ -d "$LOCK" ] && [ ! -L "$LOCK" ] && [ -f "$LOCK/pid" ] && [ ! -L "$LOCK/pid" ] &&
@@ -183,7 +194,7 @@ finish() {
         fi
     fi
     [ -z "$WORK" ] || rm -rf "$WORK"
-    if serial_begin; then
+    if serial_begin wait; then
         if ! known_receiver_lease || [ "$owner" != "$$" ] ||
             [ "$(stat -c '%d:%i' "$LOCK")" != "$lease_inode" ] ||
             ! rm -f "$LOCK/pid" || ! rmdir "$LOCK"; then

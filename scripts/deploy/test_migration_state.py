@@ -53,6 +53,65 @@ class MigrationStateTests(unittest.TestCase):
         self.assertEqual(self.success('print(s.phase());', False), 'PREPARING')
         self.assertEqual((self.base / 'phase').read_bytes(), b'PREPARING\n')
 
+    def test_interrupted_private_initialization_retries_without_adoption(self):
+        shim = self.root / 'initial-fsync-failure'
+        shim.write_text('#!/bin/sh\ncase "$*" in *".initializing."*) exit 1;; esac\nexec "' + self.bb + '" "$@"\n')
+        shim.chmod(0o700)
+        self.assertNotEqual(self.run_state(bb=str(shim)).returncode, 0)
+        self.assertFalse(self.base.exists())
+        staged = list((self.root / 'etc').glob('home-gateway-migration.initializing.*'))
+        self.assertEqual(len(staged), 1)
+        original = (staged[0] / 'marker').read_bytes()
+        (staged[0] / 'foreign').write_bytes(b'KEEP')
+        self.success()
+        self.assertEqual((staged[0] / 'marker').read_bytes(), original)
+        self.assertEqual((staged[0] / 'foreign').read_bytes(), b'KEEP')
+        self.assertNotEqual((self.base / 'marker').read_bytes(), original)
+        self.assertFalse(self.ram.is_symlink())
+
+    def test_sigkill_before_initial_phase_publication_allows_fresh_init(self):
+        ready = self.root / 'initial-write-entered'
+        shim = self.root / 'initial-fsync-block'
+        shim.write_text('#!/bin/sh\ncase "$*" in *".initializing."*) touch "' + str(ready) + '"; sleep 10;; esac\nexec "' + self.bb + '" "$@"\n')
+        shim.chmod(0o700)
+        child = subprocess.Popen(self.command(bb=str(shim)), stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 3
+            while not ready.exists() and child.poll() is None and time.monotonic() < deadline: time.sleep(.01)
+            self.assertTrue(ready.exists())
+            child.kill(); child.wait(timeout=3)
+            self.assertFalse(self.base.exists())
+            stranded = list((self.root / 'etc').glob('home-gateway-migration.initializing.*'))
+            self.assertEqual(len(stranded), 1)
+            self.success('s.fence();')
+            self.assertTrue(stranded[0].is_dir())
+            self.assertTrue(self.ram.is_symlink())
+        finally:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.communicate(timeout=3)
+
+    def test_transitions_require_owned_ram_and_persistent_fence(self):
+        self.success()
+        self.assertNotEqual(self.run_state('s.transition("PREPARED");', False).returncode, 0)
+        self.success('s.fence(); s.transition("PREPARED");', False)
+        self.ram.unlink()
+        self.assertNotEqual(self.run_state('s.transition("APPLYING");', False).returncode, 0)
+        self.ram.symlink_to('/not-our-fence')
+        self.assertNotEqual(self.run_state('s.transition("RESTORING");', False).returncode, 0)
+        self.assertEqual(self.ram.readlink(), Path('/not-our-fence'))
+        self.assertEqual((self.base / 'phase').read_bytes(), b'PREPARED\n')
+
+    def test_pending_admission_never_releases_terminal_fence(self):
+        self.success('s.fence(); s.transition("PREPARED"); s.transition("RESTORING"); s.transition("ROLLED_BACK");')
+        admission = self.base / 'admission'
+        admission.write_bytes(b'HG_MIGRATION_ADMITTED_V1 ROLLED_BACK\n'); admission.chmod(0o600)
+        pending = self.base / 'admission.new'
+        pending.write_bytes(admission.read_bytes()); pending.chmod(0o600)
+        self.assertNotEqual(self.run_state('s.release();', False).returncode, 0)
+        self.assertTrue(self.ram.is_symlink())
+        self.assertTrue(pending.exists())
+
     def test_atomic_pidless_fence_blocks_actual_old_and_new_receiver(self):
         self.success('s.fence();')
         self.assertTrue(self.ram.is_symlink())

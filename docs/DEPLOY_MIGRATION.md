@@ -177,7 +177,7 @@ Read-only admission проверяет metadata одним ucode process; Telegr
 проверяет exact 20-file manifest одним bounded checksum process. Непубликованные
 `phase.new`/`admission.new` блокируют даже старый terminal receipt после reboot.
 
-Local BusyBox ash 1.37.0 / pinned ucode: deployment 99 PASS, general 211 PASS,
+Local BusyBox ash 1.37.0 / pinned ucode: deployment 104 PASS, general 211 PASS,
 release 21 PASS. Journal tests выполняют настоящие flock/fsync, SIGKILL и проверку
 CLOEXEC, но не заменяют полный target migration/rollback acceptance. Native
 state module пока не устанавливается на production и не публикует admission:
@@ -199,3 +199,11 @@ concurrent/stale receiver guard checks. Это synthetic state/admission accepta
 
 State mutators и snapshot caller проверяют открытый kernel guard и точный root;
 после close() или при root mismatch запись/fence/release запрещены.
+
+Review hardening: initial journal создаётся в unique private nonce staging и
+публикуется только целиком после file/dir fsync. Прерванный pre-publication stage
+не принимается и не удаляется; явный retry создаёт свежий nonce под тем же flock,
+не блокируя неизменный runtime. SIGKILL и fsync failure до publication проверены.
+Каждый transition требует owned persistent/RAM fence, release запрещён при
+pending admission.new, cleanup receiver bounded waits≤5s за transient serial
+holder. Child-FD regression теперь требует реального выполнения gateway check.
