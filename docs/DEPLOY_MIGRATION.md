@@ -177,7 +177,7 @@ Read-only admission проверяет metadata одним ucode process; Telegr
 проверяет exact 20-file manifest одним bounded checksum process. Непубликованные
 `phase.new`/`admission.new` блокируют даже старый terminal receipt после reboot.
 
-Local BusyBox ash 1.37.0 / pinned ucode: deployment 98 PASS, general 210 PASS,
+Local BusyBox ash 1.37.0 / pinned ucode: deployment 99 PASS, general 211 PASS,
 release 21 PASS. Journal tests выполняют настоящие flock/fsync, SIGKILL и проверку
 CLOEXEC, но не заменяют полный target migration/rollback acceptance. Native
 state module пока не устанавливается на production и не публикует admission:
@@ -196,3 +196,6 @@ concurrent/stale receiver guard checks. Это synthetic state/admission accepta
 не полный migration/rollback или owner restore PASS. GitHub VM input gate
 отклонил изменившийся upstream index; прежний подписанный public `packages.adb`
 с сохранённым SHA теперь vendored для воспроизводимости, без перепривязки pin.
+
+State mutators и snapshot caller проверяют открытый kernel guard и точный root;
+после close() или при root mismatch запись/fence/release запрещены.

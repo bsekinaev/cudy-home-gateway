@@ -117,6 +117,14 @@ export function open_state(root, create, test_busybox) {
     }
     phase();
     require(fs.lstat(BASE + '/phase.new') == null, 'INCOMPLETE_PHASE_WRITE');
+    function held_guard() {
+        let fd=guard.fileno();
+        require(fd != null, 'CLOSED_GUARD');
+        let current=checked(LOCK, 'file', 0600, 0), held_now=fs.stat('/proc/self/fd/' + fd);
+        require(held_now?.inode == lock_stat.inode && current.inode == lock_stat.inode &&
+            held_now.dev.major == lock_stat.dev.major && held_now.dev.minor == lock_stat.dev.minor &&
+            read(BASE + '/marker', 128) == MARKER, 'GUARD_CHANGED');
+    }
     function owned_fence() {
         checked(FENCE, 'directory', 0700, 0);
         require(read(FENCE + '/marker', 128) == MARKER, 'FENCE_MARKER');
@@ -127,8 +135,10 @@ export function open_state(root, create, test_busybox) {
     }
     return {
         close: function() { guard.close(); },
+        assert_root: function(expected) { require(expected == root, 'ROOT_MISMATCH'); held_guard(); },
         phase,
         transition: function(next) {
+            held_guard();
             let current = phase();
             require(index(TRANSITIONS[current], next) >= 0, 'NO_AUTO_REPLAY');
             // Full coordinator must snapshot/verify before PREPARED and must
@@ -136,6 +146,7 @@ export function open_state(root, create, test_busybox) {
             atomic('phase', next + '\n');
         },
         fence: function() {
+            held_guard();
             if (fs.lstat(FENCE) == null) {
                 require(fs.mkdir(FENCE, 0700), 'FENCE_CREATE');
                 exclusive(FENCE + '/marker', MARKER); sync([ FENCE, BASE ]);
@@ -149,6 +160,7 @@ export function open_state(root, create, test_busybox) {
             owned_fence();
         },
         release: function() {
+            held_guard();
             let p = phase();
             require(p == 'COMMITTED' || p == 'ROLLED_BACK', 'NONTERMINAL');
             require(read(BASE + '/admission', 128) == 'HG_MIGRATION_ADMITTED_V1 ' + p + '\n', 'NOT_VERIFIED');

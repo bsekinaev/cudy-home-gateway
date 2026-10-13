@@ -36,6 +36,16 @@ class MigrationStateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
+    def test_closed_guard_and_wrong_root_cannot_mutate_state(self):
+        self.success('s.fence();')
+        for op in ('s.transition("PREPARED");', 's.fence();', 's.release();', 's.assert_root(ARGV[0]);'):
+            result = self.run_state('s.close(); ' + op, False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual((self.base / 'phase').read_bytes(), b'PREPARING\n')
+            self.assertTrue(self.ram.is_symlink())
+        self.assertNotEqual(self.run_state('s.assert_root("/not-the-held-root");', False).returncode, 0)
+        self.success('s.assert_root(ARGV[0]);', False)
+
     def test_private_durable_initialization_and_readonly_reopen(self):
         self.assertEqual(self.success('print(s.phase());'), 'PREPARING')
         self.assertEqual(self.base.stat().st_mode & 0o777, 0o700)
