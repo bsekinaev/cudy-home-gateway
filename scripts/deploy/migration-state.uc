@@ -156,8 +156,16 @@ export function open_state(root, create, test_busybox) {
         fence: function() {
             held_guard();
             if (fs.lstat(FENCE) == null) {
-                require(fs.mkdir(FENCE, 0700), 'FENCE_CREATE');
-                exclusive(FENCE + '/marker', MARKER); sync([ FENCE, BASE ]);
+                let entropy=fs.open('/proc/sys/kernel/random/uuid', 're');
+                require(entropy != null, 'ENTROPY');
+                let nonce=entropy.read(38); entropy.close();
+                require(marker_valid('HG_MIGRATION_STATE_V1 ' + nonce), 'ENTROPY');
+                let stage=FENCE + '.initializing.' + trim(nonce);
+                require(fs.lstat(stage) == null && fs.mkdir(stage, 0700), 'FENCE_CREATE');
+                sync([ BASE ]);
+                exclusive(stage + '/marker', MARKER); sync([ stage ]);
+                require(fs.lstat(FENCE) == null && fs.rename(stage, FENCE), 'FENCE_PUBLISH');
+                sync([ BASE ]);
             }
             if (fs.lstat(RAM) == null) {
                 checked(FENCE, 'directory', 0700, 0);

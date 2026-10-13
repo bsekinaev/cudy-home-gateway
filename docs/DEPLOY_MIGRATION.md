@@ -207,3 +207,8 @@ Review hardening: initial journal создаётся в unique private nonce sta
 Каждый transition требует owned persistent/RAM fence, release запрещён при
 pending admission.new, cleanup receiver bounded waits≤5s за transient serial
 holder. Child-FD regression теперь требует реального выполнения gateway check.
+
+Дополнительное review: persistent fence тоже публикуется целиком из fresh nonce
+private staging после checked fsync. Прерванный stage остаётся без adoption/
+cleanup; explicit retry создаёт свежий stage под journal flock. Fsync failure и
+actual SIGKILL до fence publication покрыты отдельными regression tests.

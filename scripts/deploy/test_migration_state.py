@@ -46,6 +46,45 @@ class MigrationStateTests(unittest.TestCase):
         self.assertNotEqual(self.run_state('s.assert_root("/not-the-held-root");', False).returncode, 0)
         self.success('s.assert_root(ARGV[0]);', False)
 
+    def test_fence_initialization_fsync_failure_retries_without_adoption(self):
+        self.success()
+        shim = self.root / 'fence-fsync-failure'
+        shim.write_text('#!/bin/sh\ncase "$*" in *"/fence.initializing."*) exit 1;; esac\nexec "' + self.bb + '" "$@"\n')
+        shim.chmod(0o700)
+        self.assertNotEqual(self.run_state('s.fence();', False, str(shim)).returncode, 0)
+        self.assertFalse((self.base / 'fence').exists())
+        self.assertFalse(self.ram.is_symlink())
+        staged = list(self.base.glob('fence.initializing.*'))
+        self.assertEqual(len(staged), 1)
+        (staged[0] / 'foreign').write_bytes(b'KEEP')
+        self.success('s.fence();', False)
+        self.assertEqual((staged[0] / 'foreign').read_bytes(), b'KEEP')
+        self.assertEqual((self.base / 'fence/marker').read_bytes(), (self.base / 'marker').read_bytes())
+        self.assertTrue(self.ram.is_symlink())
+
+    def test_sigkill_before_fence_publication_allows_fresh_fence(self):
+        self.success()
+        ready = self.root / 'fence-write-entered'
+        shim = self.root / 'fence-fsync-block'
+        shim.write_text('#!/bin/sh\ncase "$*" in *"/fence.initializing."*) touch "' + str(ready) + '"; sleep 10;; esac\nexec "' + self.bb + '" "$@"\n')
+        shim.chmod(0o700)
+        child = subprocess.Popen(self.command('s.fence();', False, str(shim)),
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 3
+            while not ready.exists() and child.poll() is None and time.monotonic() < deadline: time.sleep(.01)
+            self.assertTrue(ready.exists())
+            child.kill(); child.wait(timeout=3)
+            self.assertFalse((self.base / 'fence').exists())
+            staged = list(self.base.glob('fence.initializing.*'))
+            self.assertEqual(len(staged), 1)
+            self.success('s.fence();', False)
+            self.assertTrue(staged[0].is_dir())
+            self.assertTrue(self.ram.is_symlink())
+        finally:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.communicate(timeout=3)
+
     def test_private_durable_initialization_and_readonly_reopen(self):
         self.assertEqual(self.success('print(s.phase());'), 'PREPARING')
         self.assertEqual(self.base.stat().st_mode & 0o777, 0o700)
