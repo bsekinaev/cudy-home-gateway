@@ -110,6 +110,13 @@ EOF
     # Persistent fail-closed admission must survive loss of the RAM fence.
     check fsync_reports_errors sh -c 'busybox fsync /tmp/hg-vm-lab/nonexistent-fsync-probe; [ "$?" = 1 ]'
     check flash_tmp_different_filesystems sh -c '[ "$(stat -c %d /etc)" != "$(stat -c %d /tmp)" ]'
+    mkdir -m 700 /tmp/hg-native-batch.vmtest
+    mkdir -m 700 /tmp/hg-native-batch.vmtest/crash /tmp/hg-native-batch.vmtest/crash/etc
+    printf 'DISPOSABLE\n' > /tmp/hg-native-batch.vmtest/.hg-deploy-test-root
+    : > /tmp/hg-native-batch.vmtest/crash/etc/home-gateway-migration.lock
+    ln -s /etc /tmp/hg-native-batch.vmtest/foreign
+    check native_inventory_readonly ucode /opt/hg-vm-lab/native-batch-inventory.uc /tmp/hg-native-batch.vmtest
+    check native_inventory_preserves_tree sh -c '[ "$(cat /tmp/hg-native-batch.vmtest/.hg-deploy-test-root)" = DISPOSABLE ] && [ "$(stat -c %s /tmp/hg-native-batch.vmtest/crash/etc/home-gateway-migration.lock)" = 0 ] && [ "$(readlink /tmp/hg-native-batch.vmtest/foreign)" = /etc ]'
     check migration_durable_state ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; let s=open_state("", true, null); s.fence(); s.transition("PREPARED"); s.transition("APPLYING");'
     ucode -e 'import * as fs from "fs"; import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; let s=open_state("", false, null); let p=fs.popen("sleep 5", "r"); fs.writefile("/tmp/hg-vm-lab/migration-held", "HELD\n"); p.read("all");' &
     owned_coordinator=$!

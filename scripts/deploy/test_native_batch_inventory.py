@@ -52,3 +52,62 @@ class NativeBatchInventoryTests(unittest.TestCase):
         result = self.run_inventory()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(len(list(self.root.iterdir())), 130)
+
+    def test_directory_substitution_never_enumerates_outside_original_handle(self):
+        import shutil
+        compiler = shutil.which('cc')
+        self.assertIsNotNone(compiler)
+        outside = tempfile.TemporaryDirectory(prefix='hg-inventory-outside-', dir='/tmp')
+        self.addCleanup(outside.cleanup)
+        external = Path(outside.name)
+        (external / 'private-sentinel').write_bytes(b'NEVER_ENUMERATE')
+        inside = self.root / 'inside'; inside.mkdir(mode=0o700)
+        (inside / 'owned').touch()
+        source = external / 'swap.c'
+        source.write_text(r'''#define _GNU_SOURCE
+#include <dirent.h>
+#include <dlfcn.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <fcntl.h>
+static int swapped;
+DIR *opendir(const char *path) {
+    DIR *(*real_opendir)(const char *) = dlsym(RTLD_NEXT, "opendir");
+    const char *owned = getenv("HG_SWAP_DIRECTORY");
+    const char *target = getenv("HG_SWAP_TARGET");
+    char resolved[4096], moved[4096];
+    ssize_t n = readlink(path, resolved, sizeof(resolved)-1);
+    if (n >= 0) resolved[n] = 0; else resolved[0] = 0;
+    if (!swapped && owned && (!strcmp(path, owned) || !strcmp(resolved, owned) ||
+        (n >= 0 && !strncmp(resolved, owned, strlen(owned)) && !strcmp(resolved + strlen(owned), "/.")))) {
+        swapped = 1;
+        snprintf(moved, sizeof(moved), "%s-moved", owned);
+        if (rename(owned, moved) || symlink(target, owned)) _exit(99);
+        int fd = open(getenv("HG_SWAP_ENTERED"), O_WRONLY|O_CREAT|O_EXCL, 0600);
+        if (fd < 0) _exit(98); close(fd);
+    }
+    DIR *d = real_opendir(path);
+    struct stat actual, outside;
+    if (d && swapped && !fstat(dirfd(d), &actual) && !stat(target, &outside) &&
+        actual.st_dev == outside.st_dev && actual.st_ino == outside.st_ino) {
+        int fd = open(getenv("HG_SWAP_LEAK"), O_WRONLY|O_CREAT|O_EXCL, 0600);
+        if (fd < 0) _exit(97); close(fd);
+    }
+    return d;
+}
+''')
+        library = external / 'swap.so'
+        subprocess.run([compiler, '-shared', '-fPIC', str(source), '-ldl', '-o', str(library)], check=True)
+        entered, leaked = external / 'entered', external / 'leaked'
+        env = dict(os.environ, LD_PRELOAD=str(library), HG_SWAP_DIRECTORY=str(inside),
+                   HG_SWAP_TARGET=str(external), HG_SWAP_ENTERED=str(entered), HG_SWAP_LEAK=str(leaked))
+        result = subprocess.run(['ucode', str(SCRIPT), '--', '--test-root', str(self.root)],
+                                env=env, capture_output=True, text=True, timeout=5)
+        self.assertTrue(entered.exists(), 'directory substitution hook must actually execute')
+        self.assertNotEqual(result.returncode, 0, 'changed live tree must refuse')
+        self.assertFalse(leaked.exists(), 'outside directory must never be enumerated')
+        self.assertEqual(result.stdout, '')
+        self.assertEqual((external / 'private-sentinel').read_bytes(), b'NEVER_ENUMERATE')
