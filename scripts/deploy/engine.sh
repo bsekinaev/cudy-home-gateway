@@ -143,6 +143,35 @@ restore() {
     rm -f "$BASE/active" || return 1
     sync
 }
+# Serialize only RAM lease publication/removal, not long-running children.
+# Close FD 9 before checks/services so descendants cannot retain this guard.
+serial_begin() {
+    serial_owner=0; serial_group=0
+    if [ -n "$ROOT" ]; then serial_owner=$(id -u); serial_group=$(id -g); fi
+    [ -d "$ROOT/tmp" ] && [ ! -L "$ROOT/tmp" ] || return 1
+    [ "$(stat -c '%u:%g' "$ROOT/tmp")" = "$serial_owner:$serial_group" ] || return 1
+    parent_bits=$(stat -c %a "$ROOT/tmp")
+    [ "$((0$parent_bits & 022))" = 0 ] || [ "$((0$parent_bits & 01000))" != 0 ] || return 1
+    SERIAL="$ROOT/tmp/home-gateway-deploy.serial"
+    if [ ! -e "$SERIAL" ] && [ ! -L "$SERIAL" ]; then
+        (set -C; : > "$SERIAL") 2>/dev/null || return 1
+    fi
+    [ -f "$SERIAL" ] && [ ! -L "$SERIAL" ] &&
+        [ "$(stat -c '%u:%g:%a:%h:%s' "$SERIAL")" = "$serial_owner:$serial_group:600:1:0" ] || return 1
+    serial_inode=$(stat -c '%d:%i' "$SERIAL")
+    exec 9< "$SERIAL" || return 1
+    [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" = "$serial_inode" ] && busybox flock -n 9 || { exec 9<&-; return 1; }
+}
+known_receiver_lease() {
+    [ -d "$LOCK" ] && [ ! -L "$LOCK" ] && [ -f "$LOCK/pid" ] && [ ! -L "$LOCK/pid" ] &&
+        [ "$(stat -c '%u:%g:%a' "$LOCK")" = "$serial_owner:$serial_group:700" ] &&
+        [ "$(stat -c '%u:%g:%a:%h' "$LOCK/pid")" = "$serial_owner:$serial_group:600:1" ] &&
+        [ "$(stat -c %s "$LOCK/pid")" -le 11 ] || return 1
+    owner=$(cat "$LOCK/pid")
+    printf '%s' "$owner" | grep -Eq '^[1-9][0-9]{0,9}$' &&
+        [ "$(stat -c %s "$LOCK/pid")" -eq "$((${#owner} + 1))" ] &&
+        [ "$(wc -l < "$LOCK/pid")" -eq 1 ]
+}
 finish() {
     rc=$?
     trap - EXIT INT TERM
@@ -154,7 +183,15 @@ finish() {
         fi
     fi
     [ -z "$WORK" ] || rm -rf "$WORK"
-    rm -rf "$LOCK"
+    if serial_begin; then
+        if ! known_receiver_lease || [ "$owner" != "$$" ] ||
+            [ "$(stat -c '%d:%i' "$LOCK")" != "$lease_inode" ] ||
+            ! rm -f "$LOCK/pid" || ! rmdir "$LOCK"; then
+            echo 'DEPLOY_ERROR: lease cleanup requires recovery' >&2; rc=1
+        fi
+        exec 9<&-
+    else echo 'DEPLOY_ERROR: lease cleanup busy; run recover' >&2; rc=1
+    fi
     exit "$rc"
 }
 [ "$(id -u)" = 0 ] || [ -n "$ROOT" ] || fail 'root required'
@@ -162,9 +199,9 @@ finish() {
 command=${1:-}; shift || exit 64
 case "$command" in plan|apply) [ "$#" -eq 2 ] && hex "$1" 40 && hex "$2" 64 || exit 64;;
     status|recover|rollback) [ "$#" -eq 0 ] || exit 64;; *) exit 64;; esac
+serial_begin || fail 'receiver lease admission busy or unsafe'
 if ! mkdir "$LOCK" 2>/dev/null; then
-    owner=$(cat "$LOCK/pid" 2>/dev/null || true)
-    case "$owner" in ''|*[!0-9]*) fail 'lock incomplete; inspect locally';; esac
+    known_receiver_lease || fail 'unknown lock; inspect locally'
     if kill -0 "$owner" 2>/dev/null; then fail 'another deployment is running'; fi
     [ "$command" = recover ] || fail 'stale lock; run recover'
     rm -f "$LOCK/pid" || fail 'stale lease cleanup failed'
@@ -172,6 +209,8 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     mkdir "$LOCK" || fail 'lock race'
 fi
 printf '%s\n' "$$" > "$LOCK/pid"
+lease_inode=$(stat -c '%d:%i' "$LOCK")
+exec 9<&-
 trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM

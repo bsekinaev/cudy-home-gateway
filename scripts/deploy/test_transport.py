@@ -87,6 +87,7 @@ class TransportTests(unittest.TestCase):
         common.write_bytes(previous)
         testbin = root / 'test-bin'
         testbin.mkdir()
+        (testbin / 'busybox').symlink_to(shutil.which(os.environ.get('HG_TEST_BUSYBOX', 'busybox')))
         (testbin / 'ucode').write_text('#!/bin/sh\nexit 0\n')
         (testbin / 'ucode').chmod(0o755)
         wire = encode(self.archive, self.commit, self.digest)

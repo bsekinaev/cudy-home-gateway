@@ -142,6 +142,18 @@ class AdmissionTests(unittest.TestCase):
         fixture.assert_old()
         self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
 
+    def test_terminal_receipt_with_unpublished_write_blocks_after_ram_loss(self):
+        self.state()
+        for name in ('phase.new', 'admission.new'):
+            pending = self.base / name
+            pending.write_bytes(b'INTERRUPTED\n'); pending.chmod(0o600)
+            self.assertNotEqual(self.run_gate(), 0)
+            self.assertNotEqual(self.run_gate('--receiver-recover'), 0)
+            self.assertNotEqual(self.run_gate('--telegram-start'), 0)
+            self.assertEqual(pending.read_bytes(), b'INTERRUPTED\n')
+            pending.unlink()
+        self.assertEqual(self.run_gate(), 0)
+
     def test_noncanonical_terminal_bytes_refused(self):
         self.state()
         for raw in (b'COMMITTED', b'COMMITTED\n\n', b'COMMITTED\x00\n'):

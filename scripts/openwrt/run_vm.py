@@ -85,7 +85,9 @@ def inject(image, workspace, commit, packages):
     for source in ('migration-admission.sh', 'engine.sh'):
         put('/usr/libexec/home-gateway-deploy/' + source, git('show', commit + ':scripts/deploy/' + source), 0o700)
     put('/opt/hg-vm-lab/legacy-engine.sh', git('show', commit + ':scripts/deploy/fixtures/legacy-engine-18.sh'), 0o700)
+    put('/opt/hg-vm-lab/migration-state.uc', git('show', commit + ':scripts/deploy/migration-state.uc'), 0o600)
     smoke = git('show', commit + ':scripts/openwrt/guest-smoke.sh')
+    subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
     put('/opt/hg-vm-lab/guest-smoke.sh', smoke, 0o700)
     put('/opt/hg-vm-lab/init/tailscale', service, 0o755)

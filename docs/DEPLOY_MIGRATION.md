@@ -1,7 +1,8 @@
 # HGDEPLOY1 → HGDEPLOY2: отдельная миграция, P0
 
-Production migration **BLOCKED**. Здесь реализованы read-only legacy preflight и
-Linux host-only rehearsal настоящих файловых операций/rollback. Python на CUDY
+Production migration **BLOCKED**. Здесь реализованы read-only legacy preflight,
+Linux host-only rehearsal файловых операций/rollback и native ucode/BusyBox
+journal/fence primitives. Полного production installer ещё нет. Python на CUDY
 не устанавливается; rehearsal CLI не имеет SSH и требует disposable lab marker.
 Ни один новый механизм не запускается автоматически из Gateway, Telegram или CD.
 
@@ -157,3 +158,33 @@ postcheck verifies all 18 runtime files plus engine/wrapper/recovery init.
 Final preparation crash boundary: reset recovers receipt-owned acquisition
 staging/pending marker via fence before removing receipt; actual SIGKILL during
 preparation marker rename tested. 40 migration + 32 deployment = 72 PASS.
+
+## Native journal и admission — 13.10.2026
+
+`scripts/deploy/migration-state.uc` реализует private overlay journal, kernel
+flock с CLOEXEC, checked BusyBox `fsync` файла/каталога и atomic same-filesystem
+publication. Общий RAM fence — атомарный symlink на nonce-bound private fence;
+rename между overlay и tmpfs не используется. Старый и новый receiver отвергают
+PID-less fence. После потери RAM fence его можно восстановить; повтор APPLYING
+запрещён. Неизвестный state, hardlinked symlink, nonce mismatch и оставшийся
+`phase.new` требуют recovery, без автоматического удаления/повторного apply.
+
+Receiver сериализует только публикацию/снятие PID lease коротким BusyBox flock
+`/tmp/home-gateway-deploy.serial`. FD закрыт до запуска gateway/services. Cleanup
+сверяет inode и PID владельца; foreign contents не удаляются рекурсивно. Это
+защищает stale recovery от гонки второго recovery, сохраняя общий migration fence.
+Read-only admission проверяет metadata одним ucode process; Telegram startup
+проверяет exact 20-file manifest одним bounded checksum process. Непубликованные
+`phase.new`/`admission.new` блокируют даже старый terminal receipt после reboot.
+
+Local BusyBox ash 1.37.0 / pinned ucode: deployment 98 PASS, general 210 PASS,
+release 21 PASS. Journal tests выполняют настоящие flock/fsync, SIGKILL и проверку
+CLOEXEC, но не заменяют полный target migration/rollback acceptance. Native
+state module пока не устанавливается на production и не публикует admission:
+это обязанность будущего полного verifier/coordinator после проверки snapshots,
+всех runtime/receiver bytes/metadata, legacy journal и latest.
+
+Следующий незакрытый gate: production-compatible snapshot/apply/rollback и
+legacy boot/service admission в едином coordinator, включая interrupted
+RESTORING, полный 18→20→18 roundtrip и Telegram state preservation. Owner SHA,
+backup inclusion и Windows integrity уже подтверждены; owner restore NOT_TESTED.
