@@ -1,11 +1,20 @@
 // OWNER-EXECUTED read-only diagnostic. Never signals processes or mutates files.
 import * as fs from 'fs';
 function refuse(code) { die('NATIVE_BATCH_INVENTORY_REFUSED=' + code + '\n'); }
-let root = ARGV[0];
-if (length(ARGV) != 1 || !match(root, /^\/tmp\/hg-native-batch\.[A-Za-z0-9_-]+$/)) refuse('ROOT');
+let lab = ARGV[0] == '--test-root';
+let root = ARGV[lab ? 1 : 0];
+if (length(ARGV) != (lab ? 2 : 1) || !match(root, /^\/tmp\/hg-native-batch\.[A-Za-z0-9_-]+$/)) refuse('ROOT');
 let parent = fs.lstat('/tmp'), base = fs.lstat(root);
+let owner = 0, group = 0;
+if (lab) {
+    let marker = fs.lstat(root + '/.hg-deploy-test-root');
+    if (marker?.type != 'file' || marker.nlink != 1 || marker.mode != 0600 ||
+        marker.uid != base?.uid || marker.gid != base?.gid || marker.size != 11 ||
+        fs.readfile(root + '/.hg-deploy-test-root') != 'DISPOSABLE\n') refuse('LAB_MARKER');
+    owner = base.uid; group = base.gid;
+}
 if (parent?.type != 'directory' || parent.uid != 0 || !parent.perm.sticky ||
-    base?.type != 'directory' || base.uid != 0 || base.gid != 0 || base.mode != 0700) refuse('ROOT_METADATA');
+    base?.type != 'directory' || base.uid != owner || base.gid != group || base.mode != 0700) refuse('ROOT_METADATA');
 let records = [], guards = [], count = 0;
 function walk(path, relative, depth) {
     if (++count > 128 || depth > 8) refuse('BOUND');

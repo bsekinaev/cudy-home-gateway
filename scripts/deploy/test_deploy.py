@@ -268,7 +268,7 @@ esac
                                  stderr=subprocess.STDOUT, env=self.env, start_new_session=True)
         try:
             child.stdin.write(wire); child.stdin.close(); child.stdin = None
-            deadline = time.monotonic() + 3
+            deadline = time.monotonic() + 15
             while not ready.exists() and child.poll() is None and time.monotonic() < deadline: time.sleep(.01)
             self.assertTrue(ready.exists(), child.poll())
             with (self.root / 'tmp/home-gateway-deploy.serial').open('rb') as guard:

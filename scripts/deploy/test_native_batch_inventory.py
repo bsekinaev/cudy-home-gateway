@@ -15,9 +15,11 @@ class NativeBatchInventoryTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.root.chmod(0o700)
+        marker = self.root / '.hg-deploy-test-root'
+        marker.write_bytes(b'DISPOSABLE\n'); marker.chmod(0o600)
 
     def run_inventory(self):
-        return subprocess.run(['ucode', str(SCRIPT), str(self.root)], capture_output=True, text=True, timeout=5)
+        return subprocess.run(['ucode', str(SCRIPT), '--', '--test-root', str(self.root)], capture_output=True, text=True, timeout=5)
 
     def test_reads_metadata_and_exact_kernel_holder_without_following_symlink(self):
         crash = self.root / 'crash/etc'
@@ -43,10 +45,10 @@ class NativeBatchInventoryTests(unittest.TestCase):
         result = self.run_inventory()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.root.stat().st_mode & 0o777, 0o755)
-        self.assertEqual(list(self.root.iterdir()), [])
+        self.assertEqual([p.name for p in self.root.iterdir()], ['.hg-deploy-test-root'])
 
     def test_inventory_bound_refuses_without_deleting_unknown_entries(self):
         for n in range(129): (self.root / str(n)).touch()
         result = self.run_inventory()
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(len(list(self.root.iterdir())), 129)
+        self.assertEqual(len(list(self.root.iterdir())), 130)
