@@ -181,6 +181,8 @@ check terminal_telegram_instances ucode -e 'import * as fs from "fs"; let d=json
 check terminal_telegram_procd_stop /etc/init.d/home-gateway-telegram stop
 rm /etc/home-gateway-deploy/active
 printf '999999999\n' > /tmp/home-gateway-deploy.lock/pid
+(set -C; : > /tmp/home-gateway-deploy.serial) || exit 78
+chmod 600 /tmp/home-gateway-deploy.serial
 exec 9< /tmp/home-gateway-deploy.serial
 check terminal_receiver_serial_guard busybox flock -n 9
 check terminal_concurrent_recover_refused sh -c '! sh /usr/libexec/home-gateway-deploy/engine.sh recover'

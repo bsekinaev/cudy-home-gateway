@@ -93,13 +93,9 @@ jobs:
       - name: Test release bundle builder
         run: python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
 
-      - name: Test deployment and crash recovery (BusyBox ash)
-        env:
-          HG_TEST_SHELL: busybox ash
-          HG_TEST_BUSYBOX: busybox
-        run: python3 -m unittest discover -s scripts/deploy -p 'test_*.py' -v
-
-      - name: Regression on pinned upstream BusyBox 1.37.0
+      # The distribution's minimal BusyBox omits flock/fsync. Run the entire
+      # deployment suite on pinned 1.37 with mandatory applet checks instead.
+      - name: Deployment, crash recovery and regression on pinned BusyBox 1.37.0
         run: ./scripts/ci/check-busybox137.sh
 
       - name: Build release bundle
