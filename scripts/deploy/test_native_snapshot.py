@@ -228,5 +228,15 @@ class NativeSnapshotTests(unittest.TestCase):
             self.assertFalse((self.base / 'snapshot.json').exists())
             self.assertTrue((self.root / 'tmp/home-gateway-deploy.lock').is_symlink())
 
+    def test_snapshot_receipt_rename_fsync_failure_is_not_adopted(self):
+        shim=self.root/'fail-snapshot-publication'
+        shim.write_text('#!/bin/sh\nif [ "$1" = fsync ] && [ "$#" = 2 ] && [ "$2" = "'+str(self.base)+'" ] && [ -f "'+str(self.base/'snapshot.json')+'" ]; then exit 1; fi\nexec "'+self.bb+'" "$@"\n');shim.chmod(0o700)
+        r=self.run_snapshot(str(shim));self.assertNotEqual(r.returncode,0)
+        self.assertTrue((self.base/'snapshot.json').exists())
+        self.assertTrue((self.base/'snapshot.publish-pending').exists())
+        self.assertNotEqual(self.run_verify().returncode,0)
+        self.assertNotEqual(self.run_snapshot().returncode,0)
+        self.lab.assert_previous()
+
 
 if __name__ == '__main__': unittest.main()

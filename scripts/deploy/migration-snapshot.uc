@@ -79,7 +79,7 @@ function boundary(root, state, test_busybox) {
     function write(path, raw, permissions) {
         require(fs.lstat(path) == null, 'PARTIAL_OR_FOREIGN');
         let parent=replace(path, /\/[^/]+$/, ''); mkdir(parent);
-        let f=fs.open(path, 'wxe'); require(f != null && fs.chmod(path, permissions), 'WRITE');
+        let f=fs.open(path, 'wxe', permissions); require(f != null && fs.chmod(path, permissions), 'WRITE');
         let ok=f.write(raw) == length(raw) && f.flush() != null;
         if (f.close() == null) ok=false;
         require(ok, 'WRITE'); checked(path, 'file', permissions, 262144); sync([ path, parent ]);
@@ -130,7 +130,8 @@ export function snapshot_io(root, state, test_busybox) {
 
 export function verify_legacy_snapshot(root, state, test_busybox) {
     let io=boundary(root, state, test_busybox);
-    require(fs.lstat(io.BASE + '/snapshot.json.new') == null, 'PARTIAL_OR_FOREIGN');
+    require(fs.lstat(io.BASE + '/snapshot.json.new') == null &&
+        fs.lstat(io.BASE + '/snapshot.publish-pending') == null, 'PARTIAL_OR_FOREIGN');
     let receipt=json(io.read(io.BASE + '/snapshot.json', 0600, 65536));
     require(type(receipt) == 'object' && join(',', sort(keys(receipt))) == 'files,format,latest,marker' &&
         receipt.format == 'HG_LEGACY_SNAPSHOT_V1' && match(receipt.latest, /^tx\.[a-zA-Z0-9]{1,32}\n$/) &&
@@ -201,7 +202,8 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
     let library=fs.lsdir(root + '/usr/lib/home-gateway');
     require(library != null && length(library) == 15 &&
         length(filter(library, name => index(RUNTIME, 'usr/lib/home-gateway/' + name) >= 0)) == 15, 'INVENTORY');
-    require(fs.lstat(io.BASE + '/old') == null && fs.lstat(io.BASE + '/snapshot.json') == null && fs.lstat(io.BASE + '/snapshot.json.new') == null, 'PARTIAL_OR_FOREIGN');
+    require(fs.lstat(io.BASE + '/old') == null && fs.lstat(io.BASE + '/snapshot.json') == null && fs.lstat(io.BASE + '/snapshot.json.new') == null &&
+        fs.lstat(io.BASE + '/snapshot.publish-pending') == null, 'PARTIAL_OR_FOREIGN');
     let sources={}, metadata={}, permissions={}, total=0;
     function add(path, rel, perm) {
         metadata[path]=io.checked(path, 'file', perm, 262144);
@@ -264,8 +266,10 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
     revalidate_source();
     let receipt={ format:'HG_LEGACY_SNAPSHOT_V1', marker:io.read(io.BASE + '/marker', 0600, 128), latest, files:snapshot_records };
     let pending=io.BASE + '/snapshot.json.new'; io.write(pending, sprintf('%J\n', receipt), 0600);
-    // The pending-receipt fsync may block; certify sources after it returns.
+    io.write(io.BASE + '/snapshot.publish-pending', receipt.marker, 0600);
+    // The pending-receipt/marker fsync may block; certify sources afterward.
     revalidate_source();
     require(fs.rename(pending, io.BASE + '/snapshot.json'), 'PUBLISH'); io.sync([ io.BASE ]);
+    require(fs.unlink(io.BASE + '/snapshot.publish-pending'), 'PUBLISH'); io.sync([ io.BASE ]);
     return verify_legacy_snapshot(root, state, test_busybox);
 };

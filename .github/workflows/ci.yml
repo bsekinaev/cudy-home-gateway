@@ -21,7 +21,7 @@ jobs:
   validate:
     name: Validate control plane
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     env:
       # Exact ucode revision validated on the target CUDY/OpenWrt runtime.
@@ -124,7 +124,7 @@ jobs:
   isolated-openwrt:
     name: Networkless OpenWrt procd and reboot smoke
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout immutable candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -166,6 +166,12 @@ jobs:
           set -euo pipefail
           python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" --scenario candidate-snapshot > vm-candidate-report.json || { cat vm-candidate-report.json; exit 1; }
           cat vm-candidate-report.json
+      - name: Verify native runtime and journal rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" --scenario runtime-cycle > vm-runtime-cycle-report.json || { cat vm-runtime-cycle-report.json; exit 1; }
+          cat vm-runtime-cycle-report.json
       - name: Verify overlay identity across guest reboot and supervised cold boot
         shell: bash
         run: |
@@ -182,5 +188,48 @@ jobs:
             vm-snapshot-report.json
             vm-candidate-report.json
             vm-overlay-report.json
+            vm-runtime-cycle-report.json
           if-no-files-found: ignore
+          retention-days: 30
+
+  native-crash:
+    name: Native crash recovery (${{ matrix.scenario }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [runtime-crash-apply, runtime-crash-restore]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install isolated VM tools
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 e2fsprogs
+      - name: Fetch and verify immutable public VM inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir vm-inputs
+          curl --fail --location --retry 3 https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-25.12.5-x86-64-generic-kernel.bin -o vm-inputs/kernel.bin
+          curl --fail --location --retry 3 https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-25.12.5-x86-64-generic-ext4-rootfs.img.gz -o vm-inputs/rootfs.img.gz
+          cp scripts/openwrt/fixtures/packages.adb vm-inputs/packages.adb
+          for name in coreutils-9.9-r2.apk coreutils-base64-9.9-r2.apk coreutils-stat-9.9-r2.apk coreutils-timeout-9.9-r2.apk; do
+            curl --fail --location --retry 3 "https://downloads.openwrt.org/releases/25.12.5/packages/x86_64/packages/$name" -o "vm-inputs/$name"
+          done
+      - name: Run actual SIGKILL and guest reboot recovery
+        shell: bash
+        env:
+          HG_SCENARIO: ${{ matrix.scenario }}
+        run: |
+          set -euo pipefail
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" --scenario "$HG_SCENARIO" > vm-crash-report.json || { cat vm-crash-report.json; exit 1; }
+          cat vm-crash-report.json
+      - name: Upload public report only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-crash-${{ matrix.scenario }}-${{ github.sha }}
+          path: vm-crash-report.json
           retention-days: 30
