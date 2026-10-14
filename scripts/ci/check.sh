@@ -63,6 +63,7 @@ pass 'executable modes'
 for file in \
     scripts/deploy/*.sh \
     scripts/deploy/recovery.init \
+    scripts/openwrt/*.sh \
     scripts/router-preflight.sh \
     scripts/ci/*.sh \
     src/usr/bin/gateway \

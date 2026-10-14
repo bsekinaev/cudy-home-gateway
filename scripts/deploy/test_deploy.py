@@ -32,9 +32,9 @@ class DeployTests(unittest.TestCase):
                 raise RuntimeError('Requested BusyBox is unavailable')
             for applet in ('base64', 'sha256sum', 'stat', 'timeout', 'head', 'mktemp',
                            'cmp', 'cp', 'mv', 'df', 'du', 'awk', 'cat', 'cut', 'grep',
-                           'mkdir', 'rm', 'chmod', 'wc', 'sh', 'id'):
+                           'mkdir', 'rm', 'chmod', 'wc', 'sh', 'id', 'busybox', 'flock', 'rmdir'):
                 (self.bin / applet).symlink_to(executable)
-        self.env = dict(os.environ, HG_TEST_BIN=str(self.bin))
+        self.env = dict(os.environ, HG_TEST_BIN=str(self.bin), HG_TEST_UCODE_BIN=shutil.which('ucode') or '')
         self.put(self.bin / 'ucode', '#!/bin/sh\nexit 0\n', 0o755)
         # Do not sync the whole host filesystem for every test file.
         self.put(self.bin / 'sync', '#!/bin/sh\nexit 0\n', 0o755)
@@ -201,6 +201,88 @@ esac
         self.assertNotEqual(self.run_engine('apply').returncode, 0)
         self.assertTrue(lock.exists())
         self.assert_old()
+
+    def stale_lease(self):
+        lock = self.root / 'tmp/home-gateway-deploy.lock'
+        lock.mkdir(mode=0o700)
+        self.put(lock / 'pid', '999999999\n', 0o600)
+        return lock
+
+    def test_recover_serialization_preserves_lease_while_other_guard_held(self):
+        import fcntl
+        lock = self.stale_lease()
+        serial = self.root / 'tmp/home-gateway-deploy.serial'
+        self.put(serial, b'', 0o600)
+        before = (lock.stat().st_ino, (lock / 'pid').read_bytes())
+        with serial.open('rb') as guard:
+            fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = self.run_engine('recover')
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertEqual((lock.stat().st_ino, (lock / 'pid').read_bytes()), before)
+        result = self.run_engine('recover')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(lock.exists())
+        self.assert_old()
+
+    def test_unknown_stale_lease_contents_never_removed(self):
+        lock = self.stale_lease()
+        self.put(lock / 'foreign', b'KEEP', 0o600)
+        result = self.run_engine('recover')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual((lock / 'foreign').read_bytes(), b'KEEP')
+        self.assert_old()
+
+    def test_receiver_child_cannot_hold_short_kernel_guard(self):
+        # gateway executes after the RAM lease is published; its real process
+        # must be able to acquire the short kernel guard independently.
+        bb = os.environ.get('HG_TEST_BUSYBOX') or shutil.which('busybox')
+        serial = self.root / 'tmp/home-gateway-deploy.serial'
+        ack = self.root / 'guard-child-ran'
+        self.put(self.root / 'usr/bin/gateway', '#!/bin/sh\n' +
+                 'exec 8< "' + str(serial) + '"\n"' + str(bb) + '" flock -n 8 || exit 1\n' +
+                 'touch "' + str(ack) + '"\n', 0o755)
+        self.old['usr/bin/gateway'] = (self.root / 'usr/bin/gateway').read_bytes()
+        self.new['usr/bin/gateway'] = self.old['usr/bin/gateway']
+        result = self.run_engine('apply')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(ack.exists())
+        self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+
+    def test_owner_cleanup_waits_for_transient_serial_guard(self):
+        import fcntl
+        import signal
+        import time
+        # Target BusyBox may reject both fractional forms. Exercise the actual
+        # contention cleanup with an applet dispatcher that rejects them.
+        bb = shutil.which(os.environ.get('HG_TEST_BUSYBOX', 'busybox'))
+        self.assertIsNotNone(bb)
+        probe = self.root / 'fractional-sleep-attempted'
+        self.put(self.bin / 'busybox', '#!/bin/sh\nif [ \"$1\" = sleep ]; then case \"$2\" in *.*) touch \"' + str(probe) + '\"; exit 2;; esac; fi\nexec \"' + str(bb) + '\" \"$@\"\n', 0o755)
+        ready = self.root / 'cleanup-entered'
+        proceed = self.root / 'cleanup-proceed'
+        shim = ('#!/bin/sh\ncase "$*" in *"-rf ' + str(self.root) + '/tmp/hg-deploy."*) '
+                'touch "' + str(ready) + '"; while [ ! -f "' + str(proceed) + '" ]; do /bin/sleep .01; done;; esac\nexec /bin/rm "$@"\n')
+        self.put(self.bin / 'rm', shim, 0o755)
+        wire = self.wire()
+        command = os.environ.get('HG_TEST_SHELL', '/bin/sh').split() + [str(ENGINE), '--test-root', str(self.root), 'apply', COMMIT, hashlib.sha256(wire).hexdigest()]
+        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, env=self.env, start_new_session=True)
+        try:
+            child.stdin.write(wire); child.stdin.close(); child.stdin = None
+            deadline = time.monotonic() + 15
+            while not ready.exists() and child.poll() is None and time.monotonic() < deadline: time.sleep(.01)
+            self.assertTrue(ready.exists(), child.poll())
+            with (self.root / 'tmp/home-gateway-deploy.serial').open('rb') as guard:
+                fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                proceed.touch(); time.sleep(.15)
+                self.assertIsNone(child.poll(), 'cleanup must wait instead of stranding its lease')
+            output = child.communicate(timeout=5)[0]
+            self.assertEqual(child.returncode, 0, output)
+            self.assertFalse((self.root / 'tmp/home-gateway-deploy.lock').exists())
+            self.assertFalse(probe.exists(), 'fractional sleep is not a target prerequisite')
+        finally:
+            if child.poll() is None: os.killpg(child.pid, signal.SIGKILL)
+            child.communicate(timeout=3)
 
     def test_sigkill_then_recover(self):
         # Kill the receiver AFTER its first real target rename, leaving a mixed tree.

@@ -24,6 +24,8 @@ ln -s "$work/busybox-1.37.0/busybox" "$work/bin/busybox"
 PATH="$work/bin:$PATH"
 export PATH
 busybox ash -c 'echo BUSYBOX_1_37_ASH_READY'
+busybox --list | grep -Fx fsync
+busybox --list | grep -Fx flock
 ./scripts/ci/check.sh
 HG_TEST_SHELL='busybox ash' HG_TEST_BUSYBOX=busybox \
     python3 -m unittest discover -s scripts/deploy -p 'test_*.py' -v
