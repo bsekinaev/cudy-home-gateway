@@ -277,3 +277,19 @@ guard/service quiescence. Это НЕ production installer и НЕ verified18→
 rollback. Host candidate8 regressions и dedicated networkless officialVM23
 scenario используются наряду с baseline и legacy-snapshot VM; raw images,
 console и snapshots не публикуются. Full coordinator остаётся critical blocker.
+
+
+### Overlay identity: actual guest reboot and supervised cold boot
+
+The disposable x86 overlay scenario retains every original assertion. The guest
+requests a real procd/kernel reboot, QEMU exits with `-no-reboot`, and the driver
+requires both the explicit guest request and kernel restart evidence before a
+second launch. Both boots use the same private writable disk; immutable source
+images remain untouched. The combined budget remains180s and console4MiB.
+The report explicitly records `GUEST_REBOOT_SUPERVISED_COLD_BOOT`.
+
+Local source c254842 passed10/0: overlay remount, changed boot ID, stable guard
+inode, native journal reopen and admission after reboot. Warm virtual hardware
+reset on PC/Q35 still hung and is not reported PASS. This scoped cold boot proof
+is not full migration crash recovery or CUDY overlay acceptance. Production
+migration remains BLOCKED until full coordinator and acceptance gates pass.

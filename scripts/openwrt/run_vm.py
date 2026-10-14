@@ -136,7 +136,7 @@ def inject(image, workspace, commit, packages, scenario):
         raw=''.join(records).encode()
         put(candidate + '/migration.sha256', raw, 0o600)
         put('/opt/hg-vm-lab/candidate.pin', hashlib.sha256(raw).hexdigest().encode() + b'\n', 0o600)
-    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh'}[scenario]
+    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh'}[scenario]
     smoke = git('show', commit + ':scripts/openwrt/' + guest)
     subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
@@ -183,42 +183,56 @@ def run(args):
                    '-drive', 'file=' + str(image) + ',format=raw,if=virtio', '-snapshot',
                    '-display', 'none', '-vga', 'none', '-monitor', 'none', '-serial', 'stdio',
                    '-nic', 'none', '-no-user-config']
+        if args.scenario == 'overlay-identity':
+            # A real guest reboot exits QEMU; supervise a cold boot of the same
+            # private writable disk. The immutable input is never mounted.
+            command.remove('-snapshot'); command += ['-no-reboot']
         if args.qemu_data: command += ['-L', str(args.qemu_data)]
         if args.bios: command += ['-bios', str(args.bios)]
-        child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, start_new_session=True)
-        console = bytearray()
+        console = bytearray(); deadline = time.monotonic() + 180
         try:
-            with selectors.DefaultSelector() as selector:
-                selector.register(child.stdout, selectors.EVENT_READ)
-                deadline = time.monotonic() + 180
-                while time.monotonic() < deadline:
-                    events = selector.select(1)
-                    for key, _ in events:
-                        chunk = os.read(key.fileobj.fileno(), 65536)
-                        if not chunk: selector.unregister(key.fileobj); break
-                        console.extend(chunk); require(len(console) <= 4 * 1024 * 1024, 'CONSOLE_LIMIT')
-                    if not selector.get_map(): break
-                require(child.wait(timeout=2) == 0, 'VM_EXIT_FAILED')
+            for boot in range(2 if args.scenario == 'overlay-identity' else 1):
+                child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, start_new_session=True)
+                try:
+                    with selectors.DefaultSelector() as selector:
+                        selector.register(child.stdout, selectors.EVENT_READ)
+                        while time.monotonic() < deadline:
+                            events = selector.select(1)
+                            for key, _ in events:
+                                chunk = os.read(key.fileobj.fileno(), 65536)
+                                if not chunk: selector.unregister(key.fileobj); break
+                                console.extend(chunk); require(len(console) <= 4 * 1024 * 1024, 'CONSOLE_LIMIT')
+                            if not selector.get_map(): break
+                        try:
+                            status=child.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            raise ValueError('VM_TIME_LIMIT') from None
+                        require(status == 0, 'VM_EXIT_FAILED')
+                finally:
+                    if child.poll() is None:
+                        child.terminate()
+                        try: child.wait(timeout=2)
+                        except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=2)
+                    child.stdout.close()
+                if args.scenario == 'overlay-identity' and boot == 0:
+                    raw=console.decode('utf-8',errors='replace')
+                    require(raw.count('HGVM_REBOOT=REQUESTED') == 1 and 'reboot: Restarting system' in raw and not RESULT.search(raw), 'GUEST_REBOOT_NOT_OBSERVED')
         finally:
-            if child.poll() is None:
-                child.terminate()
-                try: child.wait(timeout=2)
-                except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=2)
-            child.stdout.close()
             if args.diagnostic_log:
                 fd = os.open(args.diagnostic_log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
                 with os.fdopen(fd, 'wb') as log: log.write(console)
         report = parse_result(console.decode('utf-8', errors='replace'), expected)
         report.update(commit=commit, scenario=args.scenario, kernel_sha256=KERNEL_SHA, rootfs_sha256=ROOTFS_SHA,
                       network_devices=0, host_shared_directories=0, package_sha256=PACKAGE_SHA)
+        if args.scenario == 'overlay-identity': report['reboot_mechanism']='GUEST_REBOOT_SUPERVISED_COLD_BOOT'
         return report
 
 
 def failure_report(error):
     # Expose only fixed public codes, never subprocess output or local paths.
     reason = str(error) if isinstance(error, ValueError) else ''
-    allowed = {'INPUT_SHA256', 'PACKAGE_INDEX_SHA256', 'PACKAGE_SHA256',
+    allowed = {'GUEST_REBOOT_NOT_OBSERVED', 'VM_TIME_LIMIT', 'INPUT_SHA256', 'PACKAGE_INDEX_SHA256', 'PACKAGE_SHA256',
                'INPUT_TYPE_OR_SIZE', 'DEBUGFS_PATH', 'GUEST_PATH', 'RUNTIME_INVENTORY',
                'NO_SINGLE_COMPLETION', 'INCOMPLETE_CHECKS', 'COUNT_MISMATCH',
                'STATUS_MISMATCH', 'EXPANDED_IMAGE_LIMIT', 'CONSOLE_LIMIT', 'VM_EXIT_FAILED'}
@@ -238,7 +252,7 @@ def main():
     parser.add_argument('--bios', type=Path)
     parser.add_argument('--packages-directory', type=Path, required=True, help='Pinned official stat/timeout APKs, installed offline only in guest')
     parser.add_argument('--ref', default='HEAD')
-    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot'), default='baseline')
+    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity'), default='baseline')
     parser.add_argument('--diagnostic-log', type=Path, help='Private local diagnostic only; never CI artifact')
     args = parser.parse_args()
     try: report = run(args)
