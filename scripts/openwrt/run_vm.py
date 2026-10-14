@@ -5,6 +5,7 @@ Official immutable inputs: downloads.openwrt.org/releases/25.12.5/targets/x86/64
 This is not CUDY/PassWall/Xray/LIVE acceptance or a production migration tool.
 """
 import argparse
+import base64
 import gzip
 import hashlib
 import json
@@ -20,6 +21,7 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 KERNEL_SHA = 'e440f082d59550072b1421f10d1a83449c6a4cf356eea5bfa9ac1306978d649b'
 PACKAGE_SHA = {
+    'coreutils-base64-9.9-r2.apk': '5f8e6073e8074515830789aff5adb5601447468b62643016fd277ec3dd7e16f4',
     'packages.adb': 'd0fe864ac61705f34e401099719ea3cf37625912eb3d54260a7cbcdcc8ae9126',
     'coreutils-9.9-r2.apk': 'fe275266eb3d917162986bad82d2d74bc3763db9f497a584b77215e40e53f158',
     'coreutils-stat-9.9-r2.apk': '8efa0a3c4e54ef0b91dd6176f494567b0732b550672185aaff2f1e9cf3122ba2',
@@ -53,7 +55,7 @@ def debug_quote(value):
     return value
 
 
-def inject(image, workspace, commit, packages):
+def inject(image, workspace, commit, packages, scenario):
     commands = []
     created = set()
     def put(target, data, mode):
@@ -87,7 +89,33 @@ def inject(image, workspace, commit, packages):
     put('/opt/hg-vm-lab/legacy-engine.sh', git('show', commit + ':scripts/deploy/fixtures/legacy-engine-18.sh'), 0o700)
     put('/opt/hg-vm-lab/migration-state.uc', git('show', commit + ':scripts/deploy/migration-state.uc'), 0o600)
     put('/opt/hg-vm-lab/native-batch-inventory.uc', git('show', commit + ':scripts/deploy/native-batch-inventory.uc'), 0o600)
-    smoke = git('show', commit + ':scripts/openwrt/guest-smoke.sh')
+    if scenario == 'legacy-snapshot':
+        put('/opt/hg-vm-lab/migration-snapshot.uc', git('show', commit + ':scripts/deploy/migration-snapshot.uc'), 0o600)
+        # Public synthetic 18-file fixture on the guest's persistent filesystem.
+        # Create its journal through the exact trusted shell receiver, not a mock.
+        lab='/etc/hg-native-snapshot'
+        put(lab + '/.hg-deploy-test-root', b'DISPOSABLE\n', 0o600)
+        old_paths=[row.split('  /', 1)[1].strip() for row in manifest
+                   if not row.endswith('/actions.uc\n') and not row.endswith('/notifications.uc\n')]
+        wire=[b'HGDEPLOY1 ' + b'b'*40 + b'\n']
+        for index, rel in enumerate(old_paths):
+            perm=0o755 if index < 3 else 0o644
+            raw=(b'#!/bin/sh\ncase "$1" in running) exit 1;; *) exit 0;; esac\n'
+                 if rel.startswith('etc/init.d/') else b'// synthetic VM library\n' if rel.endswith('.uc')
+                 else b'#!/bin/sh\nexit 0\n')
+            put(lab + '/' + rel, raw, perm)
+            if rel.endswith('/common.sh'): raw += b'# installed legacy revision\n'
+            wire += [f'{perm:04o} {len(raw)} {hashlib.sha256(raw).hexdigest()}\n'.encode(),
+                     base64.b64encode(raw) + b'\n']
+        for source, dest, perm in (
+            ('legacy-engine-18.sh', 'usr/libexec/home-gateway-deploy/engine.sh', 0o700),
+            ('legacy-wrapper.sh', 'usr/libexec/home-gateway-deploy/wrapper.sh', 0o700),
+            ('legacy-recovery.init', 'etc/init.d/home-gateway-deploy-recover', 0o755)):
+            put(lab + '/' + dest, git('show', commit + ':scripts/deploy/fixtures/' + source), perm)
+        payload=b''.join(wire) + b'END\n'
+        put('/opt/hg-vm-lab/legacy-fixture.wire', payload, 0o600)
+        put('/opt/hg-vm-lab/legacy-fixture.sha256', hashlib.sha256(payload).hexdigest().encode() + b'\n', 0o600)
+    smoke = git('show', commit + ':scripts/openwrt/' + ('guest-snapshot.sh' if scenario == 'legacy-snapshot' else 'guest-smoke.sh'))
     subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
     put('/opt/hg-vm-lab/guest-smoke.sh', smoke, 0o700)
@@ -127,7 +155,7 @@ def run(args):
             while block := source.read(1024 * 1024):
                 total += len(block); require(total <= 256 * 1024 * 1024, 'EXPANDED_IMAGE_LIMIT')
                 destination.write(block)
-        expected = inject(image, workspace, commit, args.packages_directory)
+        expected = inject(image, workspace, commit, args.packages_directory, args.scenario)
         command = [args.qemu, '-accel', 'tcg', '-m', '256', '-smp', '1',
                    '-kernel', str(kernel), '-append', 'root=/dev/vda rootwait console=ttyS0,115200n8',
                    '-drive', 'file=' + str(image) + ',format=raw,if=virtio', '-snapshot',
@@ -160,7 +188,7 @@ def run(args):
                 fd = os.open(args.diagnostic_log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
                 with os.fdopen(fd, 'wb') as log: log.write(console)
         report = parse_result(console.decode('utf-8', errors='replace'), expected)
-        report.update(commit=commit, kernel_sha256=KERNEL_SHA, rootfs_sha256=ROOTFS_SHA,
+        report.update(commit=commit, scenario=args.scenario, kernel_sha256=KERNEL_SHA, rootfs_sha256=ROOTFS_SHA,
                       network_devices=0, host_shared_directories=0, package_sha256=PACKAGE_SHA)
         return report
 
@@ -188,6 +216,7 @@ def main():
     parser.add_argument('--bios', type=Path)
     parser.add_argument('--packages-directory', type=Path, required=True, help='Pinned official stat/timeout APKs, installed offline only in guest')
     parser.add_argument('--ref', default='HEAD')
+    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot'), default='baseline')
     parser.add_argument('--diagnostic-log', type=Path, help='Private local diagnostic only; never CI artifact')
     args = parser.parse_args()
     try: report = run(args)

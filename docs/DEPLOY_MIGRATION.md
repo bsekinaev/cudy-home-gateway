@@ -177,7 +177,7 @@ Read-only admission проверяет metadata одним ucode process; Telegr
 проверяет exact 20-file manifest одним bounded checksum process. Непубликованные
 `phase.new`/`admission.new` блокируют даже старый terminal receipt после reboot.
 
-Local BusyBox ash 1.37.0 / pinned ucode: deployment 104 PASS, general 211 PASS,
+Local BusyBox ash 1.37.0 / pinned ucode: deployment 99 PASS, general 211 PASS,
 release 21 PASS. Journal tests выполняют настоящие flock/fsync, SIGKILL и проверку
 CLOEXEC, но не заменяют полный target migration/rollback acceptance. Native
 state module пока не устанавливается на production и не публикует admission:
@@ -199,6 +199,29 @@ concurrent/stale receiver guard checks. Это synthetic state/admission accepta
 
 State mutators и snapshot caller проверяют открытый kernel guard и точный root;
 после close() или при root mismatch запись/fence/release запрещены.
+
+## Native legacy snapshot — следующий coordinator компонент
+
+`scripts/deploy/migration-snapshot.uc` выполняет prepare/verify под открытым
+root-bound state guard и owned fence. До snapshot writes проверяются exact18
+runtime inventory, все три неизменные c921c2d pins, live/backup manifest hashes,
+canonical latest/COMMITTED/commit/was-running и safe metadata. Сохраняются old18,
+receiver/wrapper/recovery init, latest и весь current legacy transaction с backup
+и bounded logs. Старый journal, inventory-version и live runtime не изменяются.
+
+Snapshot file permissions сохраняются, его directories private0700; reads
+сверяют lstat с открытым FD и metadata после read. Все copies fsynced и проходят
+SHA readback; source повторно проверяется до publication. Receipt связан с nonce
+state marker. Verify требует exact snapshot tree, trusted pins, canonical journal,
+metadata и согласованные runtime/backup manifests. Неизвестные files/empty dirs,
+symlink/hardlink, corruption или partial receipt/snapshot означают STOP.
+
+Бюджет:128 files, source sum≤8MiB, each≤256KiB; free space≥2×source+1MiB reserve.
+Partial snapshot после fsync failure/SIGKILL сохраняется fenced; auto-adoption и
+повтор prepare запрещены. После snapshot phase остаётся PREPARING: PREPARED и
+admission нельзя публиковать до полного candidate/coordinator verification.
+Private snapshots не входят в git/CI artifacts. Это не runtime apply/rollback,
+не owner restore PASS и не готовая production installation procedure.
 
 Review hardening: initial journal создаётся в unique private nonce staging и
 публикуется только целиком после file/dir fsync. Прерванный pre-publication stage
