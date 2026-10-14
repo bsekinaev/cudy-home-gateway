@@ -95,6 +95,8 @@ export function prepare_candidate_snapshot(root, state, test_busybox, source, pi
     let receipt={ format:'HG_CANDIDATE_SNAPSHOT_V1', scope:'RUNTIME20_RECEIVER3',
         marker:io.read(io.BASE + '/marker', 0600, 128), manifest_sha256:pin, files:packet.records };
     let pending=io.BASE + '/candidate.json.new'; io.write(pending, sprintf('%J\n', receipt), 0600);
+    fresh=checked_packet(io, source, pin);
+    for (let rel in FILES) require(fresh.bytes[rel] == packet.bytes[rel], 'SOURCE_CHANGED');
     require(fs.rename(pending, io.BASE + '/candidate.json'), 'PUBLISH'); io.sync([ io.BASE ]);
     return verify_candidate_snapshot(root, state, test_busybox);
 };

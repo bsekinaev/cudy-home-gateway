@@ -142,3 +142,19 @@ class NativeCandidateTests(unittest.TestCase):
         finally:
             os.killpg(child.pid, signal.SIGKILL)
             child.communicate(timeout=3)
+
+    def test_source_drift_during_pending_receipt_fsync_refuses_publication(self):
+        for area in ('modify', 'add', 'remove'):
+            if area != 'modify': self.doCleanups(); self.setUp()
+            target = self.source / (ALL[-1] if area != 'add' else 'foreign')
+            operation = ('printf "# late drift\\n" >> ' if area != 'remove' else 'rm -- ')
+            shim = self.root / 'drift-candidate-receipt'
+            shim.write_text('#!/bin/sh\ncase "$*" in *"/candidate.json.new"*) ' + operation + '"' + str(target) + '";; esac\nexec "' + self.bb + '" "$@"\n')
+            shim.chmod(0o700)
+            result = self.run_candidate(bb=str(shim))
+            self.assertNotEqual(result.returncode, 0, area)
+            self.assertTrue((self.base / 'candidate.json.new').exists())
+            self.assertFalse((self.base / 'candidate.json').exists())
+            self.assertTrue((self.root / 'tmp/home-gateway-deploy.lock').is_symlink())
+            self.assertEqual((self.base / 'phase').read_bytes(), b'PREPARING\n')
+            self.lab.assert_previous()
