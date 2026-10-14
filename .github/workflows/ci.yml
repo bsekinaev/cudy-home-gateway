@@ -124,7 +124,7 @@ jobs:
   isolated-openwrt:
     name: Networkless OpenWrt procd and reboot smoke
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout immutable candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -166,6 +166,12 @@ jobs:
           set -euo pipefail
           python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" --scenario candidate-snapshot > vm-candidate-report.json || { cat vm-candidate-report.json; exit 1; }
           cat vm-candidate-report.json
+      - name: Verify overlay identity across guest reboot and supervised cold boot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" --scenario overlay-identity > vm-overlay-report.json || { cat vm-overlay-report.json; exit 1; }
+          cat vm-overlay-report.json
       - name: Upload public report only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -175,5 +181,6 @@ jobs:
             vm-report.json
             vm-snapshot-report.json
             vm-candidate-report.json
+            vm-overlay-report.json
           if-no-files-found: ignore
           retention-days: 30
