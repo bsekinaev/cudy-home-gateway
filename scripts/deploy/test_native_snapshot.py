@@ -182,5 +182,38 @@ class NativeSnapshotTests(unittest.TestCase):
         path.write_bytes(original)
         self.lab.assert_previous()
 
+    def test_committed_journal_requires_all_three_original_logs(self):
+        for name in ('preflight.log','postflight.log','service.log'):
+            path=self.lab.tx / name; raw=path.read_bytes(); path.unlink()
+            result=self.run_snapshot()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((self.base / 'old').exists())
+            path.write_bytes(raw); path.chmod(0o600)
+        self.lab.assert_previous()
+
+    def test_pending_legacy_pointers_refused_without_adoption(self):
+        for name in ('active.new','latest.new'):
+            path=self.lab.base / name; path.write_bytes(b'tx.pending\n'); path.chmod(0o600)
+            self.assertNotEqual(self.run_snapshot().returncode, 0)
+            self.assertFalse((self.base / 'old').exists())
+            self.assertEqual(path.read_bytes(), b'tx.pending\n')
+            path.unlink()
+        self.lab.assert_previous()
+
+    def test_library_or_journal_addition_during_copy_refuses_publication(self):
+        for area in ('library','journal'):
+            # Each subcase needs a fresh authentic legacy transaction/snapshot.
+            if area == 'journal':
+                self.doCleanups(); self.setUp()
+            target=(self.root / 'usr/lib/home-gateway/actions.uc') if area == 'library' else (self.lab.tx / 'foreign.log')
+            shim=self.root / 'add-during-snapshot'
+            shim.write_text('#!/bin/sh\ncase "$*" in *"/old/"*) if [ ! -e "' + str(target) + '" ]; then printf "added\n" > "' + str(target) + '"; chmod 600 "' + str(target) + '"; fi;; esac\nexec "' + self.bb + '" "$@"\n')
+            shim.chmod(0o700)
+            result=self.run_snapshot(str(shim))
+            self.assertNotEqual(result.returncode, 0, area)
+            self.assertTrue(target.exists(), 'writer fault must execute')
+            self.assertFalse((self.base / 'snapshot.json').exists())
+            self.assertTrue((self.root / 'tmp/home-gateway-deploy.lock').is_symlink())
+
 
 if __name__ == '__main__': unittest.main()

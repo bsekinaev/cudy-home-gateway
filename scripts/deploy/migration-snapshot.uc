@@ -132,14 +132,14 @@ export function verify_legacy_snapshot(root, state, test_busybox) {
         receipt.marker == io.read(io.BASE + '/marker', 0600, 128) && type(receipt.files) == 'object', 'RECEIPT');
     let required=[ 'latest', ...map([ ...RUNTIME, ...keys(PINS) ], rel => 'runtime/' + rel),
         ...map(RUNTIME, rel => 'journal/backup/' + rel), 'journal/phase', 'journal/commit',
-        'journal/was-running', 'journal/new.sha256', 'journal/backup.sha256' ];
-    let optional=[ 'journal/preflight.log', 'journal/postflight.log', 'journal/service.log' ];
+        'journal/was-running', 'journal/new.sha256', 'journal/backup.sha256',
+        'journal/preflight.log', 'journal/postflight.log', 'journal/service.log' ];
     let names=keys(receipt.files);
-    require(length(names) >= length(required) && length(names) <= length(required)+3 &&
+    require(length(names) == length(required) &&
         length(filter(required, name => receipt.files[name] != null)) == length(required), 'INVENTORY');
     let paths=[], actual=[], total=0, dirs=0;
     for (let rel in names) {
-        require(index(required, rel) >= 0 || index(optional, rel) >= 0, 'INVENTORY');
+        require(index(required, rel) >= 0, 'INVENTORY');
         let record=receipt.files[rel], runtime=index(rel, 'runtime/') == 0,
             backup=index(rel, 'journal/backup/') == 0;
         let perm=runtime ? mode(substr(rel, 8)) : backup ? mode(substr(rel, 15)) : 0600;
@@ -181,7 +181,8 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
     require(state.phase() == 'PREPARING', 'NO_REPLAY');
     let io=boundary(root, state, test_busybox), deploy=root + '/etc/home-gateway-deploy';
     io.checked(deploy, 'directory', 0700, 0);
-    require(fs.lstat(deploy + '/active') == null, 'ACTIVE');
+    require(fs.lstat(deploy + '/active') == null && fs.lstat(deploy + '/active.new') == null &&
+        fs.lstat(deploy + '/latest.new') == null, 'ACTIVE_OR_PENDING_POINTER');
     let latest=io.read(deploy + '/latest', 0600, 40);
     require(match(latest, /^tx\.[a-zA-Z0-9]{1,32}\n$/), 'LATEST');
     let tx=deploy + '/' + trim(latest);
@@ -204,8 +205,8 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
     }
     for (let rel in [ ...RUNTIME, ...keys(PINS) ]) add(root + '/' + rel, 'runtime/' + rel, mode(rel));
     add(deploy + '/latest', 'latest', 0600);
-    let dirs=0;
-    function walk(path, prefix) {
+    let dirs=0, rechecked={};
+    function walk(path, prefix, recheck) {
         io.checked(path, 'directory', 0700, 0); require(++dirs <= 32, 'BUDGET');
         let entries=fs.lsdir(path); require(entries != null && length(entries) <= 32, 'JOURNAL');
         for (let name in entries) {
@@ -215,17 +216,19 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
                 let prefix_path=substr(rel, length('journal/backup/'));
                 require(rel == 'journal/backup' || (index(rel, 'journal/backup/') == 0 &&
                     length(filter(RUNTIME, item => index(item, prefix_path + '/') == 0)) > 0), 'JOURNAL_PATH');
-                walk(p, rel);
+                walk(p, rel, recheck);
             }
             else {
                 let suffix=substr(rel, length('journal/backup/'));
                 if (index(rel, 'journal/backup/') == 0) require(index(RUNTIME, suffix) >= 0, 'INVENTORY');
                 else require(index([ 'phase', 'commit', 'was-running', 'new.sha256', 'backup.sha256', 'preflight.log', 'postflight.log', 'service.log' ], name) >= 0 && prefix == 'journal', 'JOURNAL_PATH');
-                add(p, rel, index(rel, 'journal/backup/') == 0 ? mode(suffix) : 0600);
+                if (recheck) { require(metadata[p] != null && same(metadata[p], fs.lstat(p)), 'SOURCE_CHANGED'); rechecked[p]=true; }
+                else add(p, rel, index(rel, 'journal/backup/') == 0 ? mode(suffix) : 0600);
             }
         }
     }
-    walk(tx, 'journal');
+    for (let name in [ 'preflight.log', 'postflight.log', 'service.log' ]) io.checked(tx + '/' + name, 'file', 0600, 262144);
+    walk(tx, 'journal', false);
     let paths=keys(metadata), digests=io.hashes(paths);
     for (let p in paths) require(same(metadata[p], fs.lstat(p)), 'SOURCE_CHANGED');
     for (let rel in RUNTIME) require(digests[root + '/' + rel] == live[rel] && digests[tx + '/backup/' + rel] == backup[rel], 'HASH_MISMATCH');
@@ -243,7 +246,14 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
     for (let rel in keys(sources)) require(copies[io.BASE + '/old/' + rel] == snapshot_records[rel].sha256, 'SNAPSHOT_CHANGED');
     let again=io.hashes(paths);
     for (let p in paths) require(same(metadata[p], fs.lstat(p)) && again[p] == digests[p], 'SOURCE_CHANGED');
-    require(fs.lstat(deploy + '/active') == null && io.read(deploy + '/latest', 0600, 40) == latest, 'SOURCE_CHANGED');
+    library=fs.lsdir(root + '/usr/lib/home-gateway');
+    require(library != null && length(library) == 15 &&
+        length(filter(library, name => index(RUNTIME, 'usr/lib/home-gateway/' + name) >= 0)) == 15, 'INVENTORY');
+    dirs=0; walk(tx, 'journal', true);
+    require(length(keys(rechecked)) == length(filter(paths, path => index(path, tx + '/') == 0)), 'SOURCE_CHANGED');
+    require(fs.lstat(tx + '/inventory-version') == null && fs.lstat(deploy + '/active') == null &&
+        fs.lstat(deploy + '/active.new') == null && fs.lstat(deploy + '/latest.new') == null &&
+        io.read(deploy + '/latest', 0600, 40) == latest, 'SOURCE_CHANGED');
     let receipt={ format:'HG_LEGACY_SNAPSHOT_V1', marker:io.read(io.BASE + '/marker', 0600, 128), latest, files:snapshot_records };
     let pending=io.BASE + '/snapshot.json.new'; io.write(pending, sprintf('%J\n', receipt), 0600);
     require(fs.rename(pending, io.BASE + '/snapshot.json'), 'PUBLISH'); io.sync([ io.BASE ]);
