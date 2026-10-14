@@ -62,13 +62,17 @@ function checked_packet(io, source, pin) {
         require(index(data, '\r') < 0 && index(data, '\0') < 0 && hashes[p] == records[rel].sha256, 'BYTES');
         bytes[rel]=data; total += length(data);
     }
+    let final_hashes=io.hashes(paths);
+    for (let rel in FILES) require(final_hashes[source + '/' + rel] == records[rel].sha256 &&
+        io.read(source + '/' + rel, mode(rel), 262144) == bytes[rel], 'SOURCE_CHANGED');
+    inventory(io, source, records);
     require(total <= 8388608, 'BOUND');
     return { records, bytes, raw, total };
 }
 
 export function verify_candidate_snapshot(root, state, test_busybox) {
     let io=snapshot_io(root, state, test_busybox), path=io.BASE + '/candidate.json';
-    require(fs.lstat(path + '.new') == null, 'PARTIAL');
+    require(fs.lstat(path + '.new') == null && fs.lstat(io.BASE + '/candidate.publish-pending') == null, 'PARTIAL');
     let receipt=json(io.read(path, 0600, 16384));
     require(type(receipt) == 'object' && join(',', sort(keys(receipt))) == 'files,format,manifest_sha256,marker,scope' &&
         receipt.format == 'HG_CANDIDATE_SNAPSHOT_V1' && receipt.scope == 'RUNTIME20_RECEIVER3' &&
@@ -86,7 +90,8 @@ export function prepare_candidate_snapshot(root, state, test_busybox, source, pi
     verify_legacy_snapshot(root, state, test_busybox);
     let io=snapshot_io(root, state, test_busybox), base=io.BASE + '/candidate';
     require(fs.lstat(base) == null && fs.lstat(io.BASE + '/candidate.json') == null &&
-        fs.lstat(io.BASE + '/candidate.json.new') == null, 'PARTIAL');
+        fs.lstat(io.BASE + '/candidate.json.new') == null &&
+        fs.lstat(io.BASE + '/candidate.publish-pending') == null, 'PARTIAL');
     let packet=checked_packet(io, source, pin); io.space(packet.total);
     for (let rel in FILES) io.write(base + '/' + rel, packet.bytes[rel], mode(rel));
     io.write(base + '/migration.sha256', packet.raw, 0600);
@@ -95,8 +100,13 @@ export function prepare_candidate_snapshot(root, state, test_busybox, source, pi
     let receipt={ format:'HG_CANDIDATE_SNAPSHOT_V1', scope:'RUNTIME20_RECEIVER3',
         marker:io.read(io.BASE + '/marker', 0600, 128), manifest_sha256:pin, files:packet.records };
     let pending=io.BASE + '/candidate.json.new'; io.write(pending, sprintf('%J\n', receipt), 0600);
+    io.write(io.BASE + '/candidate.publish-pending', receipt.marker, 0600);
     fresh=checked_packet(io, source, pin);
     for (let rel in FILES) require(fresh.bytes[rel] == packet.bytes[rel], 'SOURCE_CHANGED');
     require(fs.rename(pending, io.BASE + '/candidate.json'), 'PUBLISH'); io.sync([ io.BASE ]);
+    // The receipt rename is durable before removing the incomplete marker.
+    // A crash before that barrier keeps verification fail-closed; a crash
+    // after unlink can only resurrect the marker and cause a safe refusal.
+    require(fs.unlink(io.BASE + '/candidate.publish-pending'), 'PUBLISH'); io.sync([ io.BASE ]);
     return verify_candidate_snapshot(root, state, test_busybox);
 };

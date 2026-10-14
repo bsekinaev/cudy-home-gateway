@@ -158,3 +158,53 @@ class NativeCandidateTests(unittest.TestCase):
             self.assertTrue((self.root / 'tmp/home-gateway-deploy.lock').is_symlink())
             self.assertEqual((self.base / 'phase').read_bytes(), b'PREPARING\n')
             self.lab.assert_previous()
+
+    def test_hash_read_race_refused_with_real_process_fault(self):
+        import shutil
+        self.assertEqual(self.run_candidate().returncode,0)
+        compiler=shutil.which('cc'); self.assertIsNotNone(compiler)
+        source=self.root/'hash-read-race.c'
+        source.write_text(r'''#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dlfcn.h>
+static FILE *target_pipe;
+static int fired;
+FILE *popen(const char *command,const char *mode) {
+    FILE *(*real)(const char*,const char*)=dlsym(RTLD_NEXT,"popen");
+    FILE *p=real(command,mode);
+    const char *target=getenv("HG_HASH_DRIFT_TARGET");
+    if(!fired && target && strstr(command,"sha256sum") && strstr(command,target))target_pipe=p;
+    return p;
+}
+int pclose(FILE *p) {
+    int (*real)(FILE*)=dlsym(RTLD_NEXT,"pclose");
+    int rc=real(p);
+    if(!fired && p==target_pipe) {
+        fired=1;
+        FILE *f=fopen(getenv("HG_HASH_DRIFT_TARGET"),"a");
+        if(f) { fputs("# drift after hash\n",f); fclose(f); }
+    }
+    return rc;
+}
+''')
+        library=self.root/'hash-read-race.so'
+        subprocess.run([compiler,'-shared','-fPIC',str(source),'-ldl','-o',str(library)],check=True)
+        target=self.base/'candidate'/ALL[0]
+        env=dict(os.environ,LD_PRELOAD=str(library),HG_HASH_DRIFT_TARGET=str(target))
+        result=subprocess.run(self.candidate_command(verify=True),env=env,capture_output=True,text=True,timeout=30)
+        self.assertTrue(target.read_bytes().endswith(b'# drift after hash\n'),'fault must execute')
+        self.assertNotEqual(result.returncode,0)
+
+    def test_receipt_rename_fsync_failure_remains_detectably_partial(self):
+        shim=self.root/'fail-published-directory-fsync'
+        shim.write_text('#!/bin/sh\nif [ "$1" = fsync ] && [ "$#" = 2 ] && [ "$2" = "'+str(self.base)+'" ] && [ -f "'+str(self.base/'candidate.json')+'" ]; then exit 1; fi\nexec "'+self.bb+'" "$@"\n')
+        shim.chmod(0o700)
+        result=self.run_candidate(bb=str(shim))
+        self.assertNotEqual(result.returncode,0)
+        self.assertTrue((self.base/'candidate.json').exists(),'rename must execute')
+        self.assertTrue((self.base/'candidate.publish-pending').exists())
+        self.assertNotEqual(self.run_candidate(verify=True).returncode,0)
+        self.assertNotEqual(self.run_candidate().returncode,0)
+        self.lab.assert_previous()
