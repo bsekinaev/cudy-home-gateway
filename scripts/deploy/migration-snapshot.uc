@@ -244,18 +244,23 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
     for (let rel, raw in sources) io.write(io.BASE + '/old/' + rel, raw, permissions[rel]);
     let copy_paths=map(keys(sources), rel => io.BASE + '/old/' + rel), copies=io.hashes(copy_paths);
     for (let rel in keys(sources)) require(copies[io.BASE + '/old/' + rel] == snapshot_records[rel].sha256, 'SNAPSHOT_CHANGED');
-    let again=io.hashes(paths);
-    for (let p in paths) require(same(metadata[p], fs.lstat(p)) && again[p] == digests[p], 'SOURCE_CHANGED');
-    library=fs.lsdir(root + '/usr/lib/home-gateway');
-    require(library != null && length(library) == 15 &&
-        length(filter(library, name => index(RUNTIME, 'usr/lib/home-gateway/' + name) >= 0)) == 15, 'INVENTORY');
-    dirs=0; walk(tx, 'journal', true);
-    require(length(keys(rechecked)) == length(filter(paths, path => index(path, tx + '/') == 0)), 'SOURCE_CHANGED');
-    require(fs.lstat(tx + '/inventory-version') == null && fs.lstat(deploy + '/active') == null &&
-        fs.lstat(deploy + '/active.new') == null && fs.lstat(deploy + '/latest.new') == null &&
-        io.read(deploy + '/latest', 0600, 40) == latest, 'SOURCE_CHANGED');
+    function revalidate_source() {
+        let again=io.hashes(paths);
+        for (let p in paths) require(same(metadata[p], fs.lstat(p)) && again[p] == digests[p], 'SOURCE_CHANGED');
+        library=fs.lsdir(root + '/usr/lib/home-gateway');
+        require(library != null && length(library) == 15 &&
+            length(filter(library, name => index(RUNTIME, 'usr/lib/home-gateway/' + name) >= 0)) == 15, 'INVENTORY');
+        dirs=0; rechecked={}; walk(tx, 'journal', true);
+        require(length(keys(rechecked)) == length(filter(paths, path => index(path, tx + '/') == 0)), 'SOURCE_CHANGED');
+        require(fs.lstat(tx + '/inventory-version') == null && fs.lstat(deploy + '/active') == null &&
+            fs.lstat(deploy + '/active.new') == null && fs.lstat(deploy + '/latest.new') == null &&
+            io.read(deploy + '/latest', 0600, 40) == latest, 'SOURCE_CHANGED');
+    }
+    revalidate_source();
     let receipt={ format:'HG_LEGACY_SNAPSHOT_V1', marker:io.read(io.BASE + '/marker', 0600, 128), latest, files:snapshot_records };
     let pending=io.BASE + '/snapshot.json.new'; io.write(pending, sprintf('%J\n', receipt), 0600);
+    // The pending-receipt fsync may block; certify sources after it returns.
+    revalidate_source();
     require(fs.rename(pending, io.BASE + '/snapshot.json'), 'PUBLISH'); io.sync([ io.BASE ]);
     return verify_legacy_snapshot(root, state, test_busybox);
 };

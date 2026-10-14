@@ -215,5 +215,18 @@ class NativeSnapshotTests(unittest.TestCase):
             self.assertFalse((self.base / 'snapshot.json').exists())
             self.assertTrue((self.root / 'tmp/home-gateway-deploy.lock').is_symlink())
 
+    def test_source_drift_during_pending_receipt_fsync_refuses_publication(self):
+        for area in ('runtime','library','journal'):
+            if area != 'runtime': self.doCleanups(); self.setUp()
+            target=(self.root / OLD[-1]) if area=='runtime' else ((self.root / 'usr/lib/home-gateway/actions.uc') if area=='library' else (self.lab.tx / 'foreign.log'))
+            shim=self.root / 'drift-pending-receipt'
+            shim.write_text('#!/bin/sh\ncase "$*" in *"/snapshot.json.new"*) printf "# late drift\n" >> "' + str(target) + '";; esac\nexec "' + self.bb + '" "$@"\n')
+            shim.chmod(0o700)
+            result=self.run_snapshot(str(shim))
+            self.assertNotEqual(result.returncode, 0, area)
+            self.assertTrue((self.base / 'snapshot.json.new').exists(), 'pending fsync fault must execute')
+            self.assertFalse((self.base / 'snapshot.json').exists())
+            self.assertTrue((self.root / 'tmp/home-gateway-deploy.lock').is_symlink())
+
 
 if __name__ == '__main__': unittest.main()
