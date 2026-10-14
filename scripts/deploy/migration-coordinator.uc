@@ -52,7 +52,7 @@ function abort_preparing(root,state,bb) {
 }
 export function rollback_coordinator(root,state,bb) {
     require(index(['PREPARING','PREPARED','APPLYING','RESTORING'],state.phase())>=0,'PHASE');
-    if(state.phase()=='PREPARING' || fs.lstat(root+'/etc/home-gateway-migration/coordinator.abort')!=null) {
+    if(state.phase()=='PREPARING' || state.phase()=='PREPARED' || fs.lstat(root+'/etc/home-gateway-migration/coordinator.abort')!=null) {
         require(state.phase()!='APPLYING','PHASE');abort_preparing(root,state,bb);return;
     }
     let c=plan(root,state,bb);

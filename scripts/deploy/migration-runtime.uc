@@ -14,10 +14,12 @@ function context(root, state, bb) {
         records[substr(name,8)]=old.files[name];
     const added=['usr/lib/home-gateway/actions.uc','usr/lib/home-gateway/notifications.uc'];
     require(length(keys(records))==21 && length(keys(candidate.files))==23,'INVENTORY');
-    function journal() {
+    function journal(require_latest=true) {
         let deploy=root+'/etc/home-gateway-deploy';
         require(fs.lstat(deploy+'/active')==null && fs.lstat(deploy+'/active.new')==null &&
-            fs.lstat(deploy+'/latest.new')==null && io.read(deploy+'/latest',0600,40)==old.latest,'DEPLOYMENT_DRIFT');
+            fs.lstat(deploy+'/latest.new')==null,'DEPLOYMENT_DRIFT');
+        let latest=io.read(deploy+'/latest',0600,40);
+        require(match(latest,/^tx\.[a-zA-Z0-9]{1,32}\n$/) && (!require_latest || latest==old.latest),'DEPLOYMENT_DRIFT');
         let tx=deploy+'/'+trim(old.latest), names=[];
         function walk(path,prefix) {
             io.checked(path,'directory',0700,0);
@@ -101,7 +103,7 @@ export function verify_runtime(root,state,bb,newer) {
     require(type(newer)=='bool','SCOPE'); context(root,state,bb).verify(newer); return true;
 };
 function restore_preflight(root,c,check_journal) {
-    if(check_journal)c.journal();
+    c.journal(check_journal);
     // Refuse foreign live bytes before overwriting anything. A partial apply
     // can contain only exact old/new files, and added files may be absent.
     let names=fs.lsdir(root+'/usr/lib/home-gateway');
@@ -129,6 +131,12 @@ function restore_preflight(root,c,check_journal) {
         }
         require(valid,'UNKNOWN_PENDING');
     }
+    let largest=0;
+    for(let rel in keys(c.records)) {
+        let size=fs.lstat(c.io.BASE+'/old/runtime/'+rel).size;
+        if(size>largest)largest=size;
+    }
+    c.io.space(largest);
     return directory;
 }
 export function preflight_restore_runtime(root,state,bb) {

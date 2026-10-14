@@ -75,3 +75,31 @@ class NativeCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
         self.assertEqual(before,{p:(self.root/p).stat().st_ino for p in self.legacy.previous})
         self.legacy.assert_previous();self.assertEqual((self.base/'phase').read_bytes(),b'RESTORING\n')
+
+    def test_legacy_journal_drift_refuses_before_latest_changes(self):
+        self.prepare();self.assertEqual(self.run_native('apply_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
+        latest=(self.legacy.base/'latest').read_bytes();anchor=self.legacy.base/latest.decode().strip()
+        (self.legacy.tx/'preflight.log').write_bytes(b'foreign journal\n')
+        self.assertNotEqual(self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
+        self.assertEqual((self.legacy.base/'latest').read_bytes(),latest);self.assertTrue(anchor.exists())
+        self.assertEqual((self.legacy.tx/'preflight.log').read_bytes(),b'foreign journal\n')
+
+    def test_restore_space_refusal_keeps_latest_anchor_and_runtime(self):
+        self.prepare();self.assertEqual(self.run_native('apply_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
+        latest=(self.legacy.base/'latest').read_bytes();anchor=self.legacy.base/latest.decode().strip()
+        before={p:(self.root/p).read_bytes() for p in self.legacy.previous}
+        shim=self.root/'no-restore-space'
+        shim.write_text('#!/bin/sh\nif [ "$1" = df ]; then printf "Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 1 1 0 100%% /\n"; exit 0; fi\nexec "'+self.bb+'" "$@"\n');shim.chmod(0o700)
+        self.assertNotEqual(self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])',str(shim)).returncode,0)
+        self.assertEqual((self.legacy.base/'latest').read_bytes(),latest);self.assertTrue(anchor.exists())
+        self.assertEqual(before,{p:(self.root/p).read_bytes() for p in self.legacy.previous})
+
+    def test_prepared_anchor_failure_abort_preserves_all_original_inodes(self):
+        shim=self.root/'fail-anchor-space';counter=self.root/'df-counter'
+        shim.write_text('#!/bin/sh\nif [ "$1" = df ]; then n=$(cat "'+str(counter)+'" 2>/dev/null || printf 0); n=$((n+1)); printf "%s" "$n" > "'+str(counter)+'"; if [ "$n" -gt 1 ]; then printf "Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 1 1 0 100%% /\n"; exit 0; fi; fi\nexec "'+self.bb+'" "$@"\n');shim.chmod(0o700)
+        before={p:(self.root/p).stat().st_ino for p in self.legacy.previous}
+        self.assertNotEqual(self.run_native('prepare_coordinator(ARGV[0],s,ARGV[1],"'+'c'*40+'",0)',str(shim)).returncode,0)
+        self.assertEqual((self.base/'phase').read_bytes(),b'PREPARED\n')
+        r=self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])');self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(before,{p:(self.root/p).stat().st_ino for p in self.legacy.previous})
+        self.legacy.assert_previous()
