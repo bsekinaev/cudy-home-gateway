@@ -34,7 +34,7 @@ if [ ! -f "$LAB/reboot-pending" ]; then
         printf 'HGVM_SLEEP=%s:plain=%s:busybox=%s\n' "$arg" "$plain" "$direct"
     done
     check integer_sleep busybox sleep 1
-    check vendor_prerequisites apk --repositories-file /opt/hg-vm-lab/packages/repositories --no-network add coreutils-stat=9.9-r2 coreutils-timeout=9.9-r2
+    check vendor_prerequisites apk --repositories-file /opt/hg-vm-lab/packages/repositories --no-network add coreutils-base64=9.9-r2 coreutils-stat=9.9-r2 coreutils-timeout=9.9-r2
     cat /tmp/hg-vm-lab/check.out
     sha256sum /etc/config/network /etc/config/firewall /etc/config/dhcp > /tmp/hg-vm-lab/network-config.sha256
     ip route show > /tmp/hg-vm-lab/routes.before
