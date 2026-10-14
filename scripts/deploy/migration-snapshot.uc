@@ -123,6 +123,11 @@ function boundary(root, state, test_busybox) {
     return { BASE, read, checked, write, hashes, manifest, sync, space };
 }
 
+// Internal coordinator I/O; always requires the held root-bound guard/fence.
+export function snapshot_io(root, state, test_busybox) {
+    return boundary(root, state, test_busybox);
+};
+
 export function verify_legacy_snapshot(root, state, test_busybox) {
     let io=boundary(root, state, test_busybox);
     require(fs.lstat(io.BASE + '/snapshot.json.new') == null, 'PARTIAL_OR_FOREIGN');

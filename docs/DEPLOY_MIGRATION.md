@@ -261,3 +261,19 @@ inherit the guard. Failure before instance construction is reported by the hook.
 Guard inode stability on real CUDY overlay across reboot is an unclosed target
 gate: any changed identity must fail closed, not silently refresh the receipt.
 Legacy18 boot/service guard installation still requires the full coordinator.
+
+## Native candidate staging — продолжение 14.10.2026
+
+`migration-candidate.uc` сохраняет отдельно pinned manifest из20 runtime и3
+receiver files: exact inventory/SHA/UID/GID/mode/physical ancestors, bounded reads,
+private flash copy с checked file/dir fsync, source/readback revalidation и atomic
+receipt publication. Source может быть на tmpfs; cross-FS rename не используется.
+Unknown extras, links, metadata/hash/pin mismatch, insufficient space, partial
+fsync/SIGKILL snapshot и replay отвергаются. Snapshot verification не разрешает
+apply и не публикует admission: phase остаётся PREPARING, legacy runtime неизменен.
+
+Этот scope RUNTIME20_RECEIVER3 ещё не включает полный control package/early boot
+guard/service quiescence. Это НЕ production installer и НЕ verified18→20→18
+rollback. Host candidate8 regressions и dedicated networkless officialVM23
+scenario используются наряду с baseline и legacy-snapshot VM; raw images,
+console и snapshots не публикуются. Full coordinator остаётся critical blocker.

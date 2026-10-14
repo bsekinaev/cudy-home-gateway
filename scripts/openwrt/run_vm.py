@@ -89,7 +89,7 @@ def inject(image, workspace, commit, packages, scenario):
     put('/opt/hg-vm-lab/legacy-engine.sh', git('show', commit + ':scripts/deploy/fixtures/legacy-engine-18.sh'), 0o700)
     put('/opt/hg-vm-lab/migration-state.uc', git('show', commit + ':scripts/deploy/migration-state.uc'), 0o600)
     put('/opt/hg-vm-lab/native-batch-inventory.uc', git('show', commit + ':scripts/deploy/native-batch-inventory.uc'), 0o600)
-    if scenario == 'legacy-snapshot':
+    if scenario in ('legacy-snapshot', 'candidate-snapshot'):
         put('/opt/hg-vm-lab/migration-snapshot.uc', git('show', commit + ':scripts/deploy/migration-snapshot.uc'), 0o600)
         # Public synthetic 18-file fixture on the guest's persistent filesystem.
         # Create its journal through the exact trusted shell receiver, not a mock.
@@ -115,7 +115,29 @@ def inject(image, workspace, commit, packages, scenario):
         payload=b''.join(wire) + b'END\n'
         put('/opt/hg-vm-lab/legacy-fixture.wire', payload, 0o600)
         put('/opt/hg-vm-lab/legacy-fixture.sha256', hashlib.sha256(payload).hexdigest().encode() + b'\n', 0o600)
-    smoke = git('show', commit + ':scripts/openwrt/' + ('guest-snapshot.sh' if scenario == 'legacy-snapshot' else 'guest-smoke.sh'))
+    if scenario == 'candidate-snapshot':
+        put('/opt/hg-vm-lab/migration-candidate.uc', git('show', commit + ':scripts/deploy/migration-candidate.uc'), 0o600)
+        candidate='/opt/hg-vm-lab/native-candidate'
+        records=[]
+        for entry in entries:
+            if not entry: continue
+            header, raw=entry.split(b'\t', 1)
+            perm, kind, oid=header.decode().split()
+            rel=raw.decode().removeprefix('src/')
+            data=git('cat-file', 'blob', oid)
+            put(candidate + '/' + rel, data, int(perm[-3:], 8))
+            records.append(hashlib.sha256(data).hexdigest() + '  ' + rel + '\n')
+        for source, rel, perm in (('engine.sh', 'usr/libexec/home-gateway-deploy/engine.sh', 0o700),
+                                  ('wrapper.sh', 'usr/libexec/home-gateway-deploy/wrapper.sh', 0o700),
+                                  ('recovery.init', 'etc/init.d/home-gateway-deploy-recover', 0o755)):
+            data=git('show', commit + ':scripts/deploy/' + source)
+            put(candidate + '/' + rel, data, perm)
+            records.append(hashlib.sha256(data).hexdigest() + '  ' + rel + '\n')
+        raw=''.join(records).encode()
+        put(candidate + '/migration.sha256', raw, 0o600)
+        put('/opt/hg-vm-lab/candidate.pin', hashlib.sha256(raw).hexdigest().encode() + b'\n', 0o600)
+    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh'}[scenario]
+    smoke = git('show', commit + ':scripts/openwrt/' + guest)
     subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
     put('/opt/hg-vm-lab/guest-smoke.sh', smoke, 0o700)
@@ -216,7 +238,7 @@ def main():
     parser.add_argument('--bios', type=Path)
     parser.add_argument('--packages-directory', type=Path, required=True, help='Pinned official stat/timeout APKs, installed offline only in guest')
     parser.add_argument('--ref', default='HEAD')
-    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot'), default='baseline')
+    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot'), default='baseline')
     parser.add_argument('--diagnostic-log', type=Path, help='Private local diagnostic only; never CI artifact')
     args = parser.parse_args()
     try: report = run(args)

@@ -160,6 +160,12 @@ jobs:
           set -euo pipefail
           python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" --scenario legacy-snapshot > vm-snapshot-report.json || { cat vm-snapshot-report.json; exit 1; }
           cat vm-snapshot-report.json
+      - name: Run bounded native candidate staging scenario
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" --scenario candidate-snapshot > vm-candidate-report.json || { cat vm-candidate-report.json; exit 1; }
+          cat vm-candidate-report.json
       - name: Upload public report only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -168,5 +174,6 @@ jobs:
           path: |
             vm-report.json
             vm-snapshot-report.json
+            vm-candidate-report.json
           if-no-files-found: ignore
           retention-days: 30
