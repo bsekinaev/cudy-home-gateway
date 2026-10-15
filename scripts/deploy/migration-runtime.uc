@@ -90,7 +90,8 @@ export function prepare_runtime(root,state,bb) {
     let bytes=0; for(let rel in keys(c.candidate.files))bytes+=fs.lstat(c.io.BASE+'/candidate/'+rel).size;
     c.io.space(bytes); c.pending_dir(); c.verify(false); state.transition('PREPARED');
 };
-export function apply_runtime(root,state,bb) {
+export function apply_runtime(root,state,bb,after_guard) {
+    require(after_guard==null || type(after_guard)=='function','SERVICE_CALLBACK');
     require(state.phase()=='PREPARED','NO_REPLAY');
     let c=context(root,state,bb); c.verify(false);
     require(length(fs.lsdir(c.pending_dir()))==1 && fs.lsdir(c.pending_dir())[0]=='owner','PENDING');
@@ -100,6 +101,7 @@ export function apply_runtime(root,state,bb) {
     // Receipt/manifest ordering is not a safety contract. Install the startup
     // guard explicitly first, even for a differently ordered valid manifest.
     c.publish(init,c.candidate.files[init],c.io.BASE+'/candidate/'+init);
+    if(after_guard!=null)after_guard();
     for(let rel in keys(c.candidate.files))if(rel!=init)c.publish(rel,c.candidate.files[rel],c.io.BASE+'/candidate/'+rel);
     c.verify(true);
     // Leave APPLYING fenced: full service/journal coordinator owns commit.

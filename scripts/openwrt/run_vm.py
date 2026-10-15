@@ -89,7 +89,18 @@ def inject(image, workspace, commit, packages, scenario):
     put('/opt/hg-vm-lab/legacy-engine.sh', git('show', commit + ':scripts/deploy/fixtures/legacy-engine-18.sh'), 0o700)
     put('/opt/hg-vm-lab/migration-state.uc', git('show', commit + ':scripts/deploy/migration-state.uc'), 0o600)
     put('/opt/hg-vm-lab/native-batch-inventory.uc', git('show', commit + ':scripts/deploy/native-batch-inventory.uc'), 0o600)
-    if scenario in ('control-cycle', 'legacy-snapshot', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
+    lab='/etc/hg-native-snapshot'
+    def service_init_namespace(raw):
+        first,body=raw.decode().split('\n',1)
+        body=re.sub(r'/(?:etc|usr|tmp)(?=/|[ \"\']|$)',lambda m:lab+m.group(),body)
+        body=body.replace('/bin/sh "$admission"','/bin/sh "$admission" --test-root '+lab)
+        env=('HG_LIBDIR='+lab+'/usr/lib/home-gateway HG_TELEGRAM_SECRETS_DIR='+lab+'/etc/home-gateway/secrets '
+             'HG_TELEGRAM_RUNTIME_DIR='+lab+'/tmp/home-gateway HG_TELEGRAM_TOKEN_FILE='+lab+'/etc/home-gateway/secrets/telegram.token '
+             'HG_NOTIFICATION_STATE_DIR='+lab+'/etc/home-gateway/state HG_NOTIFICATION_RUNTIME_DIR='+lab+'/tmp/home-gateway '
+             'HG_NOTIFICATION_SECRETS_DIR='+lab+'/etc/home-gateway/secrets')
+        body=body.replace('procd_set_param respawn','procd_set_param env '+env+'\n\tprocd_set_param respawn')
+        return (first+'\n'+body).encode()
+    if scenario in ('service-cycle', 'control-cycle', 'legacy-snapshot', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         put('/opt/hg-vm-lab/migration-snapshot.uc', git('show', commit + ':scripts/deploy/migration-snapshot.uc'), 0o600)
         # Public synthetic 18-file fixture on the guest's persistent filesystem.
         # Create its journal through the exact trusted shell receiver, not a mock.
@@ -103,6 +114,9 @@ def inject(image, workspace, commit, packages, scenario):
             raw=(b'#!/bin/sh\ncase "$1" in running) exit 1;; *) exit 0;; esac\n'
                  if rel.startswith('etc/init.d/') else b'// synthetic VM library\n' if rel.endswith('.uc')
                  else b'#!/bin/sh\nexit 0\n')
+            if scenario=='service-cycle':
+                raw=git('show','c921c2d:src/'+rel)
+                if rel=='etc/init.d/home-gateway-telegram':raw=service_init_namespace(raw)
             put(lab + '/' + rel, raw, perm)
             if rel.endswith('/common.sh'): raw += b'# installed legacy revision\n'
             wire += [f'{perm:04o} {len(raw)} {hashlib.sha256(raw).hexdigest()}\n'.encode(),
@@ -115,7 +129,7 @@ def inject(image, workspace, commit, packages, scenario):
         payload=b''.join(wire) + b'END\n'
         put('/opt/hg-vm-lab/legacy-fixture.wire', payload, 0o600)
         put('/opt/hg-vm-lab/legacy-fixture.sha256', hashlib.sha256(payload).hexdigest().encode() + b'\n', 0o600)
-    if scenario in ('control-cycle', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
+    if scenario in ('service-cycle', 'control-cycle', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         put('/opt/hg-vm-lab/migration-candidate.uc', git('show', commit + ':scripts/deploy/migration-candidate.uc'), 0o600)
         candidate='/opt/hg-vm-lab/native-candidate'
         records=[]
@@ -125,6 +139,7 @@ def inject(image, workspace, commit, packages, scenario):
             perm, kind, oid=header.decode().split()
             rel=raw.decode().removeprefix('src/')
             data=git('cat-file', 'blob', oid)
+            if scenario=='service-cycle' and rel=='etc/init.d/home-gateway-telegram':data=service_init_namespace(data)
             put(candidate + '/' + rel, data, int(perm[-3:], 8))
             records.append(hashlib.sha256(data).hexdigest() + '  ' + rel + '\n')
         for source, rel, perm in (('engine.sh', 'usr/libexec/home-gateway-deploy/engine.sh', 0o700),
@@ -136,10 +151,10 @@ def inject(image, workspace, commit, packages, scenario):
         raw=''.join(records).encode()
         put(candidate + '/migration.sha256', raw, 0o600)
         put('/opt/hg-vm-lab/candidate.pin', hashlib.sha256(raw).hexdigest().encode() + b'\n', 0o600)
-    if scenario in ('control-cycle', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
+    if scenario in ('service-cycle', 'control-cycle', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         for module in ('migration-runtime.uc','migration-handoff.uc','migration-coordinator.uc'):
             put('/opt/hg-vm-lab/'+module, git('show', commit+':scripts/deploy/'+module), 0o600)
-    if scenario == 'control-cycle':
+    if scenario in ('control-cycle','service-cycle'):
         put('/opt/hg-vm-lab/migration-controls.uc', git('show', commit+':scripts/deploy/migration-controls.uc'), 0o600)
         put('/opt/hg-vm-lab/migration-service.uc', git('show', commit+':scripts/deploy/migration-service.uc'), 0o600)
         put('/opt/hg-vm-lab/migration-terminal.uc', git('show', commit+':scripts/deploy/migration-terminal.uc'), 0o600)
@@ -172,7 +187,7 @@ def inject(image, workspace, commit, packages, scenario):
                         '--output', str(workspace / 'rc-package')], check=True, stdout=subprocess.DEVNULL)
         archive = next((workspace / 'rc-package').glob('*.tar.gz'))
         put('/opt/hg-vm-lab/rc-a.tar.gz', archive.read_bytes(), 0o600)
-    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh', 'rc-a-package':'guest-rc-a.sh', 'control-cycle':'guest-controls.sh'}[scenario]
+    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh', 'rc-a-package':'guest-rc-a.sh', 'control-cycle':'guest-controls.sh', 'service-cycle':'guest-service-cycle.sh'}[scenario]
     smoke = git('show', commit + ':scripts/openwrt/' + guest)
     subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
@@ -227,7 +242,7 @@ def run(args):
         if args.bios: command += ['-bios', str(args.bios)]
         # The control scenario snapshots runtime plus its dependency closure.
         # TCG-only hosts need a separate bounded budget; assertions are unchanged.
-        console = bytearray(); deadline = time.monotonic() + (300 if args.scenario == 'control-cycle' else 180)
+        console = bytearray(); deadline = time.monotonic() + (300 if args.scenario in ('control-cycle','service-cycle') else 180)
         try:
             for boot in range(2 if args.scenario in ('overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') else 1):
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -290,7 +305,7 @@ def main():
     parser.add_argument('--bios', type=Path)
     parser.add_argument('--packages-directory', type=Path, required=True, help='Pinned official stat/timeout APKs, installed offline only in guest')
     parser.add_argument('--ref', default='HEAD')
-    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase', 'rc-a-package', 'control-cycle'), default='baseline')
+    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase', 'rc-a-package', 'control-cycle', 'service-cycle'), default='baseline')
     parser.add_argument('--diagnostic-log', type=Path, help='Private local diagnostic only; never CI artifact')
     args = parser.parse_args()
     try: report = run(args)
