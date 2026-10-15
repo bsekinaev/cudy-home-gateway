@@ -15,7 +15,13 @@ const TRANSITIONS = {
     RESTORING: [ 'ROLLED_BACK' ], ROLLED_BACK: [],
 };
 
-export function open_state(root, create, test_busybox) {
+export function open_state(root, create, test_busybox, rollback_only, boot_only, borrowed_guard) {
+    require(borrowed_guard==null || borrowed_guard==true, 'BORROW_MODE');
+    require(!borrowed_guard || (!boot_only && !rollback_only), 'BORROW_MODE');
+    require(boot_only==null || boot_only==true, 'BOOT_MODE');
+    require(!boot_only || (!create && !rollback_only), 'BOOT_MODE');
+    require(rollback_only==null || rollback_only==true, 'RECOVERY_MODE');
+    require(!rollback_only || (root!=null && root!='' && !create), 'RECOVERY_NOT_ACCEPTED');
     root ??= '';
     require(type(root) == 'string' && (root == '' ||
         (match(root, /^\/[A-Za-z0-9_.\/-]+$/) && root != '/' &&
@@ -89,7 +95,13 @@ export function open_state(root, create, test_busybox) {
     let prior = fs.lstat(LOCK);
     if (prior != null) checked(LOCK, 'file', 0600, 0);
     require(create || prior != null, 'NO_STATE');
-    let guard = fs.open(LOCK, create ? 'ae' : 're', 0600);
+    require(!borrowed_guard || prior!=null, 'BORROW_MISSING_GUARD');
+    let guard = borrowed_guard ? fs.fdopen(8,'r') : fs.open(LOCK, create ? 'ae' : 're', 0600);
+    // FD8 shares the shell coordinator's open file description. Closing this
+    // child handle must not release the parent's kernel lease. FIOCLEX sets
+    // close-on-exec in this child's fd table, keeping fsync/hash helpers from
+    // retaining the lease after a killed native child. Parent FD8 is unchanged.
+    if(borrowed_guard)require(guard!=null && guard.ioctl(fs.IOC_DIR_NONE,0x54,0x51)==0,'BORROW_CLOEXEC');
     require(guard != null && (prior != null || fs.chmod(LOCK, 0600)), 'LOCK_FAILED');
     let lock_stat = checked(LOCK, 'file', 0600, 0);
     let held = fs.stat('/proc/self/fd/' + guard.fileno());
@@ -123,8 +135,10 @@ export function open_state(root, create, test_busybox) {
         require(TRANSITIONS[p] != null && raw == p + '\n', 'PHASE');
         return p;
     }
-    phase();
-    require(fs.lstat(BASE + '/phase.new') == null, 'INCOMPLETE_PHASE_WRITE');
+    // Boot must rebuild the volatile fence before inspecting a damaged or
+    // interrupted phase. It never advances/replays that phase.
+    if(!boot_only)phase();
+    require(boot_only || rollback_only || fs.lstat(BASE + '/phase.new') == null, 'INCOMPLETE_PHASE_WRITE');
     function held_guard() {
         let fd=guard.fileno();
         require(fd != null, 'CLOSED_GUARD');
@@ -145,8 +159,34 @@ export function open_state(root, create, test_busybox) {
         close: function() { guard.close(); },
         assert_root: function(expected) { require(expected == root, 'ROOT_MISMATCH'); held_guard(); },
         phase,
+        recover_rollback_phase: function() {
+            held_guard(); owned_fence();
+            if(fs.lstat(BASE+'/phase.new')==null)return;
+            require(rollback_only, 'EXPLICIT_RECOVERY_REQUIRED');
+            let current=phase();
+            require(index(['PREPARING','PREPARED','APPLYING','COMMITTED','RESTORING'],current)>=0, 'RECOVERY_PHASE');
+            let raw=read(BASE+'/phase.new',32);
+            require(length(filter(TRANSITIONS[current],p=>length(raw)<=length(p+'\n') &&
+                raw==substr(p+'\n',0,length(raw))))>0, 'UNKNOWN_PHASE_WRITE');
+            // Preserve evidence; never replay the interrupted transition or
+            // overwrite an older incident. Caller verifies snapshots/live first.
+            let target=null;
+            for(let i=0;i<8;i++) {
+                let path=BASE+'/phase.interrupted'+(i?'.'+i:'');
+                if(fs.lstat(path)==null) { if(target==null)target=path;continue; }
+                let prior=read(path,32);
+                require(length(filter(['PREPARED','APPLYING','RESTORING','COMMITTED','ROLLED_BACK'],p=>
+                    length(prior)<=length(p+'\n') && prior==substr(p+'\n',0,length(prior))))>0,'UNKNOWN_RECOVERY_EVIDENCE');
+            }
+            require(target!=null, 'RECOVERY_EVIDENCE_LIMIT');
+            require(fs.rename(BASE+'/phase.new',target), 'RECOVERY_ARCHIVE');
+            sync([BASE]);
+        },
         transition: function(next) {
             held_guard(); owned_fence();
+            require(!boot_only, 'BOOT_ONLY');
+            require(fs.lstat(BASE+'/phase.new')==null, 'INCOMPLETE_PHASE_WRITE');
+            require(!rollback_only || (next!='APPLYING' && next!='COMMITTED' && next!='ROLLED_BACK'), 'ROLLBACK_ONLY');
             let current = phase();
             require(index(TRANSITIONS[current], next) >= 0, 'NO_AUTO_REPLAY');
             // Full coordinator must snapshot/verify before PREPARED and must
@@ -187,4 +227,25 @@ export function open_state(root, create, test_busybox) {
         // No API publishes admission: a complete coordinator must independently
         // validate snapshots, every live byte/uid/gid/mode and legacy pointers.
     };
+};
+
+// Explicit disposable recovery entrypoint. Production remains blocked until
+// full boot/service recovery acceptance. Normal open_state stays fail-closed.
+export function open_rollback_state(root,test_busybox) {
+    return open_state(root,false,test_busybox,true);
+};
+
+// Early boot only reconstructs admission fencing; it never applies/restores
+// runtime or executes services. Unknown phase writes remain blocked evidence.
+export function restore_boot_fence(root,test_busybox) {
+    root ??= '';
+    require(type(root)=='string' && (root=='' || (root!='/' &&
+        match(root,/^\/[A-Za-z0-9_.\/-]+$/) && !match(root,/(^|\/)\.\.?($|\/)/))), 'ROOT');
+    if(fs.lstat(root+'/etc/home-gateway-migration')==null)return 'NO_MIGRATION';
+    let state=open_state(root,false,test_busybox,null,true);
+    state.fence();
+    let current=state.phase();
+    require(fs.lstat(root+'/etc/home-gateway-migration/phase.new')==null, 'INCOMPLETE_PHASE_WRITE');
+    if(current=='COMMITTED' || current=='ROLLED_BACK')state.release();
+    state.close();return current;
 };

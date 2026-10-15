@@ -89,7 +89,18 @@ def inject(image, workspace, commit, packages, scenario):
     put('/opt/hg-vm-lab/legacy-engine.sh', git('show', commit + ':scripts/deploy/fixtures/legacy-engine-18.sh'), 0o700)
     put('/opt/hg-vm-lab/migration-state.uc', git('show', commit + ':scripts/deploy/migration-state.uc'), 0o600)
     put('/opt/hg-vm-lab/native-batch-inventory.uc', git('show', commit + ':scripts/deploy/native-batch-inventory.uc'), 0o600)
-    if scenario in ('legacy-snapshot', 'candidate-snapshot'):
+    lab='/etc/hg-native-snapshot'
+    def service_init_namespace(raw):
+        first,body=raw.decode().split('\n',1)
+        body=re.sub(r'/(?:etc|usr|tmp)(?=/|[ \"\']|$)',lambda m:lab+m.group(),body)
+        body=body.replace('/bin/sh "$admission"','/bin/sh "$admission" --test-root '+lab)
+        env=('HG_LIBDIR='+lab+'/usr/lib/home-gateway HG_TELEGRAM_SECRETS_DIR='+lab+'/etc/home-gateway/secrets '
+             'HG_TELEGRAM_RUNTIME_DIR='+lab+'/tmp/home-gateway HG_TELEGRAM_TOKEN_FILE='+lab+'/etc/home-gateway/secrets/telegram.token '
+             'HG_NOTIFICATION_STATE_DIR='+lab+'/etc/home-gateway/state HG_NOTIFICATION_RUNTIME_DIR='+lab+'/tmp/home-gateway '
+             'HG_NOTIFICATION_SECRETS_DIR='+lab+'/etc/home-gateway/secrets')
+        body=body.replace('procd_set_param respawn','procd_set_param env '+env+'\n\tprocd_set_param respawn')
+        return (first+'\n'+body).encode()
+    if scenario in ('service-cycle', 'control-cycle', 'legacy-snapshot', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         put('/opt/hg-vm-lab/migration-snapshot.uc', git('show', commit + ':scripts/deploy/migration-snapshot.uc'), 0o600)
         # Public synthetic 18-file fixture on the guest's persistent filesystem.
         # Create its journal through the exact trusted shell receiver, not a mock.
@@ -103,6 +114,12 @@ def inject(image, workspace, commit, packages, scenario):
             raw=(b'#!/bin/sh\ncase "$1" in running) exit 1;; *) exit 0;; esac\n'
                  if rel.startswith('etc/init.d/') else b'// synthetic VM library\n' if rel.endswith('.uc')
                  else b'#!/bin/sh\nexit 0\n')
+            if scenario=='service-cycle' and rel in ('etc/init.d/home-gateway-telegram','usr/lib/home-gateway/telegram-poller.uc'):
+                # Real legacy workers/init, explicitly synthetic old CLI: the
+                # networkless VM cannot satisfy CUDY hardware doctor checks.
+                raw=git('show','c921c2d:src/'+rel)
+                if rel=='etc/init.d/home-gateway-telegram':raw=service_init_namespace(raw)
+                else:raw=raw.replace(b'/etc/home-gateway', (lab+'/etc/home-gateway').encode()).replace(b'/tmp/home-gateway',(lab+'/tmp/home-gateway').encode())
             put(lab + '/' + rel, raw, perm)
             if rel.endswith('/common.sh'): raw += b'# installed legacy revision\n'
             wire += [f'{perm:04o} {len(raw)} {hashlib.sha256(raw).hexdigest()}\n'.encode(),
@@ -115,7 +132,7 @@ def inject(image, workspace, commit, packages, scenario):
         payload=b''.join(wire) + b'END\n'
         put('/opt/hg-vm-lab/legacy-fixture.wire', payload, 0o600)
         put('/opt/hg-vm-lab/legacy-fixture.sha256', hashlib.sha256(payload).hexdigest().encode() + b'\n', 0o600)
-    if scenario == 'candidate-snapshot':
+    if scenario in ('service-cycle', 'control-cycle', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         put('/opt/hg-vm-lab/migration-candidate.uc', git('show', commit + ':scripts/deploy/migration-candidate.uc'), 0o600)
         candidate='/opt/hg-vm-lab/native-candidate'
         records=[]
@@ -125,6 +142,7 @@ def inject(image, workspace, commit, packages, scenario):
             perm, kind, oid=header.decode().split()
             rel=raw.decode().removeprefix('src/')
             data=git('cat-file', 'blob', oid)
+            if scenario=='service-cycle' and rel=='etc/init.d/home-gateway-telegram':data=service_init_namespace(data)
             put(candidate + '/' + rel, data, int(perm[-3:], 8))
             records.append(hashlib.sha256(data).hexdigest() + '  ' + rel + '\n')
         for source, rel, perm in (('engine.sh', 'usr/libexec/home-gateway-deploy/engine.sh', 0o700),
@@ -136,7 +154,43 @@ def inject(image, workspace, commit, packages, scenario):
         raw=''.join(records).encode()
         put(candidate + '/migration.sha256', raw, 0o600)
         put('/opt/hg-vm-lab/candidate.pin', hashlib.sha256(raw).hexdigest().encode() + b'\n', 0o600)
-    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh'}[scenario]
+    if scenario in ('service-cycle', 'control-cycle', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
+        for module in ('migration-runtime.uc','migration-handoff.uc','migration-coordinator.uc'):
+            put('/opt/hg-vm-lab/'+module, git('show', commit+':scripts/deploy/'+module), 0o600)
+    if scenario in ('control-cycle','service-cycle'):
+        put('/opt/hg-vm-lab/migration-controls.uc', git('show', commit+':scripts/deploy/migration-controls.uc'), 0o600)
+        put('/opt/hg-vm-lab/migration-service.uc', git('show', commit+':scripts/deploy/migration-service.uc'), 0o600)
+        put('/opt/hg-vm-lab/migration-terminal.uc', git('show', commit+':scripts/deploy/migration-terminal.uc'), 0o600)
+        put('/opt/hg-vm-lab/legacy-telegram.init',git('show','c921c2d:src/etc/init.d/home-gateway-telegram'),0o755)
+        rows=[]
+        controls=[('migration-'+n+'.uc','usr/libexec/home-gateway-deploy/migration-'+n+'.uc',0o600)
+                  for n in ('state','snapshot','candidate','runtime','handoff','coordinator','controls','service','terminal')]
+        controls += [('migration-admission.sh','usr/libexec/home-gateway-deploy/migration-admission.sh',0o700),
+                     ('migration-boot.init','etc/init.d/home-gateway-migration',0o755)]
+        for source, rel, perm in controls:
+            raw=git('show',commit+':scripts/deploy/'+source)
+            put('/opt/hg-vm-lab/control-input/'+rel,raw,perm)
+            rows.append(hashlib.sha256(raw).hexdigest()+'  '+rel+'\n')
+        raw=''.join(rows).encode()
+        put('/opt/hg-vm-lab/control-input/controls.sha256',raw,0o600)
+        put('/opt/hg-vm-lab/control.pin',hashlib.sha256(raw).hexdigest().encode()+b'\n',0o600)
+    if scenario == 'runtime-crash-phase':
+        # Real rc.common S08 hook, before rc.local. Only this disposable lab
+        # adapts the production hook's namespace and binds its volatile /tmp.
+        boot=git('show', commit+':scripts/deploy/migration-boot.init').decode()
+        boot=boot.replace('/etc/home-gateway-migration','/etc/hg-native-snapshot/etc/home-gateway-migration')
+        boot=boot.replace('/tmp/home-gateway-deploy.lock','/etc/hg-native-snapshot/tmp/home-gateway-deploy.lock')
+        boot=boot.replace('/usr/libexec/home-gateway-deploy/migration-state.uc','/opt/hg-vm-lab/migration-state.uc')
+        boot=boot.replace('restore_boot_fence("",null)','restore_boot_fence("/etc/hg-native-snapshot","/bin/busybox")')
+        setup="    if [ -d /etc/hg-native-snapshot/etc/home-gateway-migration ]; then\n        umask 077\n        mkdir -p /tmp/hg-crash-ram\n        mount --bind /tmp/hg-crash-ram /etc/hg-native-snapshot/tmp || return 1\n        if [ ! -e /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ] && [ ! -L /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ]; then\n            printf 'ABSENT\\n' > /etc/hg-vm-lab/boot-fence-before\n        else printf 'PRESENT\\n' > /etc/hg-vm-lab/boot-fence-before; fi\n        cat /proc/sys/kernel/random/boot_id > /etc/hg-vm-lab/boot-guard.boot\n    fi\n"
+        boot=boot.replace('start() {\n','start() {\n'+setup)
+        put('/etc/rc.d/S08hg-migration-lab-guard',boot.encode(),0o755)
+    if scenario == 'rc-a-package':
+        subprocess.run(['python3', str(ROOT / 'scripts/migration_rc/build.py'), '--ref', commit,
+                        '--output', str(workspace / 'rc-package')], check=True, stdout=subprocess.DEVNULL)
+        archive = next((workspace / 'rc-package').glob('*.tar.gz'))
+        put('/opt/hg-vm-lab/rc-a.tar.gz', archive.read_bytes(), 0o600)
+    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh', 'rc-a-package':'guest-rc-a.sh', 'control-cycle':'guest-controls.sh', 'service-cycle':'guest-service-cycle.sh'}[scenario]
     smoke = git('show', commit + ':scripts/openwrt/' + guest)
     subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
@@ -183,15 +237,17 @@ def run(args):
                    '-drive', 'file=' + str(image) + ',format=raw,if=virtio', '-snapshot',
                    '-display', 'none', '-vga', 'none', '-monitor', 'none', '-serial', 'stdio',
                    '-nic', 'none', '-no-user-config']
-        if args.scenario == 'overlay-identity':
+        if args.scenario in ('overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
             # A real guest reboot exits QEMU; supervise a cold boot of the same
             # private writable disk. The immutable input is never mounted.
             command.remove('-snapshot'); command += ['-no-reboot']
         if args.qemu_data: command += ['-L', str(args.qemu_data)]
         if args.bios: command += ['-bios', str(args.bios)]
-        console = bytearray(); deadline = time.monotonic() + 180
+        # The control scenario snapshots runtime plus its dependency closure.
+        # TCG-only hosts need a separate bounded budget; assertions are unchanged.
+        console = bytearray(); deadline = time.monotonic() + (300 if args.scenario in ('control-cycle','service-cycle') else 180)
         try:
-            for boot in range(2 if args.scenario == 'overlay-identity' else 1):
+            for boot in range(2 if args.scenario in ('overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') else 1):
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, start_new_session=True)
                 try:
@@ -215,17 +271,21 @@ def run(args):
                         try: child.wait(timeout=2)
                         except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=2)
                     child.stdout.close()
-                if args.scenario == 'overlay-identity' and boot == 0:
+                if args.scenario in ('overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') and boot == 0:
                     raw=console.decode('utf-8',errors='replace')
-                    require(raw.count('HGVM_REBOOT=REQUESTED') == 1 and 'reboot: Restarting system' in raw and not RESULT.search(raw), 'GUEST_REBOOT_NOT_OBSERVED')
+                    require(raw.count('HGVM_REBOOT=REQUESTED') == boot+1 and 'reboot: Restarting system' in raw and not RESULT.search(raw), 'GUEST_REBOOT_NOT_OBSERVED')
         finally:
             if args.diagnostic_log:
                 fd = os.open(args.diagnostic_log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
                 with os.fdopen(fd, 'wb') as log: log.write(console)
         report = parse_result(console.decode('utf-8', errors='replace'), expected)
+        if report['failed']:
+            # Fixed public native refusal codes only; never raw guest output,
+            # secrets, stderr, command lines or diagnostic log publication.
+            report['native_refusals']=sorted(set(re.findall(r'\bMIGRATION_[A-Z0-9_]{1,80}\b', console.decode('utf-8',errors='replace'))))[:32]
         report.update(commit=commit, scenario=args.scenario, kernel_sha256=KERNEL_SHA, rootfs_sha256=ROOTFS_SHA,
                       network_devices=0, host_shared_directories=0, package_sha256=PACKAGE_SHA)
-        if args.scenario == 'overlay-identity': report['reboot_mechanism']='GUEST_REBOOT_SUPERVISED_COLD_BOOT'
+        if args.scenario in ('overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'): report['reboot_mechanism']='GUEST_REBOOT_SUPERVISED_COLD_BOOT'
         return report
 
 
@@ -252,7 +312,7 @@ def main():
     parser.add_argument('--bios', type=Path)
     parser.add_argument('--packages-directory', type=Path, required=True, help='Pinned official stat/timeout APKs, installed offline only in guest')
     parser.add_argument('--ref', default='HEAD')
-    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity'), default='baseline')
+    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase', 'rc-a-package', 'control-cycle', 'service-cycle'), default='baseline')
     parser.add_argument('--diagnostic-log', type=Path, help='Private local diagnostic only; never CI artifact')
     args = parser.parse_args()
     try: report = run(args)

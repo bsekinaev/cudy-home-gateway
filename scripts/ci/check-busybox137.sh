@@ -29,3 +29,7 @@ busybox --list | grep -Fx flock
 ./scripts/ci/check.sh
 HG_TEST_SHELL='busybox ash' HG_TEST_BUSYBOX=busybox \
     python3 -m unittest discover -s scripts/deploy -p 'test_*.py' -v
+
+ln -s "$(command -v ucode)" "$work/bin/ucode"
+HG_TEST_BUSYBOX_PATH="$work/bin/busybox" HG_TEST_BIN="$work/bin" \
+    python3 -m unittest discover -s scripts/migration_rc -p 'test_*.py' -v
