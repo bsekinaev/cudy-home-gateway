@@ -60,6 +60,10 @@ class NativeRuntimeTests(unittest.TestCase):
 
     def test_sigkill_mid_apply_and_restore_preserve_fence_and_resume_only_restore(self):
         import os, signal, time
+        # Valid receipts need not retain the manifest's insertion order.
+        receipt=self.base/'candidate.json';data=json.loads(receipt.read_text())
+        data['files']=dict(reversed(list(data['files'].items())))
+        receipt.write_text(json.dumps(data)+'\n')
         self.assertEqual(self.run_native('prepare_runtime(ARGV[0],s,ARGV[1])').returncode,0)
         for action in ('apply_runtime','restore_runtime'):
             ready=self.root/'runtime-blocked'; ready.unlink(missing_ok=True)

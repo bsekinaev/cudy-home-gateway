@@ -96,7 +96,11 @@ export function apply_runtime(root,state,bb) {
     require(length(fs.lsdir(c.pending_dir()))==1 && fs.lsdir(c.pending_dir())[0]=='owner','PENDING');
     let bytes=0; for(let rel in keys(c.candidate.files))bytes+=fs.lstat(c.io.BASE+'/candidate/'+rel).size;
     c.io.space(bytes); state.transition('APPLYING');
-    for(let rel in keys(c.candidate.files)) c.publish(rel,c.candidate.files[rel],c.io.BASE+'/candidate/'+rel);
+    const init='etc/init.d/home-gateway-telegram';
+    // Receipt/manifest ordering is not a safety contract. Install the startup
+    // guard explicitly first, even for a differently ordered valid manifest.
+    c.publish(init,c.candidate.files[init],c.io.BASE+'/candidate/'+init);
+    for(let rel in keys(c.candidate.files))if(rel!=init)c.publish(rel,c.candidate.files[rel],c.io.BASE+'/candidate/'+rel);
     c.verify(true);
     // Leave APPLYING fenced: full service/journal coordinator owns commit.
 };

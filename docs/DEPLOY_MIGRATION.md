@@ -329,3 +329,6 @@ the legacy Telegram init last. Otherwise reboot between the first init rename
 and the remaining file restores could start an unguarded legacy service on a
 mixed tree. This ordering supplements, and does not replace, the still-required
 full coordinator quiesce/start/procd verification and early boot guards.
+Apply explicitly publishes the migration-aware init first; a valid manifest or
+receipt may list files in another order. The SIGKILL regression reverses receipt
+entries to verify that startup safety does not depend on insertion order.
