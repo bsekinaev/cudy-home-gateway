@@ -10,11 +10,12 @@ case "$op" in
   preflight)
     [ "$BB" = /bin/busybox ] && [ "$#" -eq 0 ] || exit 64
     ucode "$KIT/rc-a.uc" "$KIT" check "$BB"
-    grep -q "DISTRIB_RELEASE='25.12.5'" /etc/openwrt_release
-    "$BB" 2>&1 | head -n 1 | grep -q 'BusyBox v1.37.0'
-    for tool in ucode timeout sha256sum stat base64 tar; do command -v "$tool" >/dev/null || exit 69; done
-    "$BB" --list | grep -qx fsync
-    "$BB" --list | grep -qx flock
+    refuse() { echo "RC_A_PREFLIGHT_REFUSED=$1" >&2; exit 69; }
+    grep -q "DISTRIB_RELEASE='25.12.5'" /etc/openwrt_release || refuse OPENWRT_VERSION
+    "$BB" ash --help 2>&1 | grep -q 'BusyBox v1.37.0' || refuse BUSYBOX_VERSION
+    for tool in ucode timeout sha256sum stat base64 tar; do command -v "$tool" >/dev/null || refuse "MISSING_$tool"; done
+    "$BB" fsync --help >/dev/null 2>&1 || refuse BUSYBOX_FSYNC
+    "$BB" flock --help >/dev/null 2>&1 || refuse BUSYBOX_FLOCK
     sh "$KIT/legacy-preflight.sh" 4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e
     echo 'RC_A_PREFLIGHT=PASS GATEWAY_MUTATIONS=0 PRODUCTION_APPLY=BLOCKED'
     ;;
