@@ -43,7 +43,7 @@ class NativeCoordinatorTests(unittest.TestCase):
         self.prepare();self.assertEqual(self.run_native('apply_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
         pending=self.base/'latest.pending';pending.write_bytes(b'tx.foreign\n');pending.chmod(0o600)
         self.assertNotEqual(self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
-        latest=(self.legacy.base/'latest').read_bytes();pending.write_bytes(latest)
+        latest=(self.legacy.base/'latest').read_bytes();pending.write_bytes(latest[:8])
         r=self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])');self.assertEqual(r.returncode,0,r.stderr)
         self.legacy.assert_previous()
 

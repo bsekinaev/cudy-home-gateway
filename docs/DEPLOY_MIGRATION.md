@@ -347,3 +347,13 @@ The hook is not installed on production and full control-package snapshot/apply
 integration remains required. The isolated phase-crash VM scenario installs an
 adapted real S08 rc.common hook and records fence absence before reconstruction;
 its subsequent result must be checked before claiming target boot-hook PASS.
+
+Latest-pointer staging recovery accepts only bounded prefixes of the two known
+old/new pointer values with exact private metadata. Partial owned staging is
+removed and rewritten under the held guard; unknown bytes refuse before moving
+an anchor or changing latest, including when latest already has the old value.
+CI now selects `github.event.pull_request.head.sha` for pull requests, with
+`github.sha` fallback for other events. Every job checks out that immutable SHA,
+asserts HEAD identity and passes the same SHA to VM/release verification. Earlier
+PR-associated synthetic-merge runs must not be relabelled as exact-head runs;
+local tests on verified identical trees retain their explicitly recorded scope.

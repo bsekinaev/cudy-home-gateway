@@ -62,10 +62,17 @@ function verify(c) {
         c.io.read(base+'/backup.sha256',0600,8192)==manifest,'MANIFEST');
     return r;
 }
+function check_pending_pointer(c) {
+    let pending=c.io.BASE+'/latest.pending';
+    if(fs.lstat(pending)==null)return;
+    let raw=c.io.read(pending,0600,40), known=[c.old.latest,c.id+'\n'];
+    require(length(filter(known,p=>length(raw)<=length(p) && raw==substr(p,0,length(raw))))>0,'FOREIGN_PENDING');
+}
 function pointer(c,value) {
+    check_pending_pointer(c);
     let pending=c.io.BASE+'/latest.pending';
     if(fs.lstat(pending)!=null) {
-        let raw=c.io.read(pending,0600,40); require(raw==c.old.latest || raw==c.id+'\n','FOREIGN_PENDING');
+        let raw=c.io.read(pending,0600,40);
         if(raw!=value) { require(fs.unlink(pending),'POINTER'); c.io.sync([c.io.BASE]); }
     }
     if(fs.lstat(pending)==null)c.io.write(pending,value,0600);
@@ -103,6 +110,7 @@ export function publish_handoff(root,state,bb) {
     require(state.phase()=='APPLYING','PHASE'); let c=context(root,state,bb),r=verify(c);
     let latest=c.io.read(c.deploy+'/latest',0600,40);
     require(latest==c.old.latest || latest==c.id+'\n','NEW_DEPLOYMENT');
+    check_pending_pointer(c);
     if(latest==c.old.latest) {
         verify_runtime(root,state,bb,true);
         if(fs.lstat(c.stage)!=null) {
@@ -111,12 +119,14 @@ export function publish_handoff(root,state,bb) {
         }
         pointer(c,c.id+'\n');
     }
+    if(fs.lstat(c.io.BASE+'/latest.pending')!=null)pointer(c,c.id+'\n');
     require(fs.lstat(c.stage)==null && fs.lstat(c.live)!=null,'LOCATION');return verify(c);
 };
 export function restore_handoff(root,state,bb) {
     require(index(['PREPARED','APPLYING','RESTORING'],state.phase())>=0,'PHASE');let c=context(root,state,bb);verify(c);
     let latest=c.io.read(c.deploy+'/latest',0600,40);require(latest==c.old.latest || latest==c.id+'\n','NEW_DEPLOYMENT');
-    if(latest!=c.old.latest)pointer(c,c.old.latest);
+    check_pending_pointer(c);
+    if(latest!=c.old.latest || fs.lstat(c.io.BASE+'/latest.pending')!=null)pointer(c,c.old.latest);
     if(fs.lstat(c.live)!=null) {require(fs.rename(c.live,c.stage),'RESTORE');c.io.sync([c.deploy,c.io.BASE]);}
     verify(c);return true;
 };

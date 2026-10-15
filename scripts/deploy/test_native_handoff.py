@@ -59,3 +59,18 @@ class NativeHandoffTests(unittest.TestCase):
         self.assertTrue((self.base/'handoff').exists());self.assertFalse((self.base/'handoff.json').exists())
         self.assertNotEqual(self.run_handoff('publish_handoff(ARGV[0],s,ARGV[1])').returncode,0)
         self.assertEqual((self.legacy.base/'latest').read_bytes(),self.original_latest)
+
+    def test_partial_known_pointer_staging_can_retry_restore(self):
+        self.prepare();self.assertEqual(self.run_handoff('publish_handoff(ARGV[0],s,ARGV[1])').returncode,0)
+        newer=(self.legacy.base/'latest').read_bytes();pending=self.base/'latest.pending'
+        for raw in (self.original_latest[:3],newer[:8],b''):
+            pending.write_bytes(raw);pending.chmod(0o600)
+            r=self.run_handoff('restore_handoff(ARGV[0],s,ARGV[1])');self.assertEqual(r.returncode,0,r.stderr)
+            self.assertEqual((self.legacy.base/'latest').read_bytes(),self.original_latest);self.assertFalse(pending.exists())
+            self.assertEqual(self.run_handoff('publish_handoff(ARGV[0],s,ARGV[1])').returncode,0)
+
+    def test_foreign_pending_refuses_before_moving_even_unpublished_anchor(self):
+        self.prepare();pending=self.base/'latest.pending';pending.write_bytes(b'tx.foreign\n');pending.chmod(0o600)
+        r=self.run_handoff('restore_handoff(ARGV[0],s,ARGV[1])');self.assertNotEqual(r.returncode,0)
+        self.assertTrue((self.base/'handoff').exists());self.assertEqual((self.legacy.base/'latest').read_bytes(),self.original_latest)
+        self.assertEqual(pending.read_bytes(),b'tx.foreign\n')
