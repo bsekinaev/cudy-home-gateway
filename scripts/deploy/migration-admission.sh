@@ -110,14 +110,55 @@ if(provisional) {
     }
     let library=fs.lsdir(root+'/usr/lib/home-gateway');
     require(library!=null && length(library)==17 && length(filter(library,n=>index(PATHS,'usr/lib/home-gateway/'+n)>=0))==17);
-    let plan=json(read(BASE+'/coordinator.json',1024));require(match(plan.manifest_sha256,/^[0-9a-f]{64}$/));
+    let plan=json(read(BASE+'/coordinator.json',1024));
+    require(type(plan)=='object' && join(',',sort(keys(plan)))=='commit,format,manifest_sha256,marker,was_running' &&
+        plan.format=='HG_NATIVE_COORDINATOR_V1' && plan.marker==marker &&
+        match(plan.commit,/^[0-9a-f]{40}$/) && match(plan.manifest_sha256,/^[0-9a-f]{64}$/) &&
+        type(plan.was_running)=='int' && plan.was_running==1);
+    require(fs.lstat(BASE+'/coordinator.json.new')==null && fs.lstat(BASE+'/coordinator.publish-pending')==null);
     let hash=fs.popen('timeout -k 2 10 sha256sum '+quote(BASE+'/candidate/migration.sha256')+' 2>/dev/null','r');require(hash!=null);
     let pin=hash.read(1025);require(hash.close()==0 && pin==plan.manifest_sha256+'  '+BASE+'/candidate/migration.sha256\n');
     hash=fs.popen('cd '+quote(root||'/')+' && timeout -k 2 10 sha256sum -c '+quote(BASE+'/candidate/migration.sha256')+' >/dev/null 2>&1','r');require(hash!=null && hash.close()==0);
-    let handoff=json(read(BASE+'/handoff.json',16384)),deploy=root+'/etc/home-gateway-deploy';
-    require(match(handoff.id,/^tx\.m[0-9a-f]{24}$/) && read(deploy+'/latest',40)==handoff.id+'\n' &&
-        read(deploy+'/'+handoff.id+'/phase',16)=='COMMITTED\n' && read(deploy+'/'+handoff.id+'/inventory-version',10)=='HGDEPLOY2\n' &&
-        fs.lstat(deploy+'/active')==null && fs.lstat(deploy+'/active.new')==null && fs.lstat(deploy+'/latest.new')==null);
+    // Certify the complete published rollback anchor before any worker starts.
+    // This gate is read-only: no snapshot_io/fence creation or recovery replay.
+    require(fs.lstat(BASE+'/handoff.json.new')==null && fs.lstat(BASE+'/handoff.publish-pending')==null && fs.lstat(BASE+'/handoff')==null);
+    let handoff=json(read(BASE+'/handoff.json',16384)),deploy=root+'/etc/home-gateway-deploy',
+        id='tx.m'+substr(replace(trim(substr(marker,22)),'-',''),0,24);
+    require(type(handoff)=='object' && join(',',sort(keys(handoff)))=='commit,files,format,id,marker,was_running' &&
+        handoff.format=='HG_NATIVE_HANDOFF_V1' && handoff.id==id && handoff.marker==marker &&
+        handoff.commit==plan.commit && type(handoff.was_running)=='int' && handoff.was_running==plan.was_running && type(handoff.files)=='object');
+    checked(deploy,'directory',0700,0);
+    require(read(deploy+'/latest',40)==id+'\n' && fs.lstat(deploy+'/active')==null &&
+        fs.lstat(deploy+'/active.new')==null && fs.lstat(deploy+'/latest.new')==null);
+    let anchor=deploy+'/'+id,required=[...map(PATHS,p=>'backup/'+p),'phase','commit','was-running','inventory-version',
+        'new.sha256','backup.sha256','preflight.log','postflight.log','service.log'];
+    require(length(keys(handoff.files))==length(required));
+    let actual=[];
+    function walk(path,prefix) {
+        checked(path,'directory',0700,0);let entries=fs.lsdir(path);require(entries!=null && length(entries)<=32);
+        for(let name in entries) {
+            let rel=prefix?prefix+'/'+name:name;
+            require(length(filter(required,p=>p==rel || index(p,rel+'/')==0))>0);
+            if(fs.lstat(path+'/'+name)?.type=='directory')walk(path+'/'+name,rel);else push(actual,rel);
+        }
+    }
+    walk(anchor,'');require(length(actual)==length(required));
+    let files=map(required,p=>anchor+'/'+p);
+    hash=fs.popen('timeout -k 2 10 sha256sum '+join(' ',map(files,quote))+' 2>/dev/null','r');require(hash!=null);
+    let hashes=hash.read(16385);require(hash.close()==0 && type(hashes)=='string' && length(hashes)<=16384);
+    hashes=split(hashes,'\n');require(pop(hashes)=='' && length(hashes)==length(required));
+    let candidate={};for(let row in records)candidate[substr(row,66)]=substr(row,0,64);
+    for(let i=0;i<length(required);i++) {
+        let rel=required[i],record=handoff.files[rel],backup=index(rel,'backup/')==0,
+            perm=backup?(index(PATHS,substr(rel,7))<3?0755:0644):0600;
+        require(type(record)=='object' && join(',',sort(keys(record)))=='mode,sha256' && record.mode==perm && match(record.sha256,/^[0-9a-f]{64}$/) &&
+            hashes[i]==record.sha256+'  '+files[i] && (!backup || record.sha256==candidate[substr(rel,7)]));
+        checked(files[i],'file',perm,262144);
+    }
+    let manifest=join('',map(sort([...PATHS]),p=>candidate[p]+'  '+p+'\n'));
+    require(read(anchor+'/new.sha256',8192)==manifest && read(anchor+'/backup.sha256',8192)==manifest &&
+        read(anchor+'/phase',16)=='COMMITTED\n' && read(anchor+'/inventory-version',16)=='HGDEPLOY2\n' &&
+        read(anchor+'/commit',41)==plan.commit+'\n' && read(anchor+'/was-running',2)=='1\n');
     print('MIGRATION_ADMISSION=SERVICE_CHECK_ONLY\n');exit(0);
 }
 if (scope == 'telegram') {
