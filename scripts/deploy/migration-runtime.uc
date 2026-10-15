@@ -51,8 +51,8 @@ function context(root, state, bb) {
         require(names!=null && length(names)==length(expected) &&
             length(filter(names,n=>index(expected,'usr/lib/home-gateway/'+n)>=0))==length(expected),'LIVE_INVENTORY');
     }
-    function verify(newer) {
-        journal(); inventory(newer);
+    function verify(newer,require_latest) {
+        journal(require_latest); inventory(newer);
         let r=newer?candidate.files:records;
         for(let rel in keys(r))file(rel,r[rel]);
         if(!newer)for(let rel in added)require(fs.lstat(root+'/'+rel)==null,'LIVE_INVENTORY');
@@ -144,11 +144,12 @@ function restore_preflight(root,c,check_journal) {
     c.io.space(largest);
     return directory;
 }
+export function verify_candidate_runtime(root,state,bb) { context(root,state,bb).verify(true,false);return true; };
 export function preflight_restore_runtime(root,state,bb) {
     let c=context(root,state,bb);restore_preflight(root,c,false);return true;
 };
 export function restore_runtime(root,state,bb) {
-    let phase=state.phase(); require(index(['PREPARED','APPLYING','RESTORING'],phase)>=0,'PHASE');
+    let phase=state.phase(); require(index(['PREPARED','APPLYING','COMMITTED','RESTORING'],phase)>=0,'PHASE');
     let c=context(root,state,bb);
     let directory=restore_preflight(root,c,true);
     if(phase!='RESTORING')state.transition('RESTORING');

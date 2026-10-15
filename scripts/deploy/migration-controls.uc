@@ -12,8 +12,11 @@ const FILES={
     'usr/libexec/home-gateway-deploy/migration-handoff.uc':0600,
     'usr/libexec/home-gateway-deploy/migration-coordinator.uc':0600,
     'usr/libexec/home-gateway-deploy/migration-controls.uc':0600,
+    'usr/libexec/home-gateway-deploy/migration-service.uc':0600,
+    'usr/libexec/home-gateway-deploy/migration-terminal.uc':0600,
     'usr/libexec/home-gateway-deploy/migration-admission.sh':0700,
 };
+const KEEP=['etc/init.d/home-gateway-migration','usr/libexec/home-gateway-deploy/migration-state.uc'];
 const BOOT='etc/rc.d/S08home-gateway-migration', TARGET='../init.d/home-gateway-migration';
 function require(ok,why) { if(!ok)die('MIGRATION_CONTROLS_'+why); }
 function context(root,state,bb) {
@@ -54,7 +57,7 @@ function context(root,state,bb) {
     }
     function pending(r) {
         let p=io.BASE+'/control-pending';io.checked(p,'directory',0700,0);
-        let names=fs.lsdir(p);require(names!=null && length(names)<=9,'PENDING');
+        let names=fs.lsdir(p);require(names!=null && length(names)<=length(keys(FILES)),'PENDING');
         for(let name in names) {
             let rel=replace(name,'_','/');
             // Do not infer paths from flattened names: match exact whitelist.
@@ -121,14 +124,28 @@ export function apply_controls(root,state,bb) {
     c.live(r,true);return true;
 };
 export function verify_controls(root,state,bb) { let c=context(root,state,bb);c.live(c.receipt(),true);return true; };
-export function restore_controls(root,state,bb) {
+export function verify_restored_controls(root,state,bb,keep_recovery) {
+    require(keep_recovery==null || type(keep_recovery)=='bool','RETENTION');
+    let c=context(root,state,bb),r=c.receipt();c.pending(r);
+    for(let rel in keys(FILES)) {
+        if(keep_recovery && index(KEEP,rel)>=0)c.file(root+'/'+rel,r.files[rel]);
+        else require(fs.lstat(root+'/'+rel)==null,'RESTORE');
+    }
+    if(keep_recovery) {
+        let st=c.io.checked(root+'/'+BOOT,'link',0777,0);
+        require(st.nlink==1 && fs.readlink(root+'/'+BOOT)==TARGET,'BOOT_LINK');
+    } else require(fs.lstat(root+'/'+BOOT)==null,'RESTORE');
+    return true;
+};
+
+export function restore_controls(root,state,bb,keep_recovery) {
+    require(keep_recovery==null || type(keep_recovery)=='bool','RETENTION');
     require(index(['PREPARING','PREPARED','RESTORING'],state.phase())>=0,'PHASE');
     let c=context(root,state,bb),r=c.receipt(),p=c.pending(r);c.live(r,false);
     // Never remove boot protection while the runtime/journal is mixed or drifted.
     verify_runtime(root,state,bb,false);
-    if(fs.lstat(root+'/'+BOOT)!=null) { require(fs.unlink(root+'/'+BOOT),'BOOT_UNLINK');c.io.sync([c.parent(BOOT)]); }
-    for(let rel in keys(FILES))if(fs.lstat(root+'/'+rel)!=null) { require(fs.unlink(root+'/'+rel),'UNLINK');c.io.sync([c.parent(rel)]); }
+    if(!keep_recovery && fs.lstat(root+'/'+BOOT)!=null) { require(fs.unlink(root+'/'+BOOT),'BOOT_UNLINK');c.io.sync([c.parent(BOOT)]); }
+    for(let rel in keys(FILES))if((!keep_recovery || index(KEEP,rel)<0) && fs.lstat(root+'/'+rel)!=null) { require(fs.unlink(root+'/'+rel),'UNLINK');c.io.sync([c.parent(rel)]); }
     for(let n in fs.lsdir(p)) { require(fs.unlink(p+'/'+n),'PENDING_UNLINK');c.io.sync([p]); }
-    for(let rel in keys(FILES))require(fs.lstat(root+'/'+rel)==null,'RESTORE');
-    require(fs.lstat(root+'/'+BOOT)==null,'RESTORE');return true;
+    return verify_restored_controls(root,state,bb,keep_recovery);
 };

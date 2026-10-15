@@ -5,7 +5,7 @@ import subprocess,unittest
 import test_native_runtime
 
 MODULE=Path(__file__).with_name('migration-controls.uc').resolve()
-FILES={**{'usr/libexec/home-gateway-deploy/'+p:0o600 for p in ('migration-state.uc','migration-snapshot.uc','migration-candidate.uc','migration-runtime.uc','migration-handoff.uc','migration-coordinator.uc','migration-controls.uc')},'usr/libexec/home-gateway-deploy/migration-admission.sh':0o700,'etc/init.d/home-gateway-migration':0o755}
+FILES={**{'usr/libexec/home-gateway-deploy/'+p:0o600 for p in ('migration-state.uc','migration-snapshot.uc','migration-candidate.uc','migration-runtime.uc','migration-handoff.uc','migration-coordinator.uc','migration-controls.uc','migration-service.uc','migration-terminal.uc')},'usr/libexec/home-gateway-deploy/migration-admission.sh':0o700,'etc/init.d/home-gateway-migration':0o755}
 BOOT='etc/rc.d/S08home-gateway-migration'
 class Controls(unittest.TestCase):
  def setUp(self):

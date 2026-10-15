@@ -76,6 +76,17 @@ class NativeCoordinatorTests(unittest.TestCase):
         self.assertEqual(before,{p:(self.root/p).stat().st_ino for p in self.legacy.previous})
         self.legacy.assert_previous();self.assertEqual((self.base/'phase').read_bytes(),b'RESTORING\n')
 
+    def test_repeated_interrupted_phases_preserve_evidence_without_replay(self):
+        self.prepare();before={p:(self.root/p).stat().st_ino for p in self.legacy.previous}
+        pending=self.base/'phase.new';pending.write_bytes(b'APPLY');pending.chmod(0o600)
+        r=self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])',recovery=True);self.assertEqual(r.returncode,0,r.stderr)
+        pending.write_bytes(b'ROLLED_');pending.chmod(0o600)
+        r=self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])',recovery=True);self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual((self.base/'phase.interrupted').read_bytes(),b'APPLY')
+        self.assertEqual((self.base/'phase.interrupted.1').read_bytes(),b'ROLLED_')
+        self.assertEqual(before,{p:(self.root/p).stat().st_ino for p in self.legacy.previous})
+        self.assertEqual((self.base/'phase').read_bytes(),b'RESTORING\n');self.assertFalse((self.base/'admission').exists())
+
     def test_legacy_journal_drift_refuses_before_latest_changes(self):
         self.prepare();self.assertEqual(self.run_native('apply_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
         latest=(self.legacy.base/'latest').read_bytes();anchor=self.legacy.base/latest.decode().strip()

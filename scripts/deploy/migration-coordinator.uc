@@ -3,8 +3,8 @@
 import * as fs from 'fs';
 import { snapshot_io,verify_legacy_snapshot } from './migration-snapshot.uc';
 import { verify_candidate_snapshot } from './migration-candidate.uc';
-import { prepare_runtime,apply_runtime,restore_runtime,preflight_restore_runtime,verify_runtime } from './migration-runtime.uc';
-import { prepare_handoff,verify_handoff,publish_handoff,restore_handoff } from './migration-handoff.uc';
+import { prepare_runtime,apply_runtime,restore_runtime,preflight_restore_runtime,verify_runtime,verify_candidate_runtime } from './migration-runtime.uc';
+import { prepare_handoff,verify_handoff,publish_handoff,restore_handoff,preflight_restore_handoff } from './migration-handoff.uc';
 function require(ok,reason) { if(!ok)die('MIGRATION_COORDINATOR_'+reason); }
 function plan(root,state,bb) {
     require(root!='','PRODUCTION_NOT_ACCEPTED');
@@ -52,15 +52,18 @@ function abort_preparing(root,state,bb) {
     // No live writes occurred; preserve partial private receipts for inspection.
 }
 export function rollback_coordinator(root,state,bb) {
-    require(index(['PREPARING','PREPARED','APPLYING','RESTORING'],state.phase())>=0,'PHASE');
+    require(index(['PREPARING','PREPARED','APPLYING','COMMITTED','RESTORING'],state.phase())>=0,'PHASE');
     if(state.phase()=='PREPARING' || state.phase()=='PREPARED' || fs.lstat(root+'/etc/home-gateway-migration/coordinator.abort')!=null) {
         require(state.phase()!='APPLYING','PHASE');abort_preparing(root,state,bb);return;
     }
     let c=plan(root,state,bb);
     // Refuse live/pending drift before changing the published journal pointer.
     preflight_restore_runtime(root,state,bb);
-    state.recover_rollback_phase();
     let partial=fs.lstat(c.io.BASE+'/handoff.publish-pending')!=null || fs.lstat(c.io.BASE+'/handoff.json.new')!=null;
+    if(!partial && fs.lstat(c.io.BASE+'/handoff.json')!=null)preflight_restore_handoff(root,state,bb);
+    if(state.phase()=='COMMITTED') { require(!partial,'COMMITTED_HANDOFF');verify_candidate_runtime(root,state,bb); }
+    state.recover_rollback_phase();
+    if(state.phase()=='COMMITTED')state.transition('RESTORING');
     if(fs.lstat(c.io.BASE+'/handoff.json')!=null && !partial)restore_handoff(root,state,bb);
     else {
         // A partial, unpublished private anchor is preserved, never adopted.

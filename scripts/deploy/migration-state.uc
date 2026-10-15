@@ -170,8 +170,16 @@ export function open_state(root, create, test_busybox, rollback_only, boot_only,
                 raw==substr(p+'\n',0,length(raw))))>0, 'UNKNOWN_PHASE_WRITE');
             // Preserve evidence; never replay the interrupted transition or
             // overwrite an older incident. Caller verifies snapshots/live first.
-            require(fs.lstat(BASE+'/phase.interrupted')==null, 'RECOVERY_EVIDENCE_EXISTS');
-            require(fs.rename(BASE+'/phase.new',BASE+'/phase.interrupted'), 'RECOVERY_ARCHIVE');
+            let target=null;
+            for(let i=0;i<8;i++) {
+                let path=BASE+'/phase.interrupted'+(i?'.'+i:'');
+                if(fs.lstat(path)==null) { if(target==null)target=path;continue; }
+                let prior=read(path,32);
+                require(length(filter(['PREPARED','APPLYING','RESTORING','COMMITTED','ROLLED_BACK'],p=>
+                    length(prior)<=length(p+'\n') && prior==substr(p+'\n',0,length(prior))))>0,'UNKNOWN_RECOVERY_EVIDENCE');
+            }
+            require(target!=null, 'RECOVERY_EVIDENCE_LIMIT');
+            require(fs.rename(BASE+'/phase.new',target), 'RECOVERY_ARCHIVE');
             sync([BASE]);
         },
         transition: function(next) {

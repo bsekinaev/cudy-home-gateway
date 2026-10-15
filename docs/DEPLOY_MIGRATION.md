@@ -309,7 +309,7 @@ Normal `open_state()` still refuses `phase.new`. The disposable-only
 interrupted phase publication. After snapshot/live verification, under the same
 kernel guard and owned fence, a bounded prefix of a legal next phase is archived
 as `phase.interrupted` with checked directory fsync. The interrupted transition
-is never replayed. Unknown contents/metadata, existing incident evidence or
+is never replayed. Unknown contents/metadata, unknown or exhausted incident evidence or
 snapshot/live drift refuse recovery and preserve evidence. A recovery handle
 cannot transition to APPLYING, COMMITTED or ROLLED_BACK. RAM-fence reconstruction
 uses the retained durable identity. No admission is issued.
@@ -357,3 +357,42 @@ CI now selects `github.event.pull_request.head.sha` for pull requests, with
 asserts HEAD identity and passes the same SHA to VM/release verification. Earlier
 PR-associated synthetic-merge runs must not be relabelled as exact-head runs;
 local tests on verified identical trees retain their explicitly recorded scope.
+
+### Delivery B component work after owner RC-A acceptance
+
+Owner accepted RC-A source `26bf67104ce9d44ef6ba313964a32283c3c07cd4`
+strictly within ISOLATED_TMP: all five stages passed on CUDY; lab
+`/tmp/hgdeploy2-rc-a.BIBaCJ`, final RESTORING, service lifecycle NOT_TESTED.
+This is not production migration acceptance. Do not clean that owner lab.
+
+Native control publication snapshots the absence of every new control path,
+checks a pinned dependency closure, publishes copied/fsynced files on the state
+filesystem and enables S08 only after the complete closure exists. Unknown
+existing controls, links, metadata, snapshot corruption, foreign staging and
+runtime drift refuse publication/restoration. Runtime18/receiver3 rollback stays
+separate from HGDEPLOY1 journal contents, which remain immutable.
+
+Terminal certification verifies runtime/receiver bytes, the actual published
+HGDEPLOY2 latest/anchor, control bytes and current procd/process identities before
+COMMITTED/admission. Rollback certification requires the exact legacy runtime and
+journal, original service intent and verified control restoration. Recovery keeps
+two pinned control files (`migration-state.uc`, `home-gateway-migration` init) and
+its exact S08 link as necessary deployment state. Removing the early hook before
+a terminal receipt would expose an interrupted rollback to unguarded boot writers.
+The retained recovery footprint must appear in the owner installation plan.
+
+A provisional Telegram start token is explicitly different from terminal
+admission: APPLYING only, exact nonce/guard inode, inherited FD8, owned fence,
+20+3 installed metadata/hashes and the actual HGDEPLOY2 anchor. Ordinary startup,
+boot and deployment recovery cannot use this token. The existing CLOEXEC
+transport-child behavior is preserved; process-stop certification covers named
+procd instances and previously verified worker PID/starttime, not a generic
+process-tree kill. No private state is rewound.
+
+Interrupted phase receipts keep up to eight checked evidence files; they never
+replay an interrupted APPLYING or grant admission. Known partial admission writes
+are archived only after complete live certification. Unknown bytes/metadata and
+an exhausted evidence budget remain blocked. These are component contracts:
+production root remains refused until the complete service handoff, private-state
+preservation, installation entrypoint and full VM crash/reboot acceptance pass.
+No RC-B or production GO is implied by component COMMITTED/ROLLED_BACK tests.

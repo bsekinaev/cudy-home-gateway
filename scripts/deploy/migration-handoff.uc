@@ -132,3 +132,5 @@ export function restore_handoff(root,state,bb) {
 };
 
 export function verify_handoff(root,state,bb) { return verify(context(root,state,bb)); };
+
+export function preflight_restore_handoff(root,state,bb) { let c=context(root,state,bb);verify(c);let latest=c.io.read(c.deploy+'/latest',0600,40);require(latest==c.old.latest || latest==c.id+'\n','NEW_DEPLOYMENT');check_pending_pointer(c);if(state.phase()=='COMMITTED')require(latest==c.id+'\n' && fs.lstat(c.live)?.type=='directory','COMMITTED_HANDOFF');return true; };

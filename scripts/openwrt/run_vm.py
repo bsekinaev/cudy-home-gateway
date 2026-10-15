@@ -142,10 +142,11 @@ def inject(image, workspace, commit, packages, scenario):
     if scenario == 'control-cycle':
         put('/opt/hg-vm-lab/migration-controls.uc', git('show', commit+':scripts/deploy/migration-controls.uc'), 0o600)
         put('/opt/hg-vm-lab/migration-service.uc', git('show', commit+':scripts/deploy/migration-service.uc'), 0o600)
+        put('/opt/hg-vm-lab/migration-terminal.uc', git('show', commit+':scripts/deploy/migration-terminal.uc'), 0o600)
         put('/opt/hg-vm-lab/legacy-telegram.init',git('show','c921c2d:src/etc/init.d/home-gateway-telegram'),0o755)
         rows=[]
         controls=[('migration-'+n+'.uc','usr/libexec/home-gateway-deploy/migration-'+n+'.uc',0o600)
-                  for n in ('state','snapshot','candidate','runtime','handoff','coordinator','controls')]
+                  for n in ('state','snapshot','candidate','runtime','handoff','coordinator','controls','service','terminal')]
         controls += [('migration-admission.sh','usr/libexec/home-gateway-deploy/migration-admission.sh',0o700),
                      ('migration-boot.init','etc/init.d/home-gateway-migration',0o755)]
         for source, rel, perm in controls:
