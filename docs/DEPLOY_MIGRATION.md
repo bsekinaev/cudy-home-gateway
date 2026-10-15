@@ -332,3 +332,18 @@ full coordinator quiesce/start/procd verification and early boot guards.
 Apply explicitly publishes the migration-aware init first; a valid manifest or
 receipt may list files in another order. The SIGKILL regression reverses receipt
 entries to verify that startup safety does not depend on insertion order.
+
+Early boot component: `migration-boot.init` is an rc.common START=08 hook intended
+for the full pinned control package, before receiver recovery/Telegram startup.
+`restore_boot_fence()` acquires the existing guard and reconstructs the RAM
+symlink from the durable identity before inspecting pending/corrupt phases. It
+never changes phase or applies/restores files. Terminal release still requires
+the exact nonce/inode-bound admission. If marker/guard is unrecognizable, the
+hook atomically attempts a private PID-less RAM lock directory and preserves
+any existing foreign lock. It returns success to rc.common so Gateway failure
+does not stop network boot; deployment remains blocked for explicit recovery.
+This fallback must never be automatically deleted or adopted by the coordinator.
+The hook is not installed on production and full control-package snapshot/apply
+integration remains required. The isolated phase-crash VM scenario installs an
+adapted real S08 rc.common hook and records fence absence before reconstruction;
+its subsequent result must be checked before claiming target boot-hook PASS.

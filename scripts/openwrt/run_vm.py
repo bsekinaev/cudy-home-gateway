@@ -139,6 +139,17 @@ def inject(image, workspace, commit, packages, scenario):
     if scenario in ('runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         for module in ('migration-runtime.uc','migration-handoff.uc','migration-coordinator.uc'):
             put('/opt/hg-vm-lab/'+module, git('show', commit+':scripts/deploy/'+module), 0o600)
+    if scenario == 'runtime-crash-phase':
+        # Real rc.common S08 hook, before rc.local. Only this disposable lab
+        # adapts the production hook's namespace and binds its volatile /tmp.
+        boot=git('show', commit+':scripts/deploy/migration-boot.init').decode()
+        boot=boot.replace('/etc/home-gateway-migration','/etc/hg-native-snapshot/etc/home-gateway-migration')
+        boot=boot.replace('/tmp/home-gateway-deploy.lock','/etc/hg-native-snapshot/tmp/home-gateway-deploy.lock')
+        boot=boot.replace('/usr/libexec/home-gateway-deploy/migration-state.uc','/opt/hg-vm-lab/migration-state.uc')
+        boot=boot.replace('restore_boot_fence("",null)','restore_boot_fence("/etc/hg-native-snapshot","/bin/busybox")')
+        setup="    if [ -d /etc/hg-native-snapshot/etc/home-gateway-migration ]; then\n        umask 077\n        mkdir -p /tmp/hg-crash-ram\n        mount --bind /tmp/hg-crash-ram /etc/hg-native-snapshot/tmp || return 1\n        if [ ! -e /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ] && [ ! -L /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ]; then\n            printf 'ABSENT\\n' > /etc/hg-vm-lab/boot-fence-before\n        else printf 'PRESENT\\n' > /etc/hg-vm-lab/boot-fence-before; fi\n        cat /proc/sys/kernel/random/boot_id > /etc/hg-vm-lab/boot-guard.boot\n    fi\n"
+        boot=boot.replace('start() {\n','start() {\n'+setup)
+        put('/etc/rc.d/S08hg-migration-lab-guard',boot.encode(),0o755)
     guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh'}[scenario]
     smoke = git('show', commit + ':scripts/openwrt/' + guest)
     subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)

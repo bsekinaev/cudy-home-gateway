@@ -15,7 +15,9 @@ const TRANSITIONS = {
     RESTORING: [ 'ROLLED_BACK' ], ROLLED_BACK: [],
 };
 
-export function open_state(root, create, test_busybox, rollback_only) {
+export function open_state(root, create, test_busybox, rollback_only, boot_only) {
+    require(boot_only==null || boot_only==true, 'BOOT_MODE');
+    require(!boot_only || (!create && !rollback_only), 'BOOT_MODE');
     require(rollback_only==null || rollback_only==true, 'RECOVERY_MODE');
     require(!rollback_only || (root!=null && root!='' && !create), 'RECOVERY_NOT_ACCEPTED');
     root ??= '';
@@ -125,8 +127,10 @@ export function open_state(root, create, test_busybox, rollback_only) {
         require(TRANSITIONS[p] != null && raw == p + '\n', 'PHASE');
         return p;
     }
-    phase();
-    require(rollback_only || fs.lstat(BASE + '/phase.new') == null, 'INCOMPLETE_PHASE_WRITE');
+    // Boot must rebuild the volatile fence before inspecting a damaged or
+    // interrupted phase. It never advances/replays that phase.
+    if(!boot_only)phase();
+    require(boot_only || rollback_only || fs.lstat(BASE + '/phase.new') == null, 'INCOMPLETE_PHASE_WRITE');
     function held_guard() {
         let fd=guard.fileno();
         require(fd != null, 'CLOSED_GUARD');
@@ -164,6 +168,7 @@ export function open_state(root, create, test_busybox, rollback_only) {
         },
         transition: function(next) {
             held_guard(); owned_fence();
+            require(!boot_only, 'BOOT_ONLY');
             require(fs.lstat(BASE+'/phase.new')==null, 'INCOMPLETE_PHASE_WRITE');
             require(!rollback_only || (next!='APPLYING' && next!='COMMITTED' && next!='ROLLED_BACK'), 'ROLLBACK_ONLY');
             let current = phase();
@@ -212,4 +217,19 @@ export function open_state(root, create, test_busybox, rollback_only) {
 // full boot/service recovery acceptance. Normal open_state stays fail-closed.
 export function open_rollback_state(root,test_busybox) {
     return open_state(root,false,test_busybox,true);
+};
+
+// Early boot only reconstructs admission fencing; it never applies/restores
+// runtime or executes services. Unknown phase writes remain blocked evidence.
+export function restore_boot_fence(root,test_busybox) {
+    root ??= '';
+    require(type(root)=='string' && (root=='' || (root!='/' &&
+        match(root,/^\/[A-Za-z0-9_.\/-]+$/) && !match(root,/(^|\/)\.\.?($|\/)/))), 'ROOT');
+    if(fs.lstat(root+'/etc/home-gateway-migration')==null)return 'NO_MIGRATION';
+    let state=open_state(root,false,test_busybox,null,true);
+    state.fence();
+    let current=state.phase();
+    require(fs.lstat(root+'/etc/home-gateway-migration/phase.new')==null, 'INCOMPLETE_PHASE_WRITE');
+    if(current=='COMMITTED' || current=='ROLLED_BACK')state.release();
+    state.close();return current;
 };

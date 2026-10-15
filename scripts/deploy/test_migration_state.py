@@ -289,4 +289,57 @@ int chmod(const char *path, mode_t mode) {
             child.communicate(timeout=3)
 
 
+    def boot_fence(self):
+        script='import { restore_boot_fence } from '+json.dumps(str(MODULE))+'; print(restore_boot_fence(ARGV[0],ARGV[1]));'
+        return subprocess.run(['ucode','-e',script,'--',str(self.root),self.bb],capture_output=True,text=True,timeout=10)
+
+    def test_early_boot_without_migration_creates_no_state(self):
+        r=self.boot_fence();self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(r.stdout,'NO_MIGRATION');self.assertFalse(self.base.exists());self.assertFalse(self.ram.exists())
+        self.assertFalse((self.root/'etc/home-gateway-migration.lock').exists())
+
+    def test_early_boot_rebuilds_ram_fence_before_refusing_pending_or_bad_phase(self):
+        self.success('s.fence(); s.transition("PREPARED");')
+        identity=(self.root/'etc/home-gateway-migration.lock').stat().st_ino
+        self.ram.unlink();r=self.boot_fence();self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(r.stdout,'PREPARED');self.assertTrue(self.ram.is_symlink())
+        pending=self.base/'phase.new';pending.write_bytes(b'APPL');pending.chmod(0o600)
+        self.ram.unlink();self.assertNotEqual(self.boot_fence().returncode,0)
+        self.assertTrue(self.ram.is_symlink());self.assertEqual(pending.read_bytes(),b'APPL')
+        pending.unlink();(self.base/'phase').write_bytes(b'FOREIGN\n')
+        self.ram.unlink();self.assertNotEqual(self.boot_fence().returncode,0)
+        self.assertTrue(self.ram.is_symlink());self.assertEqual((self.base/'phase').read_bytes(),b'FOREIGN\n')
+        self.assertEqual(identity,(self.root/'etc/home-gateway-migration.lock').stat().st_ino)
+
+    def test_boot_terminal_requires_bound_admission_before_releasing_fence(self):
+        self.success('s.fence(); s.transition("PREPARED"); s.transition("RESTORING"); s.transition("ROLLED_BACK");')
+        self.ram.unlink();self.assertNotEqual(self.boot_fence().returncode,0);self.assertTrue(self.ram.is_symlink())
+        nonce=(self.base/'marker').read_text().split()[1]
+        inode=(self.root/'etc/home-gateway-migration.lock').stat().st_ino
+        p=self.base/'admission';p.write_text(f'HG_MIGRATION_ADMITTED_V2 ROLLED_BACK {nonce} {inode}\n');p.chmod(0o600)
+        r=self.boot_fence();self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(r.stdout,'ROLLED_BACK');self.assertFalse(self.ram.is_symlink())
+
+    def run_boot_init(self):
+        import shlex
+        source=MODULE.with_name('migration-boot.init').read_text()
+        source=source.replace('/etc/home-gateway-migration',str(self.base)).replace('/tmp/home-gateway-deploy.lock',str(self.ram))
+        source=source.replace('/usr/bin/ucode',shutil.which('ucode')).replace('/usr/libexec/home-gateway-deploy/migration-state.uc',str(MODULE))
+        source=source.replace('restore_boot_fence("",null)','restore_boot_fence('+json.dumps(str(self.root))+','+json.dumps(self.bb)+')')
+        return subprocess.run(shlex.split(os.environ.get('HG_TEST_SHELL','sh'))+['-c',source+'\nlogger() { :; }; start\n'],capture_output=True,text=True,timeout=10)
+
+    def test_boot_init_unknown_marker_blocks_legacy_without_stopping_boot(self):
+        self.success('s.fence();');self.ram.unlink();(self.base/'marker').write_bytes(b'FOREIGN\n')
+        r=self.run_boot_init();self.assertEqual(r.returncode,0,r.stderr)
+        self.assertTrue(self.ram.is_dir());self.assertFalse(self.ram.is_symlink())
+        self.assertEqual(self.ram.stat().st_mode&0o777,0o700);self.assertEqual(list(self.ram.iterdir()),[])
+        self.assertEqual((self.base/'marker').read_bytes(),b'FOREIGN\n')
+
+    def test_boot_init_never_replaces_foreign_ram_lock(self):
+        self.success('s.fence();');self.ram.unlink();(self.base/'marker').write_bytes(b'FOREIGN\n')
+        foreign=self.root/'foreign';foreign.write_bytes(b'KEEP');self.ram.symlink_to(foreign)
+        r=self.run_boot_init();self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(self.ram.readlink(),foreign);self.assertEqual(foreign.read_bytes(),b'KEEP')
+
+
 if __name__ == '__main__': unittest.main()

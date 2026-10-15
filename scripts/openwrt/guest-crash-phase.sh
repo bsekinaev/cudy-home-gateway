@@ -97,7 +97,9 @@ check candidate_does_not_admit_apply sh -c '[ "$(cat /etc/hg-native-snapshot/etc
 fi
 mount --bind /tmp/hg-crash-ram "$ROOT/tmp"
 check crash_apply_changed_boot sh -c '[ "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat /etc/hg-vm-lab/boot.before)" ]'
-check crash_apply_ram_fence_lost sh -c '[ ! -e /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ] && [ ! -L /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ]'
+check crash_apply_ram_fence_lost sh -c '[ "$(cat /etc/hg-vm-lab/boot-fence-before)" = ABSENT ]'
+check crash_early_boot_guard_ran cmp /proc/sys/kernel/random/boot_id /etc/hg-vm-lab/boot-guard.boot
+check crash_early_boot_fence_rebuilt sh -c '[ -L /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ] && [ "$(readlink /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock)" = /etc/hg-native-snapshot/etc/home-gateway-migration/fence ] && cmp /etc/hg-native-snapshot/etc/home-gateway-migration/marker /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock/marker'
 check crash_apply_not_replayed refused ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; import { apply_coordinator } from "/opt/hg-vm-lab/migration-coordinator.uc"; let s=open_state("/etc/hg-native-snapshot",false,"/bin/busybox");apply_coordinator("/etc/hg-native-snapshot",s,"/bin/busybox");'
 check crash_explicit_restore ucode -e 'import { open_rollback_state } from "/opt/hg-vm-lab/migration-state.uc"; import { rollback_coordinator } from "/opt/hg-vm-lab/migration-coordinator.uc"; let s=open_rollback_state("/etc/hg-native-snapshot","/bin/busybox");s.fence();rollback_coordinator("/etc/hg-native-snapshot",s,"/bin/busybox");'
 cat /tmp/hg-vm-lab/check.out
