@@ -141,6 +141,8 @@ def inject(image, workspace, commit, packages, scenario):
             put('/opt/hg-vm-lab/'+module, git('show', commit+':scripts/deploy/'+module), 0o600)
     if scenario == 'control-cycle':
         put('/opt/hg-vm-lab/migration-controls.uc', git('show', commit+':scripts/deploy/migration-controls.uc'), 0o600)
+        put('/opt/hg-vm-lab/migration-service.uc', git('show', commit+':scripts/deploy/migration-service.uc'), 0o600)
+        put('/opt/hg-vm-lab/legacy-telegram.init',git('show','c921c2d:src/etc/init.d/home-gateway-telegram'),0o755)
         rows=[]
         controls=[('migration-'+n+'.uc','usr/libexec/home-gateway-deploy/migration-'+n+'.uc',0o600)
                   for n in ('state','snapshot','candidate','runtime','handoff','coordinator','controls')]

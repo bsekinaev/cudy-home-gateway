@@ -48,6 +48,11 @@ class Controls(unittest.TestCase):
   self.prepare();p=self.base/'controls'/next(iter(FILES));p.write_bytes(b'foreign')
   self.assertNotEqual(self.runuc('apply_controls(ARGV[0],s,ARGV[1])').returncode,0)
   self.assertFalse((self.root/BOOT).is_symlink())
+ def test_restoring_mixed_runtime_keeps_boot_protection(self):
+  self.prepare();self.ok('apply_controls(ARGV[0],s,ARGV[1]);apply_runtime(ARGV[0],s,ARGV[1]);s.transition("RESTORING")')
+  self.assertNotEqual(self.runuc('restore_controls(ARGV[0],s,ARGV[1])').returncode,0)
+  self.assertTrue((self.root/BOOT).is_symlink())
+  self.ok('restore_runtime(ARGV[0],s,ARGV[1]);restore_controls(ARGV[0],s,ARGV[1])')
  def test_control_source_extra_and_hardlink_refused(self):
   p=self.source/'extra';p.write_bytes(b'foreign');self.assertNotEqual(self.runuc('prepare_controls(ARGV[0],s,ARGV[1],ARGV[2],ARGV[3])').returncode,0);p.unlink()
   q=self.source/next(iter(FILES));os.link(q,self.root/'external-link');self.assertNotEqual(self.runuc('prepare_controls(ARGV[0],s,ARGV[1],ARGV[2],ARGV[3])').returncode,0)

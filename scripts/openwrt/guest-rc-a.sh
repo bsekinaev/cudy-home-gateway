@@ -31,6 +31,15 @@ pin=$(sha256sum "$KIT/legacy.wire"); pin=${pin%% *}
 check guest_legacy_seed sh /usr/libexec/home-gateway-deploy/engine.sh apply bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb "$pin" < "$KIT/legacy.wire"
 find /etc/home-gateway-deploy /usr/lib/home-gateway /usr/libexec/home-gateway-deploy -type f -exec sha256sum '{}' ';' > "$LAB/legacy.sha256"
 sha256sum /etc/init.d/home-gateway-telegram /etc/init.d/home-gateway-deploy-recover /usr/bin/gateway /usr/bin/home-gateway-ci-smoke >> "$LAB/legacy.sha256"
+missing_ucode_refused() {
+    [ -e /usr/bin/ucode ] && [ ! -e /usr/bin/ucode.rc-probe ] || return 1
+    mv /usr/bin/ucode /usr/bin/ucode.rc-probe || return 1
+    sh "$KIT/rc-a.sh" preflight > "$LAB/missing-ucode.log" 2>&1
+    rc=$?
+    mv /usr/bin/ucode.rc-probe /usr/bin/ucode || return 1
+    [ "$rc" -ne 0 ] && grep -qx 'RC_A_PREFLIGHT_REFUSED=MISSING_ucode' "$LAB/missing-ucode.log"
+}
+check missing_ucode_diagnostic missing_ucode_refused
 check production_preflight_readonly sh "$KIT/rc-a.sh" preflight
 check isolated_prepare sh "$KIT/rc-a.sh" prepare
 root=$(sed -n 's/^RC_LAB=//p' "$LAB/output")
