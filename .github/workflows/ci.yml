@@ -209,7 +209,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [runtime-crash-apply, runtime-crash-restore, runtime-crash-phase]
+        scenario: [runtime-crash-apply, runtime-crash-restore, runtime-crash-phase, rc-a-package]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
