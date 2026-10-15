@@ -14,7 +14,8 @@ function context(root, state, bb) {
         records[substr(name,8)]=old.files[name];
     const added=['usr/lib/home-gateway/actions.uc','usr/lib/home-gateway/notifications.uc'];
     require(length(keys(records))==21 && length(keys(candidate.files))==23,'INVENTORY');
-    function journal(require_latest=true) {
+    function journal(require_latest) {
+        if(require_latest==null)require_latest=true;
         let deploy=root+'/etc/home-gateway-deploy';
         require(fs.lstat(deploy+'/active')==null && fs.lstat(deploy+'/active.new')==null &&
             fs.lstat(deploy+'/latest.new')==null,'DEPLOYMENT_DRIFT');

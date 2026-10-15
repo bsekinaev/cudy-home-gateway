@@ -89,7 +89,7 @@ def inject(image, workspace, commit, packages, scenario):
     put('/opt/hg-vm-lab/legacy-engine.sh', git('show', commit + ':scripts/deploy/fixtures/legacy-engine-18.sh'), 0o700)
     put('/opt/hg-vm-lab/migration-state.uc', git('show', commit + ':scripts/deploy/migration-state.uc'), 0o600)
     put('/opt/hg-vm-lab/native-batch-inventory.uc', git('show', commit + ':scripts/deploy/native-batch-inventory.uc'), 0o600)
-    if scenario in ('legacy-snapshot', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore'):
+    if scenario in ('legacy-snapshot', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         put('/opt/hg-vm-lab/migration-snapshot.uc', git('show', commit + ':scripts/deploy/migration-snapshot.uc'), 0o600)
         # Public synthetic 18-file fixture on the guest's persistent filesystem.
         # Create its journal through the exact trusted shell receiver, not a mock.
@@ -115,7 +115,7 @@ def inject(image, workspace, commit, packages, scenario):
         payload=b''.join(wire) + b'END\n'
         put('/opt/hg-vm-lab/legacy-fixture.wire', payload, 0o600)
         put('/opt/hg-vm-lab/legacy-fixture.sha256', hashlib.sha256(payload).hexdigest().encode() + b'\n', 0o600)
-    if scenario in ('candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore'):
+    if scenario in ('candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         put('/opt/hg-vm-lab/migration-candidate.uc', git('show', commit + ':scripts/deploy/migration-candidate.uc'), 0o600)
         candidate='/opt/hg-vm-lab/native-candidate'
         records=[]
@@ -136,10 +136,10 @@ def inject(image, workspace, commit, packages, scenario):
         raw=''.join(records).encode()
         put(candidate + '/migration.sha256', raw, 0o600)
         put('/opt/hg-vm-lab/candidate.pin', hashlib.sha256(raw).hexdigest().encode() + b'\n', 0o600)
-    if scenario in ('runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore'):
+    if scenario in ('runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         for module in ('migration-runtime.uc','migration-handoff.uc','migration-coordinator.uc'):
             put('/opt/hg-vm-lab/'+module, git('show', commit+':scripts/deploy/'+module), 0o600)
-    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh'}[scenario]
+    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh'}[scenario]
     smoke = git('show', commit + ':scripts/openwrt/' + guest)
     subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
@@ -186,7 +186,7 @@ def run(args):
                    '-drive', 'file=' + str(image) + ',format=raw,if=virtio', '-snapshot',
                    '-display', 'none', '-vga', 'none', '-monitor', 'none', '-serial', 'stdio',
                    '-nic', 'none', '-no-user-config']
-        if args.scenario in ('overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore'):
+        if args.scenario in ('overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
             # A real guest reboot exits QEMU; supervise a cold boot of the same
             # private writable disk. The immutable input is never mounted.
             command.remove('-snapshot'); command += ['-no-reboot']
@@ -194,7 +194,7 @@ def run(args):
         if args.bios: command += ['-bios', str(args.bios)]
         console = bytearray(); deadline = time.monotonic() + 180
         try:
-            for boot in range(2 if args.scenario in ('overlay-identity','runtime-crash-apply','runtime-crash-restore') else 1):
+            for boot in range(2 if args.scenario in ('overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') else 1):
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, start_new_session=True)
                 try:
@@ -218,7 +218,7 @@ def run(args):
                         try: child.wait(timeout=2)
                         except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=2)
                     child.stdout.close()
-                if args.scenario in ('overlay-identity','runtime-crash-apply','runtime-crash-restore') and boot == 0:
+                if args.scenario in ('overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') and boot == 0:
                     raw=console.decode('utf-8',errors='replace')
                     require(raw.count('HGVM_REBOOT=REQUESTED') == boot+1 and 'reboot: Restarting system' in raw and not RESULT.search(raw), 'GUEST_REBOOT_NOT_OBSERVED')
         finally:
@@ -228,7 +228,7 @@ def run(args):
         report = parse_result(console.decode('utf-8', errors='replace'), expected)
         report.update(commit=commit, scenario=args.scenario, kernel_sha256=KERNEL_SHA, rootfs_sha256=ROOTFS_SHA,
                       network_devices=0, host_shared_directories=0, package_sha256=PACKAGE_SHA)
-        if args.scenario in ('overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore'): report['reboot_mechanism']='GUEST_REBOOT_SUPERVISED_COLD_BOOT'
+        if args.scenario in ('overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'): report['reboot_mechanism']='GUEST_REBOOT_SUPERVISED_COLD_BOOT'
         return report
 
 
@@ -255,7 +255,7 @@ def main():
     parser.add_argument('--bios', type=Path)
     parser.add_argument('--packages-directory', type=Path, required=True, help='Pinned official stat/timeout APKs, installed offline only in guest')
     parser.add_argument('--ref', default='HEAD')
-    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore'), default='baseline')
+    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'), default='baseline')
     parser.add_argument('--diagnostic-log', type=Path, help='Private local diagnostic only; never CI artifact')
     args = parser.parse_args()
     try: report = run(args)

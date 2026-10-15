@@ -12,10 +12,10 @@ class NativeCoordinatorTests(unittest.TestCase):
         self.fixture.setUp();self.addCleanup(self.fixture.doCleanups)
         self.root,self.base,self.bb=self.fixture.root,self.fixture.base,self.fixture.bb
         self.legacy=self.fixture.fixture.lab
-    def run_native(self,body,bb=None):
-        script=('import { open_state } from '+json.dumps(str(MODULE.with_name('migration-state.uc')))+'; '
+    def run_native(self,body,bb=None,recovery=False):
+        script=('import { open_state,open_rollback_state } from '+json.dumps(str(MODULE.with_name('migration-state.uc')))+'; '
                 'import { prepare_coordinator,apply_coordinator,rollback_coordinator } from '+json.dumps(str(MODULE))+'; '
-                'let s=open_state(ARGV[0],false,ARGV[1]); '+body+';')
+                + ('let s=open_rollback_state(ARGV[0],ARGV[1]); s.fence(); ' if recovery else 'let s=open_state(ARGV[0],false,ARGV[1]); ')+body+';')
         return subprocess.run(['ucode','-e',script,'--',str(self.root),bb or self.bb],capture_output=True,text=True,timeout=30)
     def prepare(self):
         r=self.run_native('prepare_coordinator(ARGV[0],s,ARGV[1],"'+'c'*40+'",0)');self.assertEqual(r.returncode,0,r.stderr)
@@ -103,3 +103,59 @@ class NativeCoordinatorTests(unittest.TestCase):
         r=self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])');self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual(before,{p:(self.root/p).stat().st_ino for p in self.legacy.previous})
         self.legacy.assert_previous()
+
+    def test_sigkill_phase_publication_requires_explicit_verified_rollback(self):
+        import os, signal, time
+        self.prepare()
+        before={p:(self.root/p).stat().st_ino for p in self.legacy.previous}
+        ready=self.root/'phase-blocked';shim=self.root/'phase-fsync-block'
+        shim.write_text('#!/bin/sh\ncase "$*" in *"/phase.new"*) touch "'+str(ready)+'"; sleep 10;; esac\nexec "'+self.bb+'" "$@"\n');shim.chmod(0o700)
+        script=('import { open_state } from '+json.dumps(str(MODULE.with_name('migration-state.uc')))+'; '
+                'import { apply_coordinator } from '+json.dumps(str(MODULE))+'; '
+                'let s=open_state(ARGV[0],false,ARGV[1]); apply_coordinator(ARGV[0],s,ARGV[1]);')
+        child=subprocess.Popen(['ucode','-e',script,'--',str(self.root),str(shim)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+        try:
+            deadline=time.monotonic()+5
+            while not ready.exists() and child.poll() is None and time.monotonic()<deadline:time.sleep(.01)
+            self.assertTrue(ready.exists());child.kill();self.assertEqual(child.wait(timeout=3),-signal.SIGKILL)
+        finally:
+            os.killpg(child.pid,signal.SIGKILL);child.communicate(timeout=3)
+        self.assertEqual((self.base/'phase.new').read_bytes(),b'APPLYING\n')
+        self.assertNotEqual(self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
+        r=self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])',recovery=True);self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual((self.base/'phase.interrupted').read_bytes(),b'APPLYING\n')
+        self.assertEqual(before,{p:(self.root/p).stat().st_ino for p in self.legacy.previous})
+        self.legacy.assert_previous();self.assertFalse((self.base/'admission').exists())
+
+    def test_interrupted_restoring_after_ram_loss_restores_without_replay(self):
+        self.prepare();self.assertEqual(self.run_native('apply_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
+        pending=self.base/'phase.new';pending.write_bytes(b'REST');pending.chmod(0o600)
+        (self.root/'tmp/home-gateway-deploy.lock').unlink()
+        r=self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])',recovery=True);self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual((self.base/'phase.interrupted').read_bytes(),b'REST')
+        self.legacy.assert_previous()
+        self.assertEqual(self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])',recovery=True).returncode,0)
+        self.assertTrue((self.root/'tmp/home-gateway-deploy.lock').is_symlink())
+
+    def test_unknown_or_unsafe_phase_pending_is_preserved(self):
+        self.prepare();pending=self.base/'phase.new'
+        for raw in (b'FOREIGN',b'COMMITTED\n',b'RESTORING\nEXTRA'):
+            pending.write_bytes(raw);pending.chmod(0o600)
+            self.assertNotEqual(self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])',recovery=True).returncode,0)
+            self.assertEqual(pending.read_bytes(),raw);self.assertFalse((self.base/'phase.interrupted').exists())
+        pending.write_bytes(b'APPLYING\n');pending.chmod(0o644)
+        self.assertNotEqual(self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])',recovery=True).returncode,0)
+        self.assertTrue(pending.exists());self.legacy.assert_previous()
+
+    def test_phase_recovery_refuses_snapshot_drift_before_archiving(self):
+        self.prepare();pending=self.base/'phase.new';pending.write_bytes(b'APPLYING\n');pending.chmod(0o600)
+        (self.base/'old/runtime/usr/bin/gateway').write_bytes(b'FOREIGN')
+        self.assertNotEqual(self.run_native('rollback_coordinator(ARGV[0],s,ARGV[1])',recovery=True).returncode,0)
+        self.assertEqual(pending.read_bytes(),b'APPLYING\n');self.assertFalse((self.base/'phase.interrupted').exists())
+        self.legacy.assert_previous()
+
+    def test_recovery_handle_cannot_apply_even_without_pending_phase(self):
+        self.prepare();before={p:(self.root/p).stat().st_ino for p in self.legacy.previous}
+        self.assertNotEqual(self.run_native('apply_coordinator(ARGV[0],s,ARGV[1])',recovery=True).returncode,0)
+        self.assertEqual((self.base/'phase').read_bytes(),b'PREPARED\n')
+        self.assertEqual(before,{p:(self.root/p).stat().st_ino for p in self.legacy.previous})

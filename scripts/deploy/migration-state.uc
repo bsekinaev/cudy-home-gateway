@@ -15,7 +15,9 @@ const TRANSITIONS = {
     RESTORING: [ 'ROLLED_BACK' ], ROLLED_BACK: [],
 };
 
-export function open_state(root, create, test_busybox) {
+export function open_state(root, create, test_busybox, rollback_only) {
+    require(rollback_only==null || rollback_only==true, 'RECOVERY_MODE');
+    require(!rollback_only || (root!=null && root!='' && !create), 'RECOVERY_NOT_ACCEPTED');
     root ??= '';
     require(type(root) == 'string' && (root == '' ||
         (match(root, /^\/[A-Za-z0-9_.\/-]+$/) && root != '/' &&
@@ -124,7 +126,7 @@ export function open_state(root, create, test_busybox) {
         return p;
     }
     phase();
-    require(fs.lstat(BASE + '/phase.new') == null, 'INCOMPLETE_PHASE_WRITE');
+    require(rollback_only || fs.lstat(BASE + '/phase.new') == null, 'INCOMPLETE_PHASE_WRITE');
     function held_guard() {
         let fd=guard.fileno();
         require(fd != null, 'CLOSED_GUARD');
@@ -145,8 +147,25 @@ export function open_state(root, create, test_busybox) {
         close: function() { guard.close(); },
         assert_root: function(expected) { require(expected == root, 'ROOT_MISMATCH'); held_guard(); },
         phase,
+        recover_rollback_phase: function() {
+            held_guard(); owned_fence();
+            if(fs.lstat(BASE+'/phase.new')==null)return;
+            require(rollback_only, 'EXPLICIT_RECOVERY_REQUIRED');
+            let current=phase();
+            require(index(['PREPARING','PREPARED','APPLYING','RESTORING'],current)>=0, 'RECOVERY_PHASE');
+            let raw=read(BASE+'/phase.new',32);
+            require(length(filter(TRANSITIONS[current],p=>length(raw)<=length(p+'\n') &&
+                raw==substr(p+'\n',0,length(raw))))>0, 'UNKNOWN_PHASE_WRITE');
+            // Preserve evidence; never replay the interrupted transition or
+            // overwrite an older incident. Caller verifies snapshots/live first.
+            require(fs.lstat(BASE+'/phase.interrupted')==null, 'RECOVERY_EVIDENCE_EXISTS');
+            require(fs.rename(BASE+'/phase.new',BASE+'/phase.interrupted'), 'RECOVERY_ARCHIVE');
+            sync([BASE]);
+        },
         transition: function(next) {
             held_guard(); owned_fence();
+            require(fs.lstat(BASE+'/phase.new')==null, 'INCOMPLETE_PHASE_WRITE');
+            require(!rollback_only || (next!='APPLYING' && next!='COMMITTED' && next!='ROLLED_BACK'), 'ROLLBACK_ONLY');
             let current = phase();
             require(index(TRANSITIONS[current], next) >= 0, 'NO_AUTO_REPLAY');
             // Full coordinator must snapshot/verify before PREPARED and must
@@ -187,4 +206,10 @@ export function open_state(root, create, test_busybox) {
         // No API publishes admission: a complete coordinator must independently
         // validate snapshots, every live byte/uid/gid/mode and legacy pointers.
     };
+};
+
+// Explicit disposable recovery entrypoint. Production remains blocked until
+// full boot/service recovery acceptance. Normal open_state stays fail-closed.
+export function open_rollback_state(root,test_busybox) {
+    return open_state(root,false,test_busybox,true);
 };

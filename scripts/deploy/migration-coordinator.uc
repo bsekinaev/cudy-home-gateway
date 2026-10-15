@@ -38,6 +38,7 @@ export function apply_coordinator(root,state,bb) {
 };
 function abort_preparing(root,state,bb) {
     verify_runtime(root,state,bb,false);
+    state.recover_rollback_phase();
     let io=snapshot_io(root,state,bb),marker=io.read(io.BASE+'/marker',0600,128),path=io.BASE+'/coordinator.abort';
     if(fs.lstat(path)!=null) {
         let raw=io.read(path,0600,128);
@@ -58,6 +59,7 @@ export function rollback_coordinator(root,state,bb) {
     let c=plan(root,state,bb);
     // Refuse live/pending drift before changing the published journal pointer.
     preflight_restore_runtime(root,state,bb);
+    state.recover_rollback_phase();
     let partial=fs.lstat(c.io.BASE+'/handoff.publish-pending')!=null || fs.lstat(c.io.BASE+'/handoff.json.new')!=null;
     if(fs.lstat(c.io.BASE+'/handoff.json')!=null && !partial)restore_handoff(root,state,bb);
     else {

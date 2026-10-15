@@ -293,3 +293,31 @@ inode, native journal reopen and admission after reboot. Warm virtual hardware
 reset on PC/Q35 still hung and is not reported PASS. This scoped cold boot proof
 is not full migration crash recovery or CUDY overlay acceptance. Production
 migration remains BLOCKED until full coordinator and acceptance gates pass.
+
+## Native file/journal coordinator — PR #25, production blocked
+
+`migration-coordinator.uc` combines preparation, verified publication of23
+runtime/receiver files and a separate HGDEPLOY2 anchor, and explicit restoration
+of the original21 files/latest/legacy journal. The original HGDEPLOY1 journal is
+retained unchanged. A fully verified new anchor must exist before live writes.
+Rollback checks retained legacy journal contents, live drift, owned partial
+staging and restore capacity before changing latest. Failed PREPARING/PREPARED
+preparation aborts without rewriting unchanged live files or their inodes.
+
+Normal `open_state()` still refuses `phase.new`. The disposable-only
+`open_rollback_state()` allows an explicit coordinator rollback to inspect an
+interrupted phase publication. After snapshot/live verification, under the same
+kernel guard and owned fence, a bounded prefix of a legal next phase is archived
+as `phase.interrupted` with checked directory fsync. The interrupted transition
+is never replayed. Unknown contents/metadata, existing incident evidence or
+snapshot/live drift refuse recovery and preserve evidence. A recovery handle
+cannot transition to APPLYING, COMMITTED or ROLLED_BACK. RAM-fence reconstruction
+uses the retained durable identity. No admission is issued.
+
+These entrypoints deliberately reject production root. Full early-boot/control
+installation, Telegram lifecycle verification and terminal admission remain
+mandatory before producing an owner installer. Host SIGKILL at phase.new and
+OpenWrt guest reboot tests must be reported separately; adding a scenario is not
+evidence that it passed. `runtime-crash-phase` runs an actual owned-child SIGKILL
+during phase fsync, then guest reboot/supervised cold boot and explicit rollback
+on the same disposable disk. It does not prove production service/boot guards.
