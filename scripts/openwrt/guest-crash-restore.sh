@@ -20,7 +20,7 @@ kill_operation() {
     rm -f /tmp/hg-vm-lab/runtime-crash-ready
     cat > /tmp/hg-vm-lab/runtime-fsync-shim <<'SHIM'
 #!/bin/sh
-case "$*" in *"/runtime-pending/usr_bin_gateway"*) touch /tmp/hg-vm-lab/runtime-crash-ready; sleep 10;; esac
+case "$*" in *"/runtime-pending/usr_bin_home-gateway-ci-smoke"*) touch /tmp/hg-vm-lab/runtime-crash-ready; sleep 10;; esac
 exec /bin/busybox "$@"
 SHIM
     chmod 700 /tmp/hg-vm-lab/runtime-fsync-shim
@@ -91,8 +91,9 @@ check candidate_does_not_admit_apply sh -c '[ "$(cat /etc/hg-native-snapshot/etc
     check crash_complete_apply ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; import { apply_coordinator } from "/opt/hg-vm-lab/migration-coordinator.uc"; let s=open_state("/etc/hg-native-snapshot",false,"/bin/busybox");apply_coordinator("/etc/hg-native-snapshot",s,"/bin/busybox");'
     cat /tmp/hg-vm-lab/check.out
     check crash_restore_sigkill kill_operation restore
-    check crash_partial_restore_published cmp /etc/hg-native-snapshot/etc/init.d/home-gateway-telegram /etc/hg-native-snapshot/etc/home-gateway-migration/old/runtime/etc/init.d/home-gateway-telegram
+    check crash_partial_restore_published cmp /etc/hg-native-snapshot/usr/bin/gateway /etc/hg-native-snapshot/etc/home-gateway-migration/old/runtime/usr/bin/gateway
     check crash_restore_keeps_candidate_remainder test -f /etc/hg-native-snapshot/usr/lib/home-gateway/actions.uc
+    check crash_restore_keeps_guarded_init cmp /etc/hg-native-snapshot/etc/init.d/home-gateway-telegram /etc/hg-native-snapshot/etc/home-gateway-migration/candidate/etc/init.d/home-gateway-telegram
     check crash_restore_phase sh -c '[ "$(cat /etc/hg-native-snapshot/etc/home-gateway-migration/phase)" = RESTORING ]'
     printf 'RESTORING\n' > "$LAB/reboot-stage"
     request_reboot

@@ -321,3 +321,11 @@ OpenWrt guest reboot tests must be reported separately; adding a scenario is not
 evidence that it passed. `runtime-crash-phase` runs an actual owned-child SIGKILL
 during phase fsync, then guest reboot/supervised cold boot and explicit rollback
 on the same disposable disk. It does not prove production service/boot guards.
+
+Rollback publication order: retain the migration-aware Telegram init while
+restoring every other legacy runtime/receiver file and removing the two added
+modules. Verify the restored bytes and retained legacy journal before publishing
+the legacy Telegram init last. Otherwise reboot between the first init rename
+and the remaining file restores could start an unguarded legacy service on a
+mixed tree. This ordering supplements, and does not replace, the still-required
+full coordinator quiesce/start/procd verification and early boot guards.

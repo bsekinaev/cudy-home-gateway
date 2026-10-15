@@ -149,11 +149,18 @@ export function restore_runtime(root,state,bb) {
     let directory=restore_preflight(root,c,true);
     if(phase!='RESTORING')state.transition('RESTORING');
     for(let name in fs.lsdir(directory)) { if(name=='owner')continue; require(fs.unlink(directory+'/'+name),'UNLINK'); c.io.sync([directory]); }
-    for(let rel in keys(c.records)) c.publish(rel,c.records[rel],c.io.BASE+'/old/runtime/'+rel);
+    const init='etc/init.d/home-gateway-telegram';
+    // Keep the migration-aware startup guard until every other legacy byte
+    // is restored. Publishing legacy init first would expose a mixed tree
+    // to rc.common after an interrupted restore and reboot.
+    for(let rel in keys(c.records))if(rel!=init)c.publish(rel,c.records[rel],c.io.BASE+'/old/runtime/'+rel);
     for(let rel in c.added) if(fs.lstat(root+'/'+rel)!=null) {
         c.file(rel,c.candidate.files[rel]); require(fs.unlink(root+'/'+rel),'UNLINK');
         c.io.sync([replace(root+'/'+rel,/\/[^/]+$/,'')]);
     }
+    for(let rel in keys(c.records))if(rel!=init)c.file(rel,c.records[rel]);
+    c.journal();
+    c.publish(init,c.records[init],c.io.BASE+'/old/runtime/'+init);
     c.verify(false);
     // Leave RESTORING fenced until service/control restoration is verified.
 };

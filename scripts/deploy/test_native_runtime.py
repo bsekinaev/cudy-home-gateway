@@ -73,7 +73,8 @@ class NativeRuntimeTests(unittest.TestCase):
                 deadline=time.monotonic()+5
                 while not ready.exists() and child.poll() is None and time.monotonic()<deadline: time.sleep(.01)
                 self.assertTrue(ready.exists(),action)
-                expected=self.base/('candidate' if action=='apply_runtime' else 'old/runtime')/ALL[0]
+                # New init remains guarded through an interrupted restore.
+                expected=self.base/'candidate'/ALL[0]
                 self.assertEqual((self.root/ALL[0]).read_bytes(),expected.read_bytes())
                 child.kill(); child.wait(timeout=3)
             finally:
@@ -95,3 +96,26 @@ class NativeRuntimeTests(unittest.TestCase):
         r=self.run_native('restore_runtime(ARGV[0],s,ARGV[1])');self.assertEqual(r.returncode,0,r.stderr)
         self.assertFalse(pending.exists());self.fixture.lab.assert_previous()
         self.assertEqual((self.base/'runtime-pending/owner').read_bytes(),(self.base/'marker').read_bytes())
+
+    def test_legacy_init_publication_waits_for_all_other_restored_bytes(self):
+        import os, signal, time
+        self.assertEqual(self.run_native('prepare_runtime(ARGV[0],s,ARGV[1]); apply_runtime(ARGV[0],s,ARGV[1])').returncode,0)
+        ready=self.root/'legacy-init-blocked';shim=self.root/'legacy-init-fsync-block'
+        shim.write_text('#!/bin/sh\ncase "$*" in *"/runtime-pending/etc_init.d_home-gateway-telegram"*) touch "'+str(ready)+'"; sleep 10;; esac\nexec "'+self.bb+'" "$@"\n');shim.chmod(0o700)
+        script=('import { open_state } from '+json.dumps(str(MODULE.with_name('migration-state.uc')))+'; '
+                'import { restore_runtime } from '+json.dumps(str(MODULE))+'; let s=open_state(ARGV[0],false,ARGV[1]); restore_runtime(ARGV[0],s,ARGV[1]);')
+        child=subprocess.Popen(['ucode','-e',script,'--',str(self.root),str(shim)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+        try:
+            deadline=time.monotonic()+5
+            while not ready.exists() and child.poll() is None and time.monotonic()<deadline:time.sleep(.01)
+            self.assertTrue(ready.exists())
+            for rel,raw in self.fixture.lab.previous.items():
+                expected=(self.base/'candidate'/rel).read_bytes() if rel==ALL[0] else raw
+                self.assertEqual((self.root/rel).read_bytes(),expected,rel)
+            for rel in ('usr/lib/home-gateway/actions.uc','usr/lib/home-gateway/notifications.uc'):
+                self.assertFalse((self.root/rel).exists())
+            child.kill();self.assertEqual(child.wait(timeout=3),-signal.SIGKILL)
+        finally:
+            os.killpg(child.pid,signal.SIGKILL);child.communicate(timeout=3)
+        r=self.run_native('restore_runtime(ARGV[0],s,ARGV[1])');self.assertEqual(r.returncode,0,r.stderr)
+        self.fixture.lab.assert_previous()
