@@ -1,5 +1,5 @@
 """Native guarded file/service stage and private-state non-replay contracts."""
-import json,subprocess,unittest
+import json,subprocess,unittest,os,signal,time,shlex
 from pathlib import Path
 import test_native_controls
 MOD=Path(__file__).with_name('migration-service.uc').resolve()
@@ -13,10 +13,12 @@ class PrivateHandoff(unittest.TestCase):
    p=self.root/'etc/home-gateway/secrets'/name;p.write_text('public-fixture\n');p.chmod(0o600)
   for name in ['telegram.offset','telegram.callback']:
    p=self.root/'tmp/home-gateway'/name;p.write_text('42\n');p.chmod(0o644)
- def runuc(self,body):
+ def command(self,body,bb=None):
   imports={'migration-state.uc':'open_state','migration-controls.uc':'prepare_controls,apply_controls','migration-coordinator.uc':'prepare_coordinator,rollback_coordinator','migration-terminal.uc':'prepare_service_coordinator,apply_service_coordinator,commit_service_coordinator,rollback_service_coordinator,complete_service_rollback','migration-service.uc':'capture_private_state,verify_private_state'}
   code=''.join('import { '+names+' } from '+json.dumps(str(MOD.with_name(file)))+';' for file,names in imports.items())+'let s=open_state(ARGV[0],false,ARGV[1]);'+body+';'
-  return subprocess.run(['ucode','-e',code,'--',str(self.root),self.bb,str(self.fixture.source),self.fixture.pin],capture_output=True,text=True,timeout=45)
+  return ['ucode','-e',code,'--',str(self.root),bb or self.bb,str(self.fixture.source),self.fixture.pin]
+ def runuc(self,body,bb=None):
+  return subprocess.run(self.command(body,bb),capture_output=True,text=True,timeout=45)
  def ok(self,body):
   p=self.runuc(body);self.assertEqual(p.returncode,0,p.stderr);return p
  def apply(self):
@@ -42,6 +44,31 @@ class PrivateHandoff(unittest.TestCase):
   self.assertEqual(p.read_text(),'999\n')
  def test_interrupted_apply_private_checkpoint_does_not_prevent_rollback(self):
   self.apply();(self.base/'private-apply.json').unlink()
+  self.ok('rollback_service_coordinator(ARGV[0],s,ARGV[1]);complete_service_rollback(ARGV[0],s,ARGV[1])')
+  self.fixture.fixture.fixture.lab.assert_previous()
+ def interrupt(self,body,label):
+  ready=self.root/'private-checkpoint-blocked';shim=self.root/'private-fsync-block'
+  shim.write_text('#!/bin/sh\ncase "$*" in *"/private-'+label+'/etc/home-gateway/secrets/telegram.token"*) : > '+shlex.quote(str(ready))+'; sleep 30;; esac\nexec '+shlex.quote(self.bb)+' "$@"\n');shim.chmod(0o700)
+  child=subprocess.Popen(self.command(body,str(shim)),stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+  try:
+   deadline=time.monotonic()+10
+   while not ready.exists() and child.poll() is None and time.monotonic()<deadline:time.sleep(.02)
+   self.assertTrue(ready.exists(),label)
+  finally:
+   try:os.killpg(child.pid,signal.SIGKILL)
+   except ProcessLookupError:pass
+   child.communicate(timeout=5)
+ def test_sigkill_private_apply_checkpoint_allows_only_verified_rollback(self):
+  self.ok('prepare_service_coordinator(ARGV[0],s,ARGV[1],ARGV[2],ARGV[3],"'+'c'*40+'");apply_controls(ARGV[0],s,ARGV[1])')
+  self.interrupt('apply_service_coordinator(ARGV[0],s,ARGV[1])','apply')
+  self.assertFalse((self.base/'private-apply.json').exists());self.assertFalse((self.base/'admission').exists())
+  self.assertNotEqual(self.runuc('apply_service_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
+  self.ok('rollback_service_coordinator(ARGV[0],s,ARGV[1]);complete_service_rollback(ARGV[0],s,ARGV[1])')
+  self.fixture.fixture.fixture.lab.assert_previous()
+ def test_sigkill_private_rollback_checkpoint_can_resume_known_partial_snapshot(self):
+  self.apply();self.ok('commit_service_coordinator(ARGV[0],s,ARGV[1])')
+  self.interrupt('rollback_service_coordinator(ARGV[0],s,ARGV[1])','rollback')
+  self.assertFalse((self.base/'private-rollback.json').exists())
   self.ok('rollback_service_coordinator(ARGV[0],s,ARGV[1]);complete_service_rollback(ARGV[0],s,ARGV[1])')
   self.fixture.fixture.fixture.lab.assert_previous()
  def test_secret_drift_refuses_even_after_service_start(self):

@@ -114,7 +114,9 @@ def inject(image, workspace, commit, packages, scenario):
             raw=(b'#!/bin/sh\ncase "$1" in running) exit 1;; *) exit 0;; esac\n'
                  if rel.startswith('etc/init.d/') else b'// synthetic VM library\n' if rel.endswith('.uc')
                  else b'#!/bin/sh\nexit 0\n')
-            if scenario=='service-cycle':
+            if scenario=='service-cycle' and rel in ('etc/init.d/home-gateway-telegram','usr/lib/home-gateway/telegram-poller.uc'):
+                # Real legacy workers/init, explicitly synthetic old CLI: the
+                # networkless VM cannot satisfy CUDY hardware doctor checks.
                 raw=git('show','c921c2d:src/'+rel)
                 if rel=='etc/init.d/home-gateway-telegram':raw=service_init_namespace(raw)
             put(lab + '/' + rel, raw, perm)
@@ -276,6 +278,10 @@ def run(args):
                 fd = os.open(args.diagnostic_log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
                 with os.fdopen(fd, 'wb') as log: log.write(console)
         report = parse_result(console.decode('utf-8', errors='replace'), expected)
+        if report['failed']:
+            # Fixed public native refusal codes only; never raw guest output,
+            # secrets, stderr, command lines or diagnostic log publication.
+            report['native_refusals']=sorted(set(re.findall(r'\bMIGRATION_[A-Z0-9_]{1,80}\b', console.decode('utf-8',errors='replace'))))[:32]
         report.update(commit=commit, scenario=args.scenario, kernel_sha256=KERNEL_SHA, rootfs_sha256=ROOTFS_SHA,
                       network_devices=0, host_shared_directories=0, package_sha256=PACKAGE_SHA)
         if args.scenario in ('overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'): report['reboot_mechanism']='GUEST_REBOOT_SUPERVISED_COLD_BOOT'
