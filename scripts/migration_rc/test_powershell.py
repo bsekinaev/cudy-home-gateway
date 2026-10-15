@@ -24,6 +24,7 @@ import os,sys
 with open(os.environ['RC_CALLS'],'a') as f:f.write(sys.argv[0].split('/')[-1]+' '+sys.argv[-1]+'\\n')
 s=sys.argv[-1]
 if 'mktemp -d' in s:print('/tmp/hgdeploy2-rc-a-kit.Abc123')
+if s.endswith('rc-a.sh preflight') and os.environ.get('RC_FAIL')=='preflight':sys.exit(69)
 if s.endswith('rc-a.sh prepare'):
  print('RC_LAB=/tmp/hgdeploy2-rc-a.Def456')
  if os.environ.get('RC_FAIL')=='prepare':sys.exit(255)
@@ -35,6 +36,10 @@ if 'rc-a.sh apply ' in s and os.environ.get('RC_FAIL')=='apply':sys.exit(70)
             def run(session,stage,fail=''):
                 env['RC_FAIL']=fail
                 return subprocess.run(['pwsh','-NoProfile','-File',str(Path(__file__).with_name('owner.ps1')),'-Target','root@cudy.test','-BundleUrl','https://raw.githubusercontent.com/bsekinaev/cudy-home-gateway/'+'a'*40+'/artifacts/test.tar.gz','-BundleSha256',digest,'-SessionFile',str(root/session),'-Stage',stage],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
+            p=run('refused.json','Preflight','preflight');self.assertNotEqual(p.returncode,0,p.stdout)
+            log.write_text('')
+            p=run('refused.json','Prepare');self.assertNotEqual(p.returncode,0,p.stdout)
+            self.assertNotIn('rc-a.sh prepare',log.read_text())
             p=run('one.json','Preflight');self.assertEqual(p.returncode,0,p.stdout)
             self.assertNotIn('rc-a.sh apply',log.read_text())
             p=run('one.json','All');self.assertEqual(p.returncode,0,p.stdout)

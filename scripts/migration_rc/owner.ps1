@@ -33,8 +33,9 @@ if (Test-Path -LiteralPath $SessionFile) {
     $session=Get-Content -Raw -LiteralPath $SessionFile | ConvertFrom-Json
     if ($session.format -ne 'HG_RC_A_SESSION_V1' -or $session.scope -ne 'ISOLATED_TMP' -or $session.target -ne $Target -or $session.source -ne $source -or $session.bundleSha256 -ne $BundleSha256) { throw 'Session identity mismatch; STOP.' }
 } else {
-    $session=[pscustomobject]@{format='HG_RC_A_SESSION_V1';scope='ISOLATED_TMP';target=$Target;source=$source;bundleSha256=$BundleSha256;uploadRoot=$null;remoteKit=$null;lab=$null}
+    $session=[pscustomobject]@{format='HG_RC_A_SESSION_V1';scope='ISOLATED_TMP';target=$Target;source=$source;bundleSha256=$BundleSha256;uploadRoot=$null;remoteKit=$null;lab=$null;preflightPassed=$false}
 }
+if (!$session.PSObject.Properties['preflightPassed']) { $session | Add-Member -NotePropertyName preflightPassed -NotePropertyValue $false }
 function Save-Session {
     $temp=$SessionFile+'.'+[guid]::NewGuid().ToString('N')+'.new'
     $session | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -LiteralPath $temp
@@ -58,6 +59,7 @@ function Require-Lab {
 function Run-Stage([string]$Name) {
     Write-Host ('RC_A_STAGE='+$Name+' SOURCE='+$source+' PRODUCTION_APPLY=BLOCKED')
     if ($Name -eq 'Preflight') {
+        $session.preflightPassed=$false;Save-Session
         if (!$session.remoteKit) {
             if ($session.uploadRoot) { throw 'Previous upload was interrupted. Preserve it; use a new session file for a fresh upload.' }
             $r=Invoke-Remote 'umask 077; mktemp -d /tmp/hgdeploy2-rc-a-kit.XXXXXX'
@@ -74,8 +76,10 @@ function Run-Stage([string]$Name) {
         }
         Require-Kit
         $r=Invoke-Remote ('sh '+$session.remoteKit+'/rc-a.sh preflight');Require-Success $r
+        $session.preflightPassed=$true;Save-Session
     } elseif ($Name -eq 'Prepare') {
         Require-Kit
+        if ($session.preflightPassed -ne $true) { throw 'Successful Preflight is required before Prepare.' }
         if ($session.lab) { throw 'Lab already exists; do not replay Prepare. Use Verify or explicit Rollback.' }
         $r=Invoke-Remote ('sh '+$session.remoteKit+'/rc-a.sh prepare')
         $labs=@($r.Lines | Where-Object { $_ -match '^RC_LAB=/tmp/hgdeploy2-rc-a\.[A-Za-z0-9]{6}$' })

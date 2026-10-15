@@ -89,7 +89,7 @@ def inject(image, workspace, commit, packages, scenario):
     put('/opt/hg-vm-lab/legacy-engine.sh', git('show', commit + ':scripts/deploy/fixtures/legacy-engine-18.sh'), 0o700)
     put('/opt/hg-vm-lab/migration-state.uc', git('show', commit + ':scripts/deploy/migration-state.uc'), 0o600)
     put('/opt/hg-vm-lab/native-batch-inventory.uc', git('show', commit + ':scripts/deploy/native-batch-inventory.uc'), 0o600)
-    if scenario in ('legacy-snapshot', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
+    if scenario in ('control-cycle', 'legacy-snapshot', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         put('/opt/hg-vm-lab/migration-snapshot.uc', git('show', commit + ':scripts/deploy/migration-snapshot.uc'), 0o600)
         # Public synthetic 18-file fixture on the guest's persistent filesystem.
         # Create its journal through the exact trusted shell receiver, not a mock.
@@ -115,7 +115,7 @@ def inject(image, workspace, commit, packages, scenario):
         payload=b''.join(wire) + b'END\n'
         put('/opt/hg-vm-lab/legacy-fixture.wire', payload, 0o600)
         put('/opt/hg-vm-lab/legacy-fixture.sha256', hashlib.sha256(payload).hexdigest().encode() + b'\n', 0o600)
-    if scenario in ('candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
+    if scenario in ('control-cycle', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         put('/opt/hg-vm-lab/migration-candidate.uc', git('show', commit + ':scripts/deploy/migration-candidate.uc'), 0o600)
         candidate='/opt/hg-vm-lab/native-candidate'
         records=[]
@@ -136,9 +136,23 @@ def inject(image, workspace, commit, packages, scenario):
         raw=''.join(records).encode()
         put(candidate + '/migration.sha256', raw, 0o600)
         put('/opt/hg-vm-lab/candidate.pin', hashlib.sha256(raw).hexdigest().encode() + b'\n', 0o600)
-    if scenario in ('runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
+    if scenario in ('control-cycle', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         for module in ('migration-runtime.uc','migration-handoff.uc','migration-coordinator.uc'):
             put('/opt/hg-vm-lab/'+module, git('show', commit+':scripts/deploy/'+module), 0o600)
+    if scenario == 'control-cycle':
+        put('/opt/hg-vm-lab/migration-controls.uc', git('show', commit+':scripts/deploy/migration-controls.uc'), 0o600)
+        rows=[]
+        controls=[('migration-'+n+'.uc','usr/libexec/home-gateway-deploy/migration-'+n+'.uc',0o600)
+                  for n in ('state','snapshot','candidate','runtime','handoff','coordinator','controls')]
+        controls += [('migration-admission.sh','usr/libexec/home-gateway-deploy/migration-admission.sh',0o700),
+                     ('migration-boot.init','etc/init.d/home-gateway-migration',0o755)]
+        for source, rel, perm in controls:
+            raw=git('show',commit+':scripts/deploy/'+source)
+            put('/opt/hg-vm-lab/control-input/'+rel,raw,perm)
+            rows.append(hashlib.sha256(raw).hexdigest()+'  '+rel+'\n')
+        raw=''.join(rows).encode()
+        put('/opt/hg-vm-lab/control-input/controls.sha256',raw,0o600)
+        put('/opt/hg-vm-lab/control.pin',hashlib.sha256(raw).hexdigest().encode()+b'\n',0o600)
     if scenario == 'runtime-crash-phase':
         # Real rc.common S08 hook, before rc.local. Only this disposable lab
         # adapts the production hook's namespace and binds its volatile /tmp.
@@ -155,7 +169,7 @@ def inject(image, workspace, commit, packages, scenario):
                         '--output', str(workspace / 'rc-package')], check=True, stdout=subprocess.DEVNULL)
         archive = next((workspace / 'rc-package').glob('*.tar.gz'))
         put('/opt/hg-vm-lab/rc-a.tar.gz', archive.read_bytes(), 0o600)
-    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh', 'rc-a-package':'guest-rc-a.sh'}[scenario]
+    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh', 'rc-a-package':'guest-rc-a.sh', 'control-cycle':'guest-controls.sh'}[scenario]
     smoke = git('show', commit + ':scripts/openwrt/' + guest)
     subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
@@ -208,7 +222,9 @@ def run(args):
             command.remove('-snapshot'); command += ['-no-reboot']
         if args.qemu_data: command += ['-L', str(args.qemu_data)]
         if args.bios: command += ['-bios', str(args.bios)]
-        console = bytearray(); deadline = time.monotonic() + 180
+        # The control scenario snapshots runtime plus its dependency closure.
+        # TCG-only hosts need a separate bounded budget; assertions are unchanged.
+        console = bytearray(); deadline = time.monotonic() + (300 if args.scenario == 'control-cycle' else 180)
         try:
             for boot in range(2 if args.scenario in ('overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') else 1):
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -271,7 +287,7 @@ def main():
     parser.add_argument('--bios', type=Path)
     parser.add_argument('--packages-directory', type=Path, required=True, help='Pinned official stat/timeout APKs, installed offline only in guest')
     parser.add_argument('--ref', default='HEAD')
-    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase', 'rc-a-package'), default='baseline')
+    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase', 'rc-a-package', 'control-cycle'), default='baseline')
     parser.add_argument('--diagnostic-log', type=Path, help='Private local diagnostic only; never CI artifact')
     args = parser.parse_args()
     try: report = run(args)

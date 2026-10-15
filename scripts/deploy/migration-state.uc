@@ -15,7 +15,9 @@ const TRANSITIONS = {
     RESTORING: [ 'ROLLED_BACK' ], ROLLED_BACK: [],
 };
 
-export function open_state(root, create, test_busybox, rollback_only, boot_only) {
+export function open_state(root, create, test_busybox, rollback_only, boot_only, borrowed_guard) {
+    require(borrowed_guard==null || borrowed_guard==true, 'BORROW_MODE');
+    require(!borrowed_guard || (!boot_only && !rollback_only), 'BORROW_MODE');
     require(boot_only==null || boot_only==true, 'BOOT_MODE');
     require(!boot_only || (!create && !rollback_only), 'BOOT_MODE');
     require(rollback_only==null || rollback_only==true, 'RECOVERY_MODE');
@@ -93,7 +95,13 @@ export function open_state(root, create, test_busybox, rollback_only, boot_only)
     let prior = fs.lstat(LOCK);
     if (prior != null) checked(LOCK, 'file', 0600, 0);
     require(create || prior != null, 'NO_STATE');
-    let guard = fs.open(LOCK, create ? 'ae' : 're', 0600);
+    require(!borrowed_guard || prior!=null, 'BORROW_MISSING_GUARD');
+    let guard = borrowed_guard ? fs.fdopen(8,'r') : fs.open(LOCK, create ? 'ae' : 're', 0600);
+    // FD8 shares the shell coordinator's open file description. Closing this
+    // child handle must not release the parent's kernel lease. FIOCLEX sets
+    // close-on-exec in this child's fd table, keeping fsync/hash helpers from
+    // retaining the lease after a killed native child. Parent FD8 is unchanged.
+    if(borrowed_guard)require(guard!=null && guard.ioctl(fs.IOC_DIR_NONE,0x54,0x51)==0,'BORROW_CLOEXEC');
     require(guard != null && (prior != null || fs.chmod(LOCK, 0600)), 'LOCK_FAILED');
     let lock_stat = checked(LOCK, 'file', 0600, 0);
     let held = fs.stat('/proc/self/fd/' + guard.fileno());
