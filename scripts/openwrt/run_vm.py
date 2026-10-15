@@ -119,6 +119,7 @@ def inject(image, workspace, commit, packages, scenario):
                 # networkless VM cannot satisfy CUDY hardware doctor checks.
                 raw=git('show','c921c2d:src/'+rel)
                 if rel=='etc/init.d/home-gateway-telegram':raw=service_init_namespace(raw)
+                else:raw=raw.replace(b'/etc/home-gateway', (lab+'/etc/home-gateway').encode()).replace(b'/tmp/home-gateway',(lab+'/tmp/home-gateway').encode())
             put(lab + '/' + rel, raw, perm)
             if rel.endswith('/common.sh'): raw += b'# installed legacy revision\n'
             wire += [f'{perm:04o} {len(raw)} {hashlib.sha256(raw).hexdigest()}\n'.encode(),

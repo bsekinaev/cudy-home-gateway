@@ -128,10 +128,14 @@ export function snapshot_io(root, state, test_busybox) {
     return boundary(root, state, test_busybox);
 };
 
-export function verify_legacy_snapshot(root, state, test_busybox) {
+export function verify_legacy_snapshot(root, state, test_busybox, abort_only) {
+    require(abort_only==null || abort_only==true,'VERIFY_MODE');
     let io=boundary(root, state, test_busybox);
-    require(fs.lstat(io.BASE + '/snapshot.json.new') == null &&
-        fs.lstat(io.BASE + '/snapshot.publish-pending') == null, 'PARTIAL_OR_FOREIGN');
+    require(fs.lstat(io.BASE + '/snapshot.json.new') == null, 'PARTIAL_OR_FOREIGN');
+    if(abort_only && fs.lstat(io.BASE+'/snapshot.publish-pending')!=null) {
+        let raw=io.read(io.BASE+'/snapshot.publish-pending',0600,128),marker=io.read(io.BASE+'/marker',0600,128);
+        require(length(raw)<=length(marker) && raw==substr(marker,0,length(raw)),'PARTIAL_OR_FOREIGN');
+    } else require(fs.lstat(io.BASE+'/snapshot.publish-pending')==null,'PARTIAL_OR_FOREIGN');
     let receipt=json(io.read(io.BASE + '/snapshot.json', 0600, 65536));
     require(type(receipt) == 'object' && join(',', sort(keys(receipt))) == 'files,format,latest,marker' &&
         receipt.format == 'HG_LEGACY_SNAPSHOT_V1' && match(receipt.latest, /^tx\.[a-zA-Z0-9]{1,32}\n$/) &&
@@ -183,8 +187,9 @@ export function verify_legacy_snapshot(root, state, test_busybox) {
     return receipt;
 };
 
-export function prepare_legacy_snapshot(root, state, test_busybox) {
-    require(state.phase() == 'PREPARING', 'NO_REPLAY');
+export function prepare_legacy_snapshot(root, state, test_busybox, verify_only) {
+    require(verify_only==null || verify_only==true,'VERIFY_MODE');
+    require(verify_only || state.phase() == 'PREPARING', 'NO_REPLAY');
     let io=boundary(root, state, test_busybox), deploy=root + '/etc/home-gateway-deploy';
     io.checked(deploy, 'directory', 0700, 0);
     require(fs.lstat(deploy + '/active') == null && fs.lstat(deploy + '/active.new') == null &&
@@ -202,8 +207,8 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
     let library=fs.lsdir(root + '/usr/lib/home-gateway');
     require(library != null && length(library) == 15 &&
         length(filter(library, name => index(RUNTIME, 'usr/lib/home-gateway/' + name) >= 0)) == 15, 'INVENTORY');
-    require(fs.lstat(io.BASE + '/old') == null && fs.lstat(io.BASE + '/snapshot.json') == null && fs.lstat(io.BASE + '/snapshot.json.new') == null &&
-        fs.lstat(io.BASE + '/snapshot.publish-pending') == null, 'PARTIAL_OR_FOREIGN');
+    require(verify_only || (fs.lstat(io.BASE + '/old') == null && fs.lstat(io.BASE + '/snapshot.json') == null && fs.lstat(io.BASE + '/snapshot.json.new') == null &&
+        fs.lstat(io.BASE + '/snapshot.publish-pending') == null), 'PARTIAL_OR_FOREIGN');
     let sources={}, metadata={}, permissions={}, total=0;
     function add(path, rel, perm) {
         metadata[path]=io.checked(path, 'file', perm, 262144);
@@ -240,17 +245,6 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
     for (let p in paths) require(same(metadata[p], fs.lstat(p)), 'SOURCE_CHANGED');
     for (let rel in RUNTIME) require(digests[root + '/' + rel] == live[rel] && digests[tx + '/backup/' + rel] == backup[rel], 'HASH_MISMATCH');
     for (let rel, pin in PINS) require(digests[root + '/' + rel] == pin, 'LEGACY_IDENTITY');
-    io.space(total);
-    let snapshot_records={};
-    for (let path in paths) {
-        let rel=path == deploy + '/latest' ? 'latest' : index(path, tx + '/') == 0 ? 'journal/' + substr(path, length(tx)+1) : 'runtime/' + substr(path, length(root)+1);
-        snapshot_records[rel]={ sha256:digests[path], mode:permissions[rel] };
-    }
-    // No source mutation occurs before complete metadata/identity validation.
-    // Partial private snapshots are retained on failure, never auto-adopted.
-    for (let rel, raw in sources) io.write(io.BASE + '/old/' + rel, raw, permissions[rel]);
-    let copy_paths=map(keys(sources), rel => io.BASE + '/old/' + rel), copies=io.hashes(copy_paths);
-    for (let rel in keys(sources)) require(copies[io.BASE + '/old/' + rel] == snapshot_records[rel].sha256, 'SNAPSHOT_CHANGED');
     function revalidate_source() {
         let again=io.hashes(paths);
         for (let p in paths) require(same(metadata[p], fs.lstat(p)) && again[p] == digests[p], 'SOURCE_CHANGED');
@@ -263,6 +257,18 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
             fs.lstat(deploy + '/active.new') == null && fs.lstat(deploy + '/latest.new') == null &&
             io.read(deploy + '/latest', 0600, 40) == latest, 'SOURCE_CHANGED');
     }
+    if(!verify_only)io.space(total);
+    let snapshot_records={};
+    for (let path in paths) {
+        let rel=path == deploy + '/latest' ? 'latest' : index(path, tx + '/') == 0 ? 'journal/' + substr(path, length(tx)+1) : 'runtime/' + substr(path, length(root)+1);
+        snapshot_records[rel]={ sha256:digests[path], mode:permissions[rel] };
+    }
+    if(verify_only) {revalidate_source();return {format:'HG_LEGACY_CURRENT_V1',marker:io.read(io.BASE+'/marker',0600,128),latest,files:snapshot_records};}
+    // No source mutation occurs before complete metadata/identity validation.
+    // Partial private snapshots are retained on failure, never auto-adopted.
+    for (let rel, raw in sources) io.write(io.BASE + '/old/' + rel, raw, permissions[rel]);
+    let copy_paths=map(keys(sources), rel => io.BASE + '/old/' + rel), copies=io.hashes(copy_paths);
+    for (let rel in keys(sources)) require(copies[io.BASE + '/old/' + rel] == snapshot_records[rel].sha256, 'SNAPSHOT_CHANGED');
     revalidate_source();
     let receipt={ format:'HG_LEGACY_SNAPSHOT_V1', marker:io.read(io.BASE + '/marker', 0600, 128), latest, files:snapshot_records };
     let pending=io.BASE + '/snapshot.json.new'; io.write(pending, sprintf('%J\n', receipt), 0600);
@@ -272,4 +278,10 @@ export function prepare_legacy_snapshot(root, state, test_busybox) {
     require(fs.rename(pending, io.BASE + '/snapshot.json'), 'PUBLISH'); io.sync([ io.BASE ]);
     require(fs.unlink(io.BASE + '/snapshot.publish-pending'), 'PUBLISH'); io.sync([ io.BASE ]);
     return verify_legacy_snapshot(root, state, test_busybox);
+};
+
+// No snapshot adoption, creation, cleanup or runtime writes. A caller must hold
+// the same root-bound guard; use only to abort PREPARING with no live controls.
+export function verify_current_legacy(root,state,test_busybox) {
+    return prepare_legacy_snapshot(root,state,test_busybox,true);
 };

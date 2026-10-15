@@ -60,7 +60,7 @@ function context(root, state, bb) {
     function pending_dir() {
         let p=io.BASE+'/runtime-pending';
         if(fs.lstat(p)==null) {
-            require(state.phase()=='PREPARING','PENDING_MISSING');
+            require(state.phase()=='PREPARING' && state.read_only!=true,'PENDING_MISSING');
             require(fs.mkdir(p,0700),'MKDIR'); io.sync([io.BASE]);
             io.write(p+'/owner',old.marker,0600);
         }

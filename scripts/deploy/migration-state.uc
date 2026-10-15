@@ -164,7 +164,7 @@ export function open_state(root, create, test_busybox, rollback_only, boot_only,
             if(fs.lstat(BASE+'/phase.new')==null)return;
             require(rollback_only, 'EXPLICIT_RECOVERY_REQUIRED');
             let current=phase();
-            require(index(['PREPARING','PREPARED','APPLYING','RESTORING'],current)>=0, 'RECOVERY_PHASE');
+            require(index(['PREPARING','PREPARED','APPLYING','COMMITTED','RESTORING'],current)>=0, 'RECOVERY_PHASE');
             let raw=read(BASE+'/phase.new',32);
             require(length(filter(TRANSITIONS[current],p=>length(raw)<=length(p+'\n') &&
                 raw==substr(p+'\n',0,length(raw))))>0, 'UNKNOWN_PHASE_WRITE');

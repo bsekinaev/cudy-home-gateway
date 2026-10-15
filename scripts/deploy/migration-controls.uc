@@ -18,6 +18,7 @@ const FILES={
 };
 const KEEP=['etc/init.d/home-gateway-migration','usr/libexec/home-gateway-deploy/migration-state.uc'];
 const BOOT='etc/rc.d/S08home-gateway-migration', TARGET='../init.d/home-gateway-migration';
+const TELEGRAM_BOOT='etc/rc.d/S95home-gateway-telegram', TELEGRAM_TARGET='../init.d/home-gateway-telegram';
 function require(ok,why) { if(!ok)die('MIGRATION_CONTROLS_'+why); }
 function context(root,state,bb) {
     // Remove only after the complete production coordinator is accepted.
@@ -34,7 +35,7 @@ function context(root,state,bb) {
     }
     function receipt() {
         let r=json(io.read(io.BASE+'/controls.json',0600,8192));
-        require(r.format=='HG_MIGRATION_CONTROLS_V1' && r.marker==io.read(io.BASE+'/marker',0600,128) &&
+        require(r.format=='HG_MIGRATION_CONTROLS_V2' && (r.telegram_boot=='ABSENT' || r.telegram_boot==TELEGRAM_TARGET) && r.marker==io.read(io.BASE+'/marker',0600,128) &&
             join(',',sort(keys(r.files)))==join(',',sort(keys(FILES))) && r.boot==TARGET,'RECEIPT');
         for(let rel in keys(FILES)) {
             let rec=r.files[rel];require(rec.mode==FILES[rel] && rec.old=='ABSENT' && match(rec.sha256,/^[0-9a-f]{64}$/),'RECEIPT');
@@ -43,7 +44,14 @@ function context(root,state,bb) {
         require(fs.lstat(io.BASE+'/controls.json.new')==null,'PARTIAL_RECEIPT');
         return r;
     }
+    function telegram_boot(r,allow_enabled) {
+        parent(TELEGRAM_BOOT);let path=root+'/'+TELEGRAM_BOOT,st=fs.lstat(path);
+        if(st==null)return;
+        io.checked(path,'link',0777,0);
+        require(st.nlink==1 && allow_enabled && r.telegram_boot==TELEGRAM_TARGET && fs.readlink(path)==TELEGRAM_TARGET,'TELEGRAM_BOOT');
+    }
     function live(r,complete) {
+        telegram_boot(r,!complete || index(['COMMITTED','ROLLED_BACK'],state.phase())>=0);
         for(let rel in keys(FILES)) {
             parent(rel);
             if(fs.lstat(root+'/'+rel)!=null)file(root+'/'+rel,r.files[rel]);
@@ -68,7 +76,7 @@ function context(root,state,bb) {
         }
         return p;
     }
-    return {io,parent,file,receipt,live,pending};
+    return {io,parent,file,receipt,live,pending,telegram_boot};
 }
 export function prepare_controls(root,state,bb,source,pin) {
     require(state.phase()=='PREPARING','PHASE');let c=context(root,state,bb),io=c.io;
@@ -99,12 +107,17 @@ export function prepare_controls(root,state,bb,source,pin) {
         c.file(source+'/'+rel,records[rel]);bytes+=fs.lstat(source+'/'+rel).size;
     }
     c.parent(BOOT);require(fs.lstat(root+'/'+BOOT)==null,'UNKNOWN_BOOT');
+    c.parent(TELEGRAM_BOOT);let tele='ABSENT',st=fs.lstat(root+'/'+TELEGRAM_BOOT);
+    if(st!=null) {
+        io.checked(root+'/'+TELEGRAM_BOOT,'link',0777,0);
+        require(st.nlink==1 && fs.readlink(root+'/'+TELEGRAM_BOOT)==TELEGRAM_TARGET,'UNKNOWN_TELEGRAM_BOOT');tele=TELEGRAM_TARGET;
+    }
     require(fs.lstat(io.BASE+'/controls')==null && fs.lstat(io.BASE+'/controls.json')==null,'NO_REPLAY');
     io.space(bytes);require(fs.mkdir(io.BASE+'/control-pending',0700),'PENDING');io.sync([io.BASE]);
     for(let rel in keys(FILES))io.write(io.BASE+'/controls/'+rel,io.read(source+'/'+rel,FILES[rel],262144),FILES[rel]);
     for(let rel in keys(FILES)) { c.file(source+'/'+rel,records[rel]);c.file(io.BASE+'/controls/'+rel,records[rel]);require(fs.lstat(root+'/'+rel)==null,'SOURCE_CHANGED'); }
     require(io.hashes([source+'/controls.sha256'])[source+'/controls.sha256']==pin && fs.lstat(root+'/'+BOOT)==null,'SOURCE_CHANGED');
-    let receipt={format:'HG_MIGRATION_CONTROLS_V1',marker:io.read(io.BASE+'/marker',0600,128),files:records,boot:TARGET};
+    let receipt={format:'HG_MIGRATION_CONTROLS_V2',telegram_boot:tele,marker:io.read(io.BASE+'/marker',0600,128),files:records,boot:TARGET};
     io.write(io.BASE+'/controls.json.new',sprintf('%J\n',receipt),0600);
     require(fs.rename(io.BASE+'/controls.json.new',io.BASE+'/controls.json'),'PUBLISH');io.sync([io.BASE]);
     c.receipt();return receipt;
@@ -121,6 +134,10 @@ export function apply_controls(root,state,bb) {
     }
     // Enable early boot only after its complete dependency closure is durable.
     if(fs.lstat(root+'/'+BOOT)==null) { require(fs.symlink(TARGET,root+'/'+BOOT),'BOOT_LINK');c.io.sync([c.parent(BOOT)]); }
+    // Suppress legacy autostart before ANY runtime switch. Restore the
+    // original enablement only after a verified terminal admission exists.
+    c.telegram_boot(r,true);
+    if(fs.lstat(root+'/'+TELEGRAM_BOOT)!=null) {require(fs.unlink(root+'/'+TELEGRAM_BOOT),'TELEGRAM_BOOT');c.io.sync([c.parent(TELEGRAM_BOOT)]);}
     c.live(r,true);return true;
 };
 export function verify_controls(root,state,bb) { let c=context(root,state,bb);c.live(c.receipt(),true);return true; };
@@ -128,13 +145,15 @@ export function verify_restored_controls(root,state,bb,keep_recovery) {
     require(keep_recovery==null || type(keep_recovery)=='bool','RETENTION');
     let c=context(root,state,bb),r=c.receipt();c.pending(r);
     for(let rel in keys(FILES)) {
-        if(keep_recovery && index(KEEP,rel)>=0)c.file(root+'/'+rel,r.files[rel]);
+        if(keep_recovery && (state.phase()=='RESTORING' || index(KEEP,rel)>=0))c.file(root+'/'+rel,r.files[rel]);
+        else if(keep_recovery && state.phase()=='ROLLED_BACK' && fs.lstat(root+'/'+rel)!=null)c.file(root+'/'+rel,r.files[rel]);
         else require(fs.lstat(root+'/'+rel)==null,'RESTORE');
     }
     if(keep_recovery) {
         let st=c.io.checked(root+'/'+BOOT,'link',0777,0);
         require(st.nlink==1 && fs.readlink(root+'/'+BOOT)==TARGET,'BOOT_LINK');
     } else require(fs.lstat(root+'/'+BOOT)==null,'RESTORE');
+    c.telegram_boot(r,state.phase()=='ROLLED_BACK');
     return true;
 };
 
@@ -145,7 +164,43 @@ export function restore_controls(root,state,bb,keep_recovery) {
     // Never remove boot protection while the runtime/journal is mixed or drifted.
     verify_runtime(root,state,bb,false);
     if(!keep_recovery && fs.lstat(root+'/'+BOOT)!=null) { require(fs.unlink(root+'/'+BOOT),'BOOT_UNLINK');c.io.sync([c.parent(BOOT)]); }
-    for(let rel in keys(FILES))if((!keep_recovery || index(KEEP,rel)<0) && fs.lstat(root+'/'+rel)!=null) { require(fs.unlink(root+'/'+rel),'UNLINK');c.io.sync([c.parent(rel)]); }
+    for(let rel in keys(FILES))if(!keep_recovery && fs.lstat(root+'/'+rel)!=null) { require(fs.unlink(root+'/'+rel),'UNLINK');c.io.sync([c.parent(rel)]); }
     for(let n in fs.lsdir(p)) { require(fs.unlink(p+'/'+n),'PENDING_UNLINK');c.io.sync([p]); }
     return verify_restored_controls(root,state,bb,keep_recovery);
+};
+
+export function quarantine_telegram_boot(root,state,bb) {
+    let c=context(root,state,bb),r=c.receipt();c.telegram_boot(r,true);
+    if(fs.lstat(root+'/'+TELEGRAM_BOOT)!=null) {require(fs.unlink(root+'/'+TELEGRAM_BOOT),'TELEGRAM_BOOT');c.io.sync([c.parent(TELEGRAM_BOOT)]);}
+    c.telegram_boot(r,false);return true;
+};
+export function restore_telegram_boot(root,state,bb) {
+    let c=context(root,state,bb),r=c.receipt(),phase=state.phase(),marker=c.io.read(c.io.BASE+'/marker',0600,128),
+        lock=c.io.checked(root+'/etc/home-gateway-migration.lock','file',0600,0);
+    require(index(['COMMITTED','ROLLED_BACK'],phase)>=0 && c.io.read(c.io.BASE+'/admission',0600,128)==
+        'HG_MIGRATION_ADMITTED_V2 '+phase+' '+trim(substr(marker,22))+' '+lock.inode+'\n','ADMISSION');
+    c.telegram_boot(r,true);
+    if(r.telegram_boot==TELEGRAM_TARGET && fs.lstat(root+'/'+TELEGRAM_BOOT)==null) {
+        require(fs.symlink(TELEGRAM_TARGET,root+'/'+TELEGRAM_BOOT),'TELEGRAM_BOOT');c.io.sync([c.parent(TELEGRAM_BOOT)]);
+    }
+    return true;
+};
+export function finalize_restored_controls(root,state,bb) {
+    require(state.phase()=='ROLLED_BACK','PHASE');
+    verify_runtime(root,state,bb,false);verify_restored_controls(root,state,bb,true);
+    restore_telegram_boot(root,state,bb);
+    let c=context(root,state,bb),r=c.receipt();
+    for(let rel in keys(FILES))if(index(KEEP,rel)<0 && fs.lstat(root+'/'+rel)!=null) {
+        c.file(root+'/'+rel,r.files[rel]);require(fs.unlink(root+'/'+rel),'UNLINK');c.io.sync([c.parent(rel)]);
+    }
+    verify_restored_controls(root,state,bb,true);return true;
+};
+
+export function verify_unpublished_controls(root,state,bb) {
+    require(index(['PREPARING','PREPARED','RESTORING','ROLLED_BACK'],state.phase())>=0,'PHASE');let c=context(root,state,bb);
+    for(let rel in keys(FILES)) {c.parent(rel);require(fs.lstat(root+'/'+rel)==null,'PUBLISHED_DURING_PREPARING');}
+    c.parent(BOOT);require(fs.lstat(root+'/'+BOOT)==null,'PUBLISHED_DURING_PREPARING');
+    // Native prepare never changes this original enablement. Unknown links
+    // still refuse; no partial control/private snapshot is consumed or erased.
+    c.telegram_boot({telegram_boot:TELEGRAM_TARGET},true);return true;
 };

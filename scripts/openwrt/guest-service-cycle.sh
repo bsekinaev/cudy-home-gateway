@@ -1,6 +1,6 @@
 #!/bin/sh
 # Actual procd lifecycle under one parent FD8, confined to a synthetic namespace.
-# Only init paths/env are namespace-adapted by run_vm.py; no production claim.
+# Worker/init paths and env are namespace-adapted by run_vm.py; no production claim.
 set -u
 umask 077
 [ "$(uname -m)" = x86_64 ] && [ "$(cat /etc/hg-disposable-vm 2>/dev/null)" = HG_NETWORKLESS_OPENWRT_VM_V1 ] || exit 77
@@ -24,7 +24,8 @@ root=/etc/hg-native-snapshot
 mkdir -m 700 "$root/tmp" "$root/etc/home-gateway-deploy"
 mkdir -m 755 "$root/etc/rc.d"
 chmod 700 "$root"
-ln -s /usr/bin/ucode "$root/usr/bin/ucode"
+ln -s ../init.d/home-gateway-telegram "$root/etc/rc.d/S95home-gateway-telegram"
+cp -p /usr/bin/ucode "$root/usr/bin/ucode"
 printf '#!/bin/sh\nexec ubus "$@"\n' > "$root/usr/bin/ubus"
 chmod 700 "$root/usr/bin/ubus"
 mkdir -m 700 "$root/etc/home-gateway" "$root/etc/home-gateway/secrets" "$root/etc/home-gateway/state" "$root/tmp/home-gateway"
@@ -64,23 +65,30 @@ check running_service_prepare ucode "$LAB/stage.uc" prepare
 exec 8< "$root/etc/home-gateway-migration.lock"
 check parent_guard busybox flock -n 8
 check legacy_process_verified ucode "$LAB/stage.uc" legacy
+# Synthetic public lab only; kept in the private host diagnostic, never artifact.
+ubus -S call service list '{"name":"home-gateway-telegram","verbose":true}' > "$LAB/procd-public-fixture.json"
+cat "$LAB/procd-public-fixture.json"
 check running_service_apply ucode "$LAB/stage.uc" apply
 check old_service_stopped ucode "$LAB/stage.uc" stopped
+check apply_boot_quarantined sh -c '[ ! -L /etc/hg-native-snapshot/etc/rc.d/S95home-gateway-telegram ]'
 check private_unchanged_before_start sha256sum -c "$LAB/private.sha256"
 check candidate_provisional_start env HG_MIGRATION_SERVICE_HANDOFF=1 "$root/etc/init.d/home-gateway-telegram" start
 sleep 1
 check candidate_processes_verified ucode "$LAB/stage.uc" candidate
 check running_service_commit ucode "$LAB/stage.uc" commit
 check committed_and_released sh -c '[ "$(cat /etc/hg-native-snapshot/etc/home-gateway-migration/phase)" = COMMITTED ] && [ ! -e /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ]'
+check committed_boot_enablement_restored test -L "$root/etc/rc.d/S95home-gateway-telegram"
 check committed_reapply_refused refused ucode "$LAB/stage.uc" apply
 check running_service_rollback ucode "$LAB/stage.uc" rollback
 check candidate_service_stopped ucode "$LAB/stage.uc" stopped
+check restoring_boot_quarantined sh -c '[ ! -L /etc/hg-native-snapshot/etc/rc.d/S95home-gateway-telegram ]'
 check legacy_restart "$root/etc/init.d/home-gateway-telegram" start
 sleep 1
 check restored_legacy_process_verified ucode "$LAB/stage.uc" legacy
 check running_service_complete_rollback ucode "$LAB/stage.uc" complete
 check complete_rollback_repeat ucode "$LAB/stage.uc" complete
 check rolled_back_and_released sh -c '[ "$(cat /etc/hg-native-snapshot/etc/home-gateway-migration/phase)" = ROLLED_BACK ] && [ ! -e /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ]'
+check rollback_boot_enablement_restored test -L "$root/etc/rc.d/S95home-gateway-telegram"
 check private_unchanged_after_rollback sha256sum -c "$LAB/private.sha256"
 check network_config_unchanged sha256sum -c "$LAB/network"
 ip route show > "$LAB/routes.after"

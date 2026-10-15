@@ -1,20 +1,16 @@
 // Terminal certification. Production is still blocked until full lifecycle integration.
 import * as fs from 'fs';
 import { prepare_coordinator,rollback_coordinator } from './migration-coordinator.uc';
-import { snapshot_io,verify_legacy_snapshot } from './migration-snapshot.uc';
+import { snapshot_io,verify_legacy_snapshot,verify_current_legacy } from './migration-snapshot.uc';
 import { verify_candidate_snapshot } from './migration-candidate.uc';
 import { verify_runtime,verify_candidate_runtime,apply_runtime,preflight_restore_runtime } from './migration-runtime.uc';
 import { verify_handoff,publish_handoff,preflight_restore_handoff } from './migration-handoff.uc';
-import { prepare_controls,verify_controls,verify_restored_controls,restore_controls } from './migration-controls.uc';
+import { prepare_controls,verify_controls,verify_restored_controls,restore_controls,quarantine_telegram_boot,restore_telegram_boot,finalize_restored_controls,verify_unpublished_controls } from './migration-controls.uc';
 import { inspect_telegram,quiesce_telegram,capture_private_state,verify_private_state } from './migration-service.uc';
 function require(ok,why) { if(!ok)die('MIGRATION_TERMINAL_'+why); }
-function context(root,state,bb) {
-    require(type(root)=='string' && root!='','PRODUCTION_NOT_ACCEPTED');
-    let io=snapshot_io(root,state,bb),old=verify_legacy_snapshot(root,state,bb),candidate=verify_candidate_snapshot(root,state,bb);
-    let p=json(io.read(io.BASE+'/coordinator.json',0600,1024));
-    require(type(p)=='object' && join(',',sort(keys(p)))=='commit,format,manifest_sha256,marker,was_running' && p.format=='HG_NATIVE_COORDINATOR_V1' && p.marker==old.marker && p.manifest_sha256==candidate.manifest_sha256 &&
-        match(p.commit,/^[0-9a-f]{40}$/) && type(p.was_running)=='int' && (p.was_running==0 || p.was_running==1),'PLAN');
-    let lock=io.checked(root+'/etc/home-gateway-migration.lock','file',0600,0),nonce=trim(substr(old.marker,22));
+function readonly_state(state,root) { return {...state,read_only:true,fence:function() {state.assert_root(root);}}; }
+function publisher(root,state,io,marker) {
+    let lock=io.checked(root+'/etc/home-gateway-migration.lock','file',0600,0),nonce=trim(substr(marker,22));
     function record(phase) { return 'HG_MIGRATION_ADMITTED_V2 '+phase+' '+nonce+' '+lock.inode+'\n'; }
     function publish(phase) {
         let pending=io.BASE+'/admission.new',final=io.BASE+'/admission',expected=record(phase),other=record('COMMITTED');
@@ -44,22 +40,30 @@ function context(root,state,bb) {
         }
         require(io.read(final,0600,128)==expected,'ADMISSION');state.release();return phase;
     }
-    return {io,p,publish};
+    return publish;
+}
+function context(root,state,bb) {
+    require(type(root)=='string' && root!='','PRODUCTION_NOT_ACCEPTED');
+    let io=snapshot_io(root,state,bb),old=verify_legacy_snapshot(root,state,bb),candidate=verify_candidate_snapshot(root,state,bb);
+    let p=json(io.read(io.BASE+'/coordinator.json',0600,1024));
+    require(type(p)=='object' && join(',',sort(keys(p)))=='commit,format,manifest_sha256,marker,was_running' && p.format=='HG_NATIVE_COORDINATOR_V1' && p.marker==old.marker && p.manifest_sha256==candidate.manifest_sha256 &&
+        match(p.commit,/^[0-9a-f]{40}$/) && type(p.was_running)=='int' && (p.was_running==0 || p.was_running==1),'PLAN');
+    return {io,p,publish:publisher(root,state,io,old.marker)};
 }
 export function commit_migration(root,state,bb) {
-    require(index(['APPLYING','COMMITTED'],state.phase())>=0,'PHASE');let c=context(root,state,bb);
-    verify_controls(root,state,bb);let h=verify_handoff(root,state,bb);verify_candidate_runtime(root,state,bb);
+    require(index(['APPLYING','COMMITTED'],state.phase())>=0,'PHASE');let checked=state.phase()=='COMMITTED'?readonly_state(state,root):state,c=context(root,checked,bb);
+    verify_controls(root,checked,bb);let h=verify_handoff(root,checked,bb);verify_candidate_runtime(root,checked,bb);
     require(h.commit==c.p.commit && h.was_running==c.p.was_running,'SERVICE_BINDING');
     require(c.io.read(root+'/etc/home-gateway-deploy/latest',0600,40)==h.id+'\n' && fs.lstat(root+'/etc/home-gateway-deploy/'+h.id)?.type=='directory','HANDOFF_NOT_PUBLISHED');
-    inspect_telegram(root,state,c.p.was_running?'candidate':'stopped');
-    return c.publish('COMMITTED');
+    inspect_telegram(root,checked,c.p.was_running?'candidate':'stopped');state.fence();
+    let phase=c.publish('COMMITTED');restore_telegram_boot(root,state,bb);state.release();return phase;
 };
 export function complete_rollback(root,state,bb,keep_recovery) {
     require(keep_recovery==true,'RECOVERY_GUARD_REQUIRED');
-    require(index(['RESTORING','ROLLED_BACK'],state.phase())>=0,'PHASE');let c=context(root,state,bb);
-    verify_runtime(root,state,bb,false);verify_restored_controls(root,state,bb,keep_recovery);
-    inspect_telegram(root,state,c.p.was_running?'legacy':'stopped');
-    return c.publish('ROLLED_BACK');
+    require(index(['RESTORING','ROLLED_BACK'],state.phase())>=0,'PHASE');let checked=state.phase()=='ROLLED_BACK'?readonly_state(state,root):state,c=context(root,checked,bb);
+    verify_runtime(root,checked,bb,false);verify_restored_controls(root,checked,bb,keep_recovery);
+    inspect_telegram(root,checked,c.p.was_running?'legacy':'stopped');state.fence();
+    let phase=c.publish('ROLLED_BACK');finalize_restored_controls(root,state,bb);state.release();return phase;
 };
 // File/service handoff stage. The owner shell holds FD8 across this native
 // child, rc.common startup and terminal certification. No auto replay/restart.
@@ -86,17 +90,22 @@ export function apply_service_coordinator(root,state,bb) {
 };
 
 export function commit_service_coordinator(root,state,bb) {
-    verify_private_state(root,state,bb,'prepare',true);
-    verify_private_state(root,state,bb,'apply',true);
+    let checked=state.phase()=='COMMITTED'?readonly_state(state,root):state;
+    verify_private_state(root,checked,bb,'prepare',true);
+    verify_private_state(root,checked,bb,'apply',true);
     return commit_migration(root,state,bb);
 };
 export function rollback_service_coordinator(root,state,bb) {
     require(root!='' && index(['APPLYING','COMMITTED','RESTORING'],state.phase())>=0,'PRODUCTION_NOT_ACCEPTED');
-    let c=context(root,state,bb);
+    let checked=readonly_state(state,root),c=context(root,checked,bb);
     // Drift refusal precedes stop and any journal/runtime changes.
-    preflight_restore_runtime(root,state,bb);preflight_restore_handoff(root,state,bb);
-    verify_private_state(root,state,bb,'prepare',true);
-    if(fs.lstat(c.io.BASE+'/private-apply.json')!=null)verify_private_state(root,state,bb,'apply',true);
+    preflight_restore_runtime(root,checked,bb);preflight_restore_handoff(root,checked,bb);
+    if(state.phase()=='COMMITTED')verify_candidate_runtime(root,checked,bb);
+    verify_private_state(root,checked,bb,'prepare',true);
+    if(fs.lstat(c.io.BASE+'/private-apply.json')!=null)verify_private_state(root,checked,bb,'apply',true);
+    state.fence();quarantine_telegram_boot(root,state,bb);state.fence();
+    state.recover_rollback_phase();
+    if(state.phase()=='COMMITTED')state.transition('RESTORING');
     quiesce_telegram(root,state);
     if(fs.lstat(c.io.BASE+'/private-rollback.json')==null)capture_private_state(root,state,bb,'rollback');
     else verify_private_state(root,state,bb,'rollback',false);
@@ -106,8 +115,9 @@ export function rollback_service_coordinator(root,state,bb) {
     return c.p.was_running;
 };
 export function complete_service_rollback(root,state,bb) {
-    verify_private_state(root,state,bb,'prepare',true);
-    verify_private_state(root,state,bb,'rollback',true);
+    let checked=state.phase()=='ROLLED_BACK'?readonly_state(state,root):state;
+    verify_private_state(root,checked,bb,'prepare',true);
+    verify_private_state(root,checked,bb,'rollback',true);
     return complete_rollback(root,state,bb,true);
 };
 
@@ -117,4 +127,42 @@ export function prepare_service_coordinator(root,state,bb,source,pin,commit) {
     capture_private_state(root,state,bb,'prepare');
     prepare_controls(root,state,bb,source,pin);
     prepare_coordinator(root,state,bb,commit,length(initial.instances)?1:0);
+};
+
+// An interrupted PREPARING operation cannot have published controls/runtime
+// or stopped a service. Certify the old tree directly; never adopt/replay its
+// partial private checkpoints or invent a coordinator plan to authorize apply.
+function verify_abort_baseline(root,state,bb) {
+    let current=verify_current_legacy(root,state,bb),base=root+'/etc/home-gateway-migration';
+    if(fs.lstat(base+'/snapshot.json')!=null) {
+        let old=verify_legacy_snapshot(root,state,bb,true);
+        require(current.latest==old.latest && join(',',sort(keys(current.files)))==join(',',sort(keys(old.files))),'ABORT_BASELINE');
+        for(let rel in keys(old.files))require(current.files[rel].sha256==old.files[rel].sha256 && current.files[rel].mode==old.files[rel].mode,'ABORT_BASELINE');
+    }
+    return current;
+}
+export function abort_service_preparation(root,state,bb) {
+    require(root!='' && index(['PREPARING','PREPARED','RESTORING'],state.phase())>=0,'PRODUCTION_NOT_ACCEPTED');
+    let checked=readonly_state(state,root);
+    verify_abort_baseline(root,checked,bb);verify_unpublished_controls(root,checked,bb);
+    inspect_telegram(root,checked,'initial');
+    let io=snapshot_io(root,checked,bb),marker=io.read(io.BASE+'/marker',0600,128),path=io.BASE+'/preparation-abort';
+    require(state.phase()=='PREPARING' || fs.lstat(path)!=null,'UNKNOWN_ABORT');
+    if(fs.lstat(path)!=null) {
+        let raw=io.read(path,0600,128);
+        require(length(raw)<=length(marker) && raw==substr(marker,0,length(raw)),'UNKNOWN_ABORT');
+    }
+    state.fence();state.recover_rollback_phase();
+    if(fs.lstat(path)!=null && io.read(path,0600,128)!=marker) {require(fs.unlink(path),'ABORT');io.sync([io.BASE]);}
+    if(fs.lstat(path)==null)io.write(path,marker,0600);
+    if(state.phase()=='PREPARING')state.transition('PREPARED');
+    if(state.phase()=='PREPARED')state.transition('RESTORING');
+    return 'RESTORING';
+};
+export function complete_preparation_abort(root,state,bb) {
+    require(root!='' && index(['RESTORING','ROLLED_BACK'],state.phase())>=0,'PRODUCTION_NOT_ACCEPTED');
+    let checked=readonly_state(state,root),io=snapshot_io(root,checked,bb),marker=io.read(io.BASE+'/marker',0600,128);
+    require(io.read(io.BASE+'/preparation-abort',0600,128)==marker,'UNKNOWN_ABORT');
+    verify_abort_baseline(root,checked,bb);verify_unpublished_controls(root,checked,bb);inspect_telegram(root,checked,'initial');
+    state.fence();return publisher(root,state,io,marker)('ROLLED_BACK');
 };

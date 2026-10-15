@@ -21,6 +21,13 @@ class Terminal(unittest.TestCase):
   self.ok('rollback_coordinator(ARGV[0],s,ARGV[1]);restore_controls(ARGV[0],s,ARGV[1],true);complete_rollback(ARGV[0],s,ARGV[1],true)')
   self.assertEqual((self.base/'phase').read_text(),'ROLLED_BACK\n');self.assertFalse((self.root/'tmp/home-gateway-deploy.lock').is_symlink())
   self.ok('complete_rollback(ARGV[0],s,ARGV[1],true)');self.fixture.fixture.fixture.lab.assert_previous()
+ def test_completion_modules_retained_until_terminal_rollback_admission(self):
+  self.ok('commit_migration(ARGV[0],s,ARGV[1]);rollback_coordinator(ARGV[0],s,ARGV[1]);restore_controls(ARGV[0],s,ARGV[1],true)')
+  base=self.root/'usr/libexec/home-gateway-deploy'
+  for name in ['migration-terminal.uc','migration-service.uc','migration-controls.uc','migration-snapshot.uc']:
+   self.assertTrue((base/name).exists(),name)
+  self.ok('complete_rollback(ARGV[0],s,ARGV[1],true)')
+  self.assertFalse((base/'migration-terminal.uc').exists());self.assertTrue((base/'migration-state.uc').exists())
  def test_unknown_admission_refuses_before_terminal_transition(self):
   p=self.base/'admission.new';p.write_bytes(b'FOREIGN');p.chmod(0o600)
   self.assertNotEqual(self.runuc('commit_migration(ARGV[0],s,ARGV[1])').returncode,0)
