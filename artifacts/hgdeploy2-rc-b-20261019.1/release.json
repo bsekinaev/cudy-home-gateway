@@ -1,0 +1,21 @@
+{
+  "version": "hgdeploy2-rc-b-20261019.1",
+  "source_commit": "9ea6145768675cc7e8e3dee6b076b4624bebebeb",
+  "merged_commit": "428a99b14f5600d360276589b1761b802254c23a",
+  "pr": 25,
+  "ci": "https://github.com/bsekinaev/cudy-home-gateway/actions/runs/39266541365",
+  "ci_conclusion": "success",
+  "jobs": "11/11",
+  "bundle": "cudy-hgdeploy2-rc-b-9ea6145768675cc7e8e3dee6b076b4624bebebeb.tar.gz",
+  "bundle_sha256": "a4aeea081913cb595e04f3f48e9ac58bf5e2dda774aba68dbe787b162ef71f1a",
+  "owner_script": "owner-b.ps1",
+  "owner_script_sha256": "dc974edb0834c8f701af90609be8544947a3d61afb8f4ca6853d705777fba845",
+  "manifest_sha256": "ad018b4b9e3815dfb5024c731be5ff5900ef39b78dfba490ae8e51da67466d76",
+  "installer_ready": true,
+  "production_go": "NO_GO_UNTIL_OWNER_CONFIRMS_WORKING_RECOVERY_PATH",
+  "READY_FOR_OWNER_MANUAL_MIGRATION": "NO",
+  "owner_production_apply_performed": false,
+  "review": "Codex no-findings +1 reaction on PR, 2026-10-19T14:25:25Z; no formal GitHub approval",
+  "network_configuration_changes": 0,
+  "archive_restore_tested": false
+}
