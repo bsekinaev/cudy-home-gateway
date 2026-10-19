@@ -1,0 +1,19 @@
+#!/bin/sh /etc/rc.common
+# Install only as part of the verified migration control package.
+START=08
+STOP=08
+start() {
+    # No journal means no migration and no new RAM/deployment state.
+    [ -e /etc/home-gateway-migration ] || [ -L /etc/home-gateway-migration ] || return 0
+    if /usr/bin/ucode -e 'import { restore_boot_fence } from "/usr/libexec/home-gateway-deploy/migration-state.uc"; print(restore_boot_fence("",null)+"\n");'; then
+        logger -t home-gateway-migration 'boot admission fence checked'
+    else
+        # Unknown marker/guard/phase must also block the legacy receiver. A
+        # private PID-less directory is an atomic fail-closed fallback. Never
+        # follow, replace or remove an existing (possibly foreign) lock.
+        (umask 077; mkdir /tmp/home-gateway-deploy.lock) 2>/dev/null || :
+        logger -t home-gateway-migration 'BLOCKED: explicit migration recovery required'
+    fi
+    # Gateway failure must not prevent network/data-plane boot.
+    return 0
+}

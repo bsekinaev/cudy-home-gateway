@@ -17,11 +17,15 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # pull_request uses a synthetic merge SHA in github.sha; pin the reviewed head.
+  HG_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   validate:
     name: Validate control plane
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     env:
       # Exact ucode revision validated on the target CUDY/OpenWrt runtime.
@@ -31,8 +35,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ env.HG_CANDIDATE_SHA }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact candidate checkout
+        run: test "$(git rev-parse HEAD)" = "$HG_CANDIDATE_SHA"
 
       - name: Check changed-file whitespace
         shell: bash
@@ -111,12 +118,12 @@ jobs:
           set -euo pipefail
           archive=(dist/*.tar.gz)
           read -r digest _ < "${archive[0]}.sha256"
-          python3 scripts/release/verify.py "${archive[0]}" --commit "$GITHUB_SHA" --sha256 "$digest"
+          python3 scripts/release/verify.py "${archive[0]}" --commit "$HG_CANDIDATE_SHA" --sha256 "$digest"
 
       - name: Upload release bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: home-gateway-${{ github.sha }}
+          name: home-gateway-${{ env.HG_CANDIDATE_SHA }}
           path: dist/
           if-no-files-found: error
           retention-days: 14
@@ -124,13 +131,16 @@ jobs:
   isolated-openwrt:
     name: Networkless OpenWrt procd and reboot smoke
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout immutable candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ env.HG_CANDIDATE_SHA }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact candidate checkout
+        run: test "$(git rev-parse HEAD)" = "$HG_CANDIDATE_SHA"
       - name: Install host VM tools
         run: |
           sudo apt-get update
@@ -152,35 +162,87 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" > vm-report.json || { cat vm-report.json; exit 1; }
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$HG_CANDIDATE_SHA" > vm-report.json || { cat vm-report.json; exit 1; }
           cat vm-report.json
       - name: Run bounded native legacy snapshot scenario
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" --scenario legacy-snapshot > vm-snapshot-report.json || { cat vm-snapshot-report.json; exit 1; }
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$HG_CANDIDATE_SHA" --scenario legacy-snapshot > vm-snapshot-report.json || { cat vm-snapshot-report.json; exit 1; }
           cat vm-snapshot-report.json
       - name: Run bounded native candidate staging scenario
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" --scenario candidate-snapshot > vm-candidate-report.json || { cat vm-candidate-report.json; exit 1; }
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$HG_CANDIDATE_SHA" --scenario candidate-snapshot > vm-candidate-report.json || { cat vm-candidate-report.json; exit 1; }
           cat vm-candidate-report.json
+      - name: Verify native runtime and journal rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$HG_CANDIDATE_SHA" --scenario runtime-cycle > vm-runtime-cycle-report.json || { cat vm-runtime-cycle-report.json; exit 1; }
+          cat vm-runtime-cycle-report.json
       - name: Verify overlay identity across guest reboot and supervised cold boot
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$GITHUB_SHA" --scenario overlay-identity > vm-overlay-report.json || { cat vm-overlay-report.json; exit 1; }
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$HG_CANDIDATE_SHA" --scenario overlay-identity > vm-overlay-report.json || { cat vm-overlay-report.json; exit 1; }
           cat vm-overlay-report.json
       - name: Upload public report only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: isolated-openwrt-${{ github.sha }}
+          name: isolated-openwrt-${{ env.HG_CANDIDATE_SHA }}
           path: |
             vm-report.json
             vm-snapshot-report.json
             vm-candidate-report.json
             vm-overlay-report.json
+            vm-runtime-cycle-report.json
           if-no-files-found: ignore
+          retention-days: 30
+
+  native-crash:
+    name: Native crash recovery (${{ matrix.scenario }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [rc-b-root-cycle, rc-b-crash-apply, rc-b-crash-restore, runtime-crash-apply, runtime-crash-restore, runtime-crash-phase, rc-a-package, control-cycle, service-cycle]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.HG_CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact candidate checkout
+        run: test "$(git rev-parse HEAD)" = "$HG_CANDIDATE_SHA"
+      - name: Install isolated VM tools
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 e2fsprogs
+      - name: Fetch and verify immutable public VM inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir vm-inputs
+          curl --fail --location --retry 3 https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-25.12.5-x86-64-generic-kernel.bin -o vm-inputs/kernel.bin
+          curl --fail --location --retry 3 https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-25.12.5-x86-64-generic-ext4-rootfs.img.gz -o vm-inputs/rootfs.img.gz
+          cp scripts/openwrt/fixtures/packages.adb vm-inputs/packages.adb
+          for name in coreutils-9.9-r2.apk coreutils-base64-9.9-r2.apk coreutils-stat-9.9-r2.apk coreutils-timeout-9.9-r2.apk; do
+            curl --fail --location --retry 3 "https://downloads.openwrt.org/releases/25.12.5/packages/x86_64/packages/$name" -o "vm-inputs/$name"
+          done
+      - name: Run actual SIGKILL and guest reboot recovery
+        shell: bash
+        env:
+          HG_SCENARIO: ${{ matrix.scenario }}
+        run: |
+          set -euo pipefail
+          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$HG_CANDIDATE_SHA" --scenario "$HG_SCENARIO" > vm-crash-report.json || { cat vm-crash-report.json; exit 1; }
+          cat vm-crash-report.json
+      - name: Upload public report only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-crash-${{ matrix.scenario }}-${{ env.HG_CANDIDATE_SHA }}
+          path: vm-crash-report.json
           retention-days: 30

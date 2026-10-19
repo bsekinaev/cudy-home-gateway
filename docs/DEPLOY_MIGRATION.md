@@ -293,3 +293,106 @@ inode, native journal reopen and admission after reboot. Warm virtual hardware
 reset on PC/Q35 still hung and is not reported PASS. This scoped cold boot proof
 is not full migration crash recovery or CUDY overlay acceptance. Production
 migration remains BLOCKED until full coordinator and acceptance gates pass.
+
+## Native file/journal coordinator — PR #25, production blocked
+
+`migration-coordinator.uc` combines preparation, verified publication of23
+runtime/receiver files and a separate HGDEPLOY2 anchor, and explicit restoration
+of the original21 files/latest/legacy journal. The original HGDEPLOY1 journal is
+retained unchanged. A fully verified new anchor must exist before live writes.
+Rollback checks retained legacy journal contents, live drift, owned partial
+staging and restore capacity before changing latest. Failed PREPARING/PREPARED
+preparation aborts without rewriting unchanged live files or their inodes.
+
+Normal `open_state()` still refuses `phase.new`. The disposable-only
+`open_rollback_state()` allows an explicit coordinator rollback to inspect an
+interrupted phase publication. After snapshot/live verification, under the same
+kernel guard and owned fence, a bounded prefix of a legal next phase is archived
+as `phase.interrupted` with checked directory fsync. The interrupted transition
+is never replayed. Unknown contents/metadata, unknown or exhausted incident evidence or
+snapshot/live drift refuse recovery and preserve evidence. A recovery handle
+cannot transition to APPLYING, COMMITTED or ROLLED_BACK. RAM-fence reconstruction
+uses the retained durable identity. No admission is issued.
+
+These entrypoints deliberately reject production root. Full early-boot/control
+installation, Telegram lifecycle verification and terminal admission remain
+mandatory before producing an owner installer. Host SIGKILL at phase.new and
+OpenWrt guest reboot tests must be reported separately; adding a scenario is not
+evidence that it passed. `runtime-crash-phase` runs an actual owned-child SIGKILL
+during phase fsync, then guest reboot/supervised cold boot and explicit rollback
+on the same disposable disk. It does not prove production service/boot guards.
+
+Rollback publication order: retain the migration-aware Telegram init while
+restoring every other legacy runtime/receiver file and removing the two added
+modules. Verify the restored bytes and retained legacy journal before publishing
+the legacy Telegram init last. Otherwise reboot between the first init rename
+and the remaining file restores could start an unguarded legacy service on a
+mixed tree. This ordering supplements, and does not replace, the still-required
+full coordinator quiesce/start/procd verification and early boot guards.
+Apply explicitly publishes the migration-aware init first; a valid manifest or
+receipt may list files in another order. The SIGKILL regression reverses receipt
+entries to verify that startup safety does not depend on insertion order.
+
+Early boot component: `migration-boot.init` is an rc.common START=08 hook intended
+for the full pinned control package, before receiver recovery/Telegram startup.
+`restore_boot_fence()` acquires the existing guard and reconstructs the RAM
+symlink from the durable identity before inspecting pending/corrupt phases. It
+never changes phase or applies/restores files. Terminal release still requires
+the exact nonce/inode-bound admission. If marker/guard is unrecognizable, the
+hook atomically attempts a private PID-less RAM lock directory and preserves
+any existing foreign lock. It returns success to rc.common so Gateway failure
+does not stop network boot; deployment remains blocked for explicit recovery.
+This fallback must never be automatically deleted or adopted by the coordinator.
+The hook is not installed on production and full control-package snapshot/apply
+integration remains required. The isolated phase-crash VM scenario installs an
+adapted real S08 rc.common hook and records fence absence before reconstruction;
+its subsequent result must be checked before claiming target boot-hook PASS.
+
+Latest-pointer staging recovery accepts only bounded prefixes of the two known
+old/new pointer values with exact private metadata. Partial owned staging is
+removed and rewritten under the held guard; unknown bytes refuse before moving
+an anchor or changing latest, including when latest already has the old value.
+CI now selects `github.event.pull_request.head.sha` for pull requests, with
+`github.sha` fallback for other events. Every job checks out that immutable SHA,
+asserts HEAD identity and passes the same SHA to VM/release verification. Earlier
+PR-associated synthetic-merge runs must not be relabelled as exact-head runs;
+local tests on verified identical trees retain their explicitly recorded scope.
+
+### Delivery B component work after owner RC-A acceptance
+
+Owner accepted RC-A source `26bf67104ce9d44ef6ba313964a32283c3c07cd4`
+strictly within ISOLATED_TMP: all five stages passed on CUDY; lab
+`/tmp/hgdeploy2-rc-a.BIBaCJ`, final RESTORING, service lifecycle NOT_TESTED.
+This is not production migration acceptance. Do not clean that owner lab.
+
+Native control publication snapshots the absence of every new control path,
+checks a pinned dependency closure, publishes copied/fsynced files on the state
+filesystem and enables S08 only after the complete closure exists. Unknown
+existing controls, links, metadata, snapshot corruption, foreign staging and
+runtime drift refuse publication/restoration. Runtime18/receiver3 rollback stays
+separate from HGDEPLOY1 journal contents, which remain immutable.
+
+Terminal certification verifies runtime/receiver bytes, the actual published
+HGDEPLOY2 latest/anchor, control bytes and current procd/process identities before
+COMMITTED/admission. Rollback certification requires the exact legacy runtime and
+journal, original service intent and verified control restoration. Recovery keeps
+two pinned control files (`migration-state.uc`, `home-gateway-migration` init) and
+its exact S08 link as necessary deployment state. Removing the early hook before
+a terminal receipt would expose an interrupted rollback to unguarded boot writers.
+The retained recovery footprint must appear in the owner installation plan.
+
+A provisional Telegram start token is explicitly different from terminal
+admission: APPLYING only, exact nonce/guard inode, inherited FD8, owned fence,
+20+3 installed metadata/hashes and the actual HGDEPLOY2 anchor. Ordinary startup,
+boot and deployment recovery cannot use this token. The existing CLOEXEC
+transport-child behavior is preserved; process-stop certification covers named
+procd instances and previously verified worker PID/starttime, not a generic
+process-tree kill. No private state is rewound.
+
+Interrupted phase receipts keep up to eight checked evidence files; they never
+replay an interrupted APPLYING or grant admission. Known partial admission writes
+are archived only after complete live certification. Unknown bytes/metadata and
+an exhausted evidence budget remain blocked. These are component contracts:
+production root remains refused until the complete service handoff, private-state
+preservation, installation entrypoint and full VM crash/reboot acceptance pass.
+No RC-B or production GO is implied by component COMMITTED/ROLLED_BACK tests.
