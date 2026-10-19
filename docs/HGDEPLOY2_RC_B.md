@@ -114,3 +114,22 @@ is foreign: STOP. Preserve session and private evidence; do not change pins,
 force admission, recursively delete test/state directories or use sysupgrade as
 an untested shortcut. A pending Gate is not PASS. Owner LIVE installation and
 private backup restoration remain separate acceptance evidence.
+
+## RC-B 20261019.2: TR3000 memory correction
+
+The model's 256MB suffix is NAND flash, not RAM. Cudy specifies 256 MB NAND
+and 512 MB DDR3: https://www.cudy.com/ru-ru/products/tr3000-256mb-1-0 .
+Owner Preflight evidence: MemTotal=496724 kB, MemFree=207192 kB,
+MemAvailable=253116 kB; 20261019.1 refused before Prepare/Apply and did not
+replace the working installation. That immutable release is unchanged.
+
+Owner admission now accepts Linux MemTotal 450000..524288 kB for this 512 MiB
+RAM class (reserved kernel memory is excluded from MemTotal). The model
+allowlist, OpenWrt 25.12.5, BusyBox 1.37.0 and procd PID1 requirements remain;
+owner hardware also requires mediatek/filogic. The Preflight MemAvailable
+budget remains at least 32768 kB. Missing/malformed fields, other RAM classes,
+models or targets refuse. No production input/environment override exists.
+
+Use a NEW Windows directory/session for 20261019.2. Do not edit/reuse the
+20261019.1 session, pins or uploaded kit. Preserve old evidence; no target
+cleanup, force unlock or manual bypass is required for this Preflight failure.
