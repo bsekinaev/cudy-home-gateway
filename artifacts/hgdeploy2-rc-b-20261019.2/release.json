@@ -1,0 +1,20 @@
+{
+  "version": "20261019.2",
+  "source_commit": "908dd3222b81992d9fee056bd015a1266a0ce8d7",
+  "merge_commit": "3ff6b53cccecf48c55443dce5bc713598b19fc7c",
+  "ci_url": "https://github.com/bsekinaev/cudy-home-gateway/actions/runs/39281114459",
+  "ci_conclusion": "success",
+  "ci_jobs": "11/11",
+  "review_blockers": 0,
+  "installer_ready": true,
+  "production_go": false,
+  "production_go_condition": "Owner confirms working recovery path before Prepare/Apply",
+  "production_operations": 0,
+  "reproducible_build": "PASS",
+  "native_owner_kit_check": "PASS",
+  "hashes": {
+    "cudy-hgdeploy2-rc-b-908dd3222b81992d9fee056bd015a1266a0ce8d7.tar.gz": "d10beec6bc376a819a04e51cff1b4c779f2f0e1dec0412f20b38c6d2100a8f56",
+    "owner-b.ps1": "ac51be175303cbe7a9a9cdf79c64123250066e3929397036d39b3b8a944d6840",
+    "manifest.json": "67b65f1ceabe1534ff74fba8f6c486e9d02bfce9a7e7999875bd11929df467a1"
+  }
+}
