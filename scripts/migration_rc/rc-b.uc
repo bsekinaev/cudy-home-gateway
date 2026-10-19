@@ -9,6 +9,20 @@ import {verify_handoff} from './native/migration-handoff.uc';
 import {inspect_telegram,verify_private_state} from './native/migration-service.uc';
 import {prepare_service_coordinator,apply_service_coordinator,commit_service_coordinator,rollback_service_coordinator,complete_service_rollback,abort_service_preparation,complete_preparation_abort,verify_preparation_abort,resume_service_rollback} from './native/migration-terminal.uc';
 function require(ok,reason) {if(!ok)die('RC_B_REFUSED_'+reason);}
+// Pure hardware predicates, also exercised by native ucode regression tests.
+// TR3000-256MB names NAND capacity, not RAM. Linux MemTotal excludes reserved
+// memory from the physical 512 MiB DDR3 (owner observation: 496724 kB).
+function verify_owner_hardware(board,mem) {
+ require(match(board.model??'',/^Cudy TR3000( 256MB)? v1$/),'TARGET_MODEL');
+ require(board.release?.target=='mediatek/filogic','TARGET_PLATFORM');
+ let amount=match('\n'+mem,/\nMemTotal:[ \t]+([0-9]+) kB\n/);
+ require(amount!=null && +amount[1]>=450000 && +amount[1]<=524288,'TARGET_MEMORY');
+}
+function verify_available_memory(mem) {
+ let available=match('\n'+mem,/\nMemAvailable:[ \t]+([0-9]+) kB\n/);
+ require(available!=null && +available[1]>=32768,'MEMORY_BUDGET');
+}
+// End hardware predicates.
 function quote(s) {return "'"+replace(s,"'","'\\''")+"'";}
 function command(args,limit) {
  let p=fs.popen('/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin '+join(' ',map(args,quote))+' 2>/dev/null','r');require(p!=null,'COMMAND');
@@ -74,14 +88,13 @@ if(vm) {
  for(let net in fs.lsdir('/sys/class/net')??[])require(fs.lstat('/sys/class/net/'+net+'/device')==null,'VM_NETWORK_DEVICE');
 } else {
  let board=command(['ubus','-S','call','system','board'],8192);require(board.code==0,'BOARD');let b=json(board.raw);
- require(match(b.model??'',/^Cudy TR3000( 256MB)? v1$/),'TARGET_MODEL');
- let mem=fs.readfile('/proc/meminfo')??'',amount=match(mem,/MemTotal:\s+([0-9]+) kB/);require(amount!=null && +amount[1]>=200000 && +amount[1]<=300000,'TARGET_MEMORY');
+ verify_owner_hardware(b,fs.readfile('/proc/meminfo')??'');
 }
 if(op=='preflight') {
  require(length(ARGV)==3 && fs.lstat(base)==null,'EXISTING_MIGRATION');
  checked('/etc/home-gateway','directory',0700,0);checked('/etc/home-gateway/secrets','directory',0700,0);
  for(let n in ['telegram.token','telegram.user_id','telegram.chat_id'])require(length(read('/etc/home-gateway/secrets/'+n,0600,8192))>0,'PRIVATE_INPUT');
- let available=match(fs.readfile('/proc/meminfo')??'',/MemAvailable:\s+([0-9]+) kB/);require(available!=null && +available[1]>=32768,'MEMORY_BUDGET');
+ verify_available_memory(fs.readfile('/proc/meminfo')??'');
  let old=command(['timeout','-k','2','90','/bin/sh',kit+'/legacy-preflight.sh','4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e']);require(old.code==0,'LEGACY_BASELINE');
  print('RC_B_PREFLIGHT=PASS SOURCE='+m.source_commit+' SERVICE_INTENT=CHECKED_DURING_PREPARE\n');exit(0);
 }

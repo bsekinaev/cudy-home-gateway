@@ -43,6 +43,19 @@ mkdir -m 700 "$kit"
 tar -xzf /opt/hg-vm-lab/rc-b.tar.gz -C "$kit"
 pin=$(sha256sum "$kit/manifest.json" | cut -d ' ' -f 1)
 source=$(ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$kit/manifest.json")
+# Exercise owner hardware predicates verbatim on real OpenWrt ucode; no
+# production overrides are added and the VM profile remains x86-only.
+printf 'function require(ok,why){if(!ok)die("RC_B_REFUSED_"+why);}' > "$LAB/hardware.uc"
+sed -n '/^function verify_owner_hardware(/,/^\/\/ End hardware predicates./p' "$kit/rc-b.uc" >> "$LAB/hardware.uc"
+cat >> "$LAB/hardware.uc" <<'UC'
+let board={model:ARGV[0],release:{target:ARGV[1]}},mem='MemTotal: '+ARGV[2]+' kB\nMemAvailable: '+ARGV[3]+' kB\n';
+verify_owner_hardware(board,mem);verify_available_memory(mem);print('PASS\n');
+UC
+check owner_memory_regression ucode "$LAB/hardware.uc" 'Cudy TR3000 256MB v1' mediatek/filogic 496724 253116
+check unsupported_model_refused refused ucode "$LAB/hardware.uc" 'Cudy TR3000 v2' mediatek/filogic 496724 253116
+check unsupported_platform_refused refused ucode "$LAB/hardware.uc" 'Cudy TR3000 256MB v1' x86/64 496724 253116
+check wrong_ram_class_refused refused ucode "$LAB/hardware.uc" 'Cudy TR3000 256MB v1' mediatek/filogic 253116 200000
+check insufficient_available_memory_refused refused ucode "$LAB/hardware.uc" 'Cudy TR3000 256MB v1' mediatek/filogic 496724 32767
 check immutable_package "$kit/rc-b.sh" check "$pin"
 check preflight "$kit/rc-b.sh" preflight "$pin"
 check prepare "$kit/rc-b.sh" prepare "$pin"

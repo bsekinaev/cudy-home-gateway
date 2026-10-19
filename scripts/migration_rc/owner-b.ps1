@@ -1,3 +1,4 @@
+# HGDEPLOY2 RC-B 20261019.2 — TR3000 256MB NAND / 512MB DDR3 target fix.
 # Explicit owner stages, Windows PowerShell 5.1 / PowerShell 7. No automatic Apply.
 [CmdletBinding()]
 param(
