@@ -1,5 +1,5 @@
 """Native control publication on real filesystems/processes; production blocked."""
-import hashlib,json,os
+import hashlib,json,os,signal,time,shlex
 from pathlib import Path
 import subprocess,unittest
 import test_native_runtime
@@ -32,6 +32,23 @@ class Controls(unittest.TestCase):
   self.ok('apply_runtime(ARGV[0],s,ARGV[1]);restore_runtime(ARGV[0],s,ARGV[1]);restore_controls(ARGV[0],s,ARGV[1]);restore_controls(ARGV[0],s,ARGV[1])')
   for rel in FILES:self.assertFalse((self.root/rel).exists())
   self.assertFalse((self.root/BOOT).is_symlink());self.fixture.fixture.lab.assert_previous()
+ def test_power_cut_before_s08_never_leaves_legacy_s95_enabled(self):
+  link=self.root/'etc/rc.d/S95home-gateway-telegram';link.symlink_to('../init.d/home-gateway-telegram')
+  self.prepare();ready=self.root/'quarantine-cut';shim=self.root/'fsync-quarantine-cut'
+  shim.write_text('#!/bin/sh\nif [ "$1" = fsync ] && [ "$2" = '+shlex.quote(str(self.root/'etc/rc.d'))+' ] && [ ! -L '+shlex.quote(str(link))+' ];then : > '+shlex.quote(str(ready))+';sleep 30;fi\nexec '+shlex.quote(self.bb)+' "$@"\n');shim.chmod(0o700)
+  code='import {open_state} from '+json.dumps(str(MODULE.with_name('migration-state.uc')))+';import {apply_controls} from '+json.dumps(str(MODULE))+';let s=open_state(ARGV[0],false,ARGV[1]);apply_controls(ARGV[0],s,ARGV[1]);'
+  child=subprocess.Popen(['ucode','-e',code,'--',str(self.root),str(shim)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+  try:
+   deadline=time.monotonic()+10
+   while not ready.exists() and child.poll() is None and time.monotonic()<deadline:time.sleep(.02)
+   self.assertTrue(ready.exists())
+  finally:
+   try:os.killpg(child.pid,signal.SIGKILL)
+   except ProcessLookupError:pass
+   child.communicate(timeout=5)
+  self.assertFalse(link.is_symlink());self.assertFalse((self.root/BOOT).is_symlink())
+  self.ok('apply_controls(ARGV[0],s,ARGV[1]);verify_controls(ARGV[0],s,ARGV[1])')
+  self.assertTrue((self.root/BOOT).is_symlink());self.assertFalse(link.is_symlink())
  def test_unknown_existing_control_refuses_before_snapshot(self):
   p=self.root/next(iter(FILES));p.write_bytes(b'foreign');p.chmod(0o600)
   self.assertNotEqual(self.runuc('prepare_controls(ARGV[0],s,ARGV[1],ARGV[2],ARGV[3])').returncode,0)

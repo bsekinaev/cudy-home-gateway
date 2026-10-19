@@ -56,25 +56,10 @@ printf '%s\n' "$pin" > "$LAB/pin"
 printf '%s\n' "$source" > "$LAB/source"
 printf '%s\n' "$nonce" > "$LAB/nonce"
 cat /proc/sys/kernel/random/boot_id > "$LAB/boot.before"
-cat > "$LAB/fault" <<'FAULT'
-#!/bin/sh
-set -eu
-lab=/etc/hg-vm-lab/rc-b-crash
-[ "$1" = w ] || exit 0
-case "${3:-}" in owner|'') exit 0;;esac
-count=$(cat "$lab/fault.count" 2>/dev/null || echo 0)
-count=$((count+1));printf '%s\n' "$count" > "$lab/fault.count"
-[ "$count" = 2 ] || exit 0
-pid=$(cat "$lab/pid")
-# This PID is the setsid process started below, not a discovered system PID.
-[ -r "/proc/$pid/stat" ] || exit 1
-/bin/busybox kill -STOP "-$pid" || exit 1
-printf 'SIGKILL\n' > "$lab/fired"
-/bin/busybox kill -KILL "-$pid"
-FAULT
-chmod 700 "$LAB/fault"
-/bin/busybox inotifyd "$LAB/fault" /etc/home-gateway-migration/runtime-pending:w &
+/opt/hg-vm-lab/fault-runtime /etc/home-gateway-migration/runtime-pending "$LAB/pid" "$LAB/fired" "$LAB/watcher-ready" &
 watch=$!
+for attempt in 1 2 3 4 5;do [ ! -e "$LAB/watcher-ready" ] || break;sleep 1;done
+check watcher_ready test -f "$LAB/watcher-ready"
 /bin/busybox setsid "$kit/rc-b.sh" apply "$pin" "$nonce" "$source:$nonce" > "$LAB/interrupted-output" 2>&1 &
 pid=$!
 printf '%s\n' "$pid" > "$LAB/pid"

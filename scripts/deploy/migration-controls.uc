@@ -55,7 +55,7 @@ function context(root,state,bb) {
         if(fs.lstat(path)==null)return false;
         let raw=io.read(path,0600,128);
         require(length(raw)<=length(marker) && raw==substr(marker,0,length(raw)),'FOREIGN_QUARANTINE');
-        return true;
+        return raw==marker;
     }
     function boot_preflight(r) {
         telegram_boot(r,true);

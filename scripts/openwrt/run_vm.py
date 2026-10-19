@@ -186,6 +186,11 @@ def inject(image, workspace, commit, packages, scenario):
         setup="    if [ -d /etc/hg-native-snapshot/etc/home-gateway-migration ]; then\n        umask 077\n        mkdir -p /tmp/hg-crash-ram\n        mount --bind /tmp/hg-crash-ram /etc/hg-native-snapshot/tmp || return 1\n        if [ ! -e /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ] && [ ! -L /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ]; then\n            printf 'ABSENT\\n' > /etc/hg-vm-lab/boot-fence-before\n        else printf 'PRESENT\\n' > /etc/hg-vm-lab/boot-fence-before; fi\n        cat /proc/sys/kernel/random/boot_id > /etc/hg-vm-lab/boot-guard.boot\n    fi\n"
         boot=boot.replace('start() {\n','start() {\n'+setup)
         put('/etc/rc.d/S08hg-migration-lab-guard',boot.encode(),0o755)
+    if scenario in ('rc-b-crash-apply','rc-b-crash-restore'):
+        fault=workspace/'fault-runtime.c';fault.write_bytes(git('show',commit+':scripts/openwrt/fault-runtime.c'))
+        binary=workspace/'fault-runtime'
+        subprocess.run(['cc','-static','-O2','-Wall','-Wextra','-Werror','-o',str(binary),str(fault)],check=True,timeout=30)
+        put('/opt/hg-vm-lab/fault-runtime',binary.read_bytes(),0o700)
     if scenario in ('rc-b-root-cycle','rc-b-crash-apply','rc-b-crash-restore'):
         subprocess.run(['python3', str(ROOT / 'scripts/migration_rc/build_b.py'), '--ref', commit,
                         '--output', str(workspace / 'rc-b-package')], check=True, stdout=subprocess.DEVNULL)
