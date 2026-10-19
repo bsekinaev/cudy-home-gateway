@@ -205,11 +205,11 @@ jobs:
   native-crash:
     name: Native crash recovery (${{ matrix.scenario }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
-        scenario: [runtime-crash-apply, runtime-crash-restore, runtime-crash-phase, rc-a-package, control-cycle, service-cycle]
+        scenario: [rc-b-root-cycle, rc-b-crash-apply, rc-b-crash-restore, runtime-crash-apply, runtime-crash-restore, runtime-crash-phase, rc-a-package, control-cycle, service-cycle]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:

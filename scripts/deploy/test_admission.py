@@ -59,7 +59,7 @@ class AdmissionTests(unittest.TestCase):
 
     def test_terminal_gate_refuses_held_coordinator_guard(self):
         import fcntl
-        self.state()
+        self.state("ROLLED_BACK")
         with (self.root / 'etc/home-gateway-migration.lock').open('rb') as guard:
             fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.assertNotEqual(self.run_gate('--telegram-start'), 0)
@@ -70,7 +70,7 @@ class AdmissionTests(unittest.TestCase):
         import json
         import shlex
         import shutil
-        self.state()
+        self.state("ROLLED_BACK")
         self.assertNotEqual(self.run_gate('--telegram-start', '--held-telegram-guard'), 0)
         bb=shutil.which(os.environ.get('HG_TEST_BUSYBOX', 'busybox'))
         command=os.environ.get('HG_TEST_SHELL', '/bin/sh').split()
@@ -85,6 +85,11 @@ class AdmissionTests(unittest.TestCase):
         result=subprocess.run(command + ['-c', body], capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('BUSY', result.stderr)
+
+    def test_committed_telegram_requires_a_published_runtime_journal(self):
+        self.state()
+        self.assertNotEqual(self.run_gate('--telegram-start'),0)
+        self.assertEqual(self.run_gate(),0)  # receiver may create its own lease
 
     def test_missing_state_allows_and_does_not_create_files(self):
         self.assertEqual(self.run_gate(), 0)

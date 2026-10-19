@@ -48,6 +48,9 @@ class Service(unittest.TestCase):
   self.publish({'instance1':self.worker('telegram-poller.uc')});r=self.inspect('legacy');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(len(json.loads(r.stdout)['instances']),1)
  def test_actual_candidate_two_workers(self):
   self.publish({'poller':self.worker('telegram-poller.uc'),'notifications':self.worker('notifications.uc')});r=self.inspect('candidate');self.assertEqual(r.returncode,0,r.stderr)
+ def test_unknown_private_state_override_is_refused(self):
+  r=self.worker('telegram-poller.uc');r['env']={'HG_TELEGRAM_SECRETS_DIR':'/tmp/foreign'};self.publish({'instance1':r})
+  self.assertNotEqual(self.inspect('legacy').returncode,0)
  def test_spoofed_ubus_pid_is_refused(self):
   r=self.worker('telegram-poller.uc');r['pid']=int(Path('/proc/self/stat').read_text().split(' ',1)[0]);self.publish({'instance1':r});self.assertNotEqual(self.inspect('legacy').returncode,0)
 if __name__=='__main__':unittest.main()

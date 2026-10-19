@@ -97,8 +97,11 @@ if (provisional) {
     // migration fence cannot pass this regular directory/regular file check.
 }
 const PATHS=["etc/init.d/home-gateway-telegram", "usr/bin/gateway", "usr/bin/home-gateway-ci-smoke", "usr/lib/home-gateway/actions.uc", "usr/lib/home-gateway/asata.sh", "usr/lib/home-gateway/common.sh", "usr/lib/home-gateway/dns.sh", "usr/lib/home-gateway/doctor.sh", "usr/lib/home-gateway/health.sh", "usr/lib/home-gateway/incidents.uc", "usr/lib/home-gateway/network.sh", "usr/lib/home-gateway/notifications.uc", "usr/lib/home-gateway/redmi.sh", "usr/lib/home-gateway/selftest.sh", "usr/lib/home-gateway/status.sh", "usr/lib/home-gateway/tailscale.sh", "usr/lib/home-gateway/telegram-poller.uc", "usr/lib/home-gateway/telegram.sh", "usr/lib/home-gateway/torrent.sh", "usr/lib/home-gateway/vpn.sh"];
-if(provisional) {
-    require(read(BASE+'/service-check',128)=='HG_MIGRATION_SERVICE_CHECK_V1 '+trim(substr(marker,length('HG_MIGRATION_STATE_V1 ')))+' '+identity.inode+'\n');
+let native_id='tx.m'+substr(replace(trim(substr(marker,22)),'-',''),0,24);
+let native_terminal=scope=='telegram' && phase=='COMMITTED' && fs.lstat(root+'/etc/home-gateway-deploy/active')==null &&
+    read(root+'/etc/home-gateway-deploy/latest',40)==native_id+'\n';
+if(provisional || native_terminal) {
+    if(provisional)require(read(BASE+'/service-check',128)=='HG_MIGRATION_SERVICE_CHECK_V1 '+trim(substr(marker,length('HG_MIGRATION_STATE_V1 ')))+' '+identity.inode+'\n');
     require(fs.lstat(BASE+'/service-check.new')==null && fs.lstat(BASE+'/latest.pending')==null);
     let records=split(read(BASE+'/candidate/migration.sha256',8192),'\n');require(pop(records)=='' && length(records)==23);
     let receivers=['usr/libexec/home-gateway-deploy/engine.sh','usr/libexec/home-gateway-deploy/wrapper.sh','etc/init.d/home-gateway-deploy-recover'],seen={};
@@ -114,7 +117,7 @@ if(provisional) {
     require(type(plan)=='object' && join(',',sort(keys(plan)))=='commit,format,manifest_sha256,marker,was_running' &&
         plan.format=='HG_NATIVE_COORDINATOR_V1' && plan.marker==marker &&
         match(plan.commit,/^[0-9a-f]{40}$/) && match(plan.manifest_sha256,/^[0-9a-f]{64}$/) &&
-        type(plan.was_running)=='int' && plan.was_running==1);
+        type(plan.was_running)=='int' && (plan.was_running==0 || plan.was_running==1) && (!provisional || plan.was_running==1));
     require(fs.lstat(BASE+'/coordinator.json.new')==null && fs.lstat(BASE+'/coordinator.publish-pending')==null);
     let hash=fs.popen('timeout -k 2 10 sha256sum '+quote(BASE+'/candidate/migration.sha256')+' 2>/dev/null','r');require(hash!=null);
     let pin=hash.read(1025);require(hash.close()==0 && pin==plan.manifest_sha256+'  '+BASE+'/candidate/migration.sha256\n');
@@ -158,18 +161,20 @@ if(provisional) {
     let manifest=join('',map(sort([...PATHS]),p=>candidate[p]+'  '+p+'\n'));
     require(read(anchor+'/new.sha256',8192)==manifest && read(anchor+'/backup.sha256',8192)==manifest &&
         read(anchor+'/phase',16)=='COMMITTED\n' && read(anchor+'/inventory-version',16)=='HGDEPLOY2\n' &&
-        read(anchor+'/commit',41)==plan.commit+'\n' && read(anchor+'/was-running',2)=='1\n');
-    print('MIGRATION_ADMISSION=SERVICE_CHECK_ONLY\n');exit(0);
+        read(anchor+'/commit',41)==plan.commit+'\n' && read(anchor+'/was-running',2)==plan.was_running+'\n');
+    print(provisional?'MIGRATION_ADMISSION=SERVICE_CHECK_ONLY\n':'MIGRATION_ADMISSION=ADMITTED\n');exit(0);
 }
 if (scope == 'telegram') {
     const DEPLOY=root + '/etc/home-gateway-deploy';
-    if (fs.lstat(DEPLOY + '/active') != null) {
+    let active=fs.lstat(DEPLOY + '/active') != null;
+    if (active || phase=='COMMITTED') {
         checked(DEPLOY, 'directory', 0700, 0);
-        raw=read(DEPLOY + '/active', 40); let id=trim(raw);
+        raw=read(DEPLOY + (active?'/active':'/latest'), 40); let id=trim(raw);
         require(match(id, /^tx\.[a-zA-Z0-9]{1,32}$/) && raw == id + '\n');
         let tx=DEPLOY + '/' + id; checked(tx, 'directory', 0700, 0);
         raw=read(tx + '/phase', 16); let stage=trim(raw);
-        require(raw == stage + '\n' && index([ 'CHECKING', 'COMMITTED', 'RESTORED' ], stage) >= 0);
+        require(raw == stage + '\n' && (active ? index([ 'CHECKING', 'COMMITTED', 'RESTORED' ], stage) >= 0 : stage=='COMMITTED'));
+        if(!active)require(pid==null && fs.lstat(DEPLOY+'/active.new')==null && fs.lstat(DEPLOY+'/latest.new')==null);
         require(read(tx + '/inventory-version', 10) == 'HGDEPLOY2\n');
         let manifest=tx + (stage == 'RESTORED' ? '/backup.sha256' : '/new.sha256');
         let bytes=read(manifest, 8192), rows=split(bytes, '\n');
@@ -184,6 +189,32 @@ if (scope == 'telegram') {
         // within rc.common's startup budget on the actual target.
         let hash=fs.popen('cd ' + quote(root || '/') + ' && timeout -k 2 10 sha256sum -c ' + quote(manifest) + ' >/dev/null 2>&1', 'r');
         require(hash != null && hash.close() == 0);
+        if(!active) {
+            // A newer HG2 deployment may supersede the native anchor. Verify
+            // its current manifest and rollback backup, while receivers remain
+            // bound to the original candidate (CD only writes runtime files).
+            let backup=split(read(tx+'/backup.sha256',8192),'\n'),seen={};
+            require(pop(backup)=='' && length(backup)==20);
+            for(let row in backup) {
+                let rel=substr(row,66);require(substr(row,64,2)=='  ' && match(substr(row,0,64),/^[0-9a-f]{64}$/) && index(PATHS,rel)>=0 && !seen[rel]);seen[rel]=true;
+                checked(tx+'/backup/'+rel,'file',index(PATHS,rel)<3?0755:0644,262144);
+            }
+            require(command(['/bin/sh','-c','cd '+quote(tx+'/backup')+' && timeout -k 2 10 sha256sum -c '+quote(tx+'/backup.sha256')+' >/dev/null 2>&1'])==0);
+            let plan=json(read(BASE+'/coordinator.json',1024)),records=split(read(BASE+'/candidate/migration.sha256',8192),'\n');
+            require(plan.format=='HG_NATIVE_COORDINATOR_V1' && plan.marker==marker && match(plan.manifest_sha256,/^[0-9a-f]{64}$/) && pop(records)=='' && length(records)==23);
+            let hash=fs.popen('timeout -k 2 10 sha256sum '+quote(BASE+'/candidate/migration.sha256'),'r');require(hash!=null);
+            let pin=hash.read(1025);require(hash.close()==0 && pin==plan.manifest_sha256+'  '+BASE+'/candidate/migration.sha256\n');
+            let receivers=['usr/libexec/home-gateway-deploy/engine.sh','usr/libexec/home-gateway-deploy/wrapper.sh','etc/init.d/home-gateway-deploy-recover'],found={};
+            for(let row in records) {
+                let rel=substr(row,66);if(index(receivers,rel)<0)continue;
+                require(!found[rel] && substr(row,64,2)=='  ' && match(substr(row,0,64),/^[0-9a-f]{64}$/));found[rel]=true;
+                checked(root+'/'+rel,'file',index(receivers,rel)<2?0700:0755,262144);
+                hash=fs.popen('timeout -k 2 10 sha256sum '+quote(root+'/'+rel),'r');require(hash!=null);
+                let digest=hash.read(1025);require(hash.close()==0 && digest==substr(row,0,64)+'  '+root+'/'+rel+'\n');
+            }
+            require(length(keys(found))==3);
+            let library=fs.lsdir(root+'/usr/lib/home-gateway');require(library!=null && length(library)==17 && length(filter(library,n=>index(PATHS,'usr/lib/home-gateway/'+n)>=0))==17);
+        }
         if (pid != null) require(command([ '/bin/kill', '-0', pid ]) == 0);
     } else require(pid == null);
 }

@@ -22,7 +22,7 @@ const TELEGRAM_BOOT='etc/rc.d/S95home-gateway-telegram', TELEGRAM_TARGET='../ini
 function require(ok,why) { if(!ok)die('MIGRATION_CONTROLS_'+why); }
 function context(root,state,bb) {
     // Remove only after the complete production coordinator is accepted.
-    require(type(root)=='string' && root!='','PRODUCTION_NOT_ACCEPTED');
+    require(type(root)=='string' && (root!='' || (type(state.assert_delivery)=='function' && state.assert_delivery())),'PRODUCTION_NOT_ACCEPTED');
     let io=snapshot_io(root,state,bb);
     function parent(rel) {
         let p=replace(root+'/'+rel,/\/[^/]+$/,''),a=fs.lstat(p),b=fs.lstat(io.BASE);
@@ -50,7 +50,21 @@ function context(root,state,bb) {
         io.checked(path,'link',0777,0);
         require(st.nlink==1 && allow_enabled && r.telegram_boot==TELEGRAM_TARGET && fs.readlink(path)==TELEGRAM_TARGET,'TELEGRAM_BOOT');
     }
+    function quarantine_intent(r) {
+        let path=io.BASE+'/telegram-boot-quarantine',marker=io.read(io.BASE+'/marker',0600,128);
+        if(fs.lstat(path)==null)return false;
+        let raw=io.read(path,0600,128);
+        require(length(raw)<=length(marker) && raw==substr(marker,0,length(raw)),'FOREIGN_QUARANTINE');
+        return true;
+    }
+    function boot_preflight(r) {
+        telegram_boot(r,true);
+        let owned=quarantine_intent(r);
+        require(r.telegram_boot=='ABSENT' || fs.lstat(root+'/'+TELEGRAM_BOOT)!=null || owned,'MISSING_ORIGINAL_TELEGRAM_BOOT');
+        return owned;
+    }
     function live(r,complete) {
+        boot_preflight(r);
         telegram_boot(r,!complete || index(['COMMITTED','ROLLED_BACK'],state.phase())>=0);
         for(let rel in keys(FILES)) {
             parent(rel);
@@ -76,7 +90,7 @@ function context(root,state,bb) {
         }
         return p;
     }
-    return {io,parent,file,receipt,live,pending,telegram_boot};
+    return {io,parent,file,receipt,live,pending,telegram_boot,quarantine_intent,boot_preflight};
 }
 export function prepare_controls(root,state,bb,source,pin) {
     require(state.phase()=='PREPARING','PHASE');let c=context(root,state,bb),io=c.io;
@@ -122,6 +136,19 @@ export function prepare_controls(root,state,bb,source,pin) {
     require(fs.rename(io.BASE+'/controls.json.new',io.BASE+'/controls.json'),'PUBLISH');io.sync([io.BASE]);
     c.receipt();return receipt;
 };
+export function preflight_telegram_boot(root,state,bb) {
+    let c=context(root,state,bb);c.boot_preflight(c.receipt());return true;
+};
+export function quarantine_telegram_boot(root,state,bb) {
+    let c=context(root,state,bb),r=c.receipt();c.boot_preflight(r);
+    let path=c.io.BASE+'/telegram-boot-quarantine',marker=c.io.read(c.io.BASE+'/marker',0600,128);
+    if(fs.lstat(path)!=null && c.io.read(path,0600,128)!=marker) {
+        require(fs.unlink(path),'QUARANTINE');c.io.sync([c.io.BASE]);
+    }
+    if(fs.lstat(path)==null)c.io.write(path,marker,0600);
+    if(fs.lstat(root+'/'+TELEGRAM_BOOT)!=null) {require(fs.unlink(root+'/'+TELEGRAM_BOOT),'TELEGRAM_BOOT');c.io.sync([c.parent(TELEGRAM_BOOT)]);}
+    c.telegram_boot(r,false);return true;
+};
 export function apply_controls(root,state,bb) {
     require(state.phase()=='PREPARED','PHASE');let c=context(root,state,bb),r=c.receipt(),p=c.pending(r);
     c.live(r,false);let bytes=0;for(let rel in keys(FILES))bytes+=fs.lstat(c.io.BASE+'/controls/'+rel).size;c.io.space(bytes);
@@ -132,12 +159,10 @@ export function apply_controls(root,state,bb) {
         let stage=p+'/'+replace(rel,'/','_');c.io.write(stage,c.io.read(c.io.BASE+'/controls/'+rel,FILES[rel],262144),FILES[rel]);
         c.file(stage,r.files[rel]);require(fs.rename(stage,root+'/'+rel),'RENAME');c.io.sync([c.parent(rel),p]);c.file(root+'/'+rel,r.files[rel]);
     }
-    // Enable early boot only after its complete dependency closure is durable.
+    // Quarantine the old boot path first: a power cut must never expose
+    // S08 together with the original unguarded S95 service.
+    quarantine_telegram_boot(root,state,bb);
     if(fs.lstat(root+'/'+BOOT)==null) { require(fs.symlink(TARGET,root+'/'+BOOT),'BOOT_LINK');c.io.sync([c.parent(BOOT)]); }
-    // Suppress legacy autostart before ANY runtime switch. Restore the
-    // original enablement only after a verified terminal admission exists.
-    c.telegram_boot(r,true);
-    if(fs.lstat(root+'/'+TELEGRAM_BOOT)!=null) {require(fs.unlink(root+'/'+TELEGRAM_BOOT),'TELEGRAM_BOOT');c.io.sync([c.parent(TELEGRAM_BOOT)]);}
     c.live(r,true);return true;
 };
 export function verify_controls(root,state,bb) { let c=context(root,state,bb);c.live(c.receipt(),true);return true; };
@@ -169,11 +194,6 @@ export function restore_controls(root,state,bb,keep_recovery) {
     return verify_restored_controls(root,state,bb,keep_recovery);
 };
 
-export function quarantine_telegram_boot(root,state,bb) {
-    let c=context(root,state,bb),r=c.receipt();c.telegram_boot(r,true);
-    if(fs.lstat(root+'/'+TELEGRAM_BOOT)!=null) {require(fs.unlink(root+'/'+TELEGRAM_BOOT),'TELEGRAM_BOOT');c.io.sync([c.parent(TELEGRAM_BOOT)]);}
-    c.telegram_boot(r,false);return true;
-};
 export function restore_telegram_boot(root,state,bb) {
     let c=context(root,state,bb),r=c.receipt(),phase=state.phase(),marker=c.io.read(c.io.BASE+'/marker',0600,128),
         lock=c.io.checked(root+'/etc/home-gateway-migration.lock','file',0600,0);
@@ -183,6 +203,9 @@ export function restore_telegram_boot(root,state,bb) {
     if(r.telegram_boot==TELEGRAM_TARGET && fs.lstat(root+'/'+TELEGRAM_BOOT)==null) {
         require(fs.symlink(TELEGRAM_TARGET,root+'/'+TELEGRAM_BOOT),'TELEGRAM_BOOT');c.io.sync([c.parent(TELEGRAM_BOOT)]);
     }
+    // Once original enablement is durable, absence is no longer owned.
+    let intent=c.io.BASE+'/telegram-boot-quarantine';
+    if(fs.lstat(intent)!=null) {c.quarantine_intent(r);require(fs.unlink(intent),'QUARANTINE');c.io.sync([c.io.BASE]);}
     return true;
 };
 export function finalize_restored_controls(root,state,bb) {
@@ -203,4 +226,14 @@ export function verify_unpublished_controls(root,state,bb) {
     // Native prepare never changes this original enablement. Unknown links
     // still refuse; no partial control/private snapshot is consumed or erased.
     c.telegram_boot({telegram_boot:TELEGRAM_TARGET},true);return true;
+};
+
+export function verify_telegram_boot(root,state,bb,restored) {
+    require(type(restored)=='bool','BOOT_SCOPE');let c=context(root,state,bb),r=c.receipt();c.telegram_boot(r,restored);
+    require((fs.lstat(root+'/'+TELEGRAM_BOOT)!=null)==(restored && r.telegram_boot==TELEGRAM_TARGET),'BOOT_ENABLEMENT');return true;
+};
+export function verify_final_controls(root,state,bb) {
+    require(state.phase()=='ROLLED_BACK','PHASE');verify_restored_controls(root,state,bb,true);
+    for(let rel in keys(FILES))if(index(KEEP,rel)<0)require(fs.lstat(root+'/'+rel)==null,'CLEANUP_INCOMPLETE');
+    verify_telegram_boot(root,state,bb,true);return true;
 };

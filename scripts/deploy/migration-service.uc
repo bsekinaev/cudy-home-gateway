@@ -25,6 +25,7 @@ export function inspect_telegram(root,state,expected) {
         let service=all['home-gateway-telegram'];
         if(service==null)return {};
         require(type(service)=='object' && (service.instances==null || type(service.instances)=='object'),'UBUS');
+        require(service.triggers==null || (type(service.triggers)=='array' && length(service.triggers)==0),'SERVICE_TRIGGERS');
         return service.instances??{};
     }
     let instances=query(),names=sort(keys(instances)),wanted=expected=='stopped'?0:expected=='legacy'?1:2;
@@ -33,7 +34,17 @@ export function inspect_telegram(root,state,expected) {
     if(expected=='candidate' || expected=='quiesce')push(allowed,prefix+'/usr/lib/home-gateway/notifications.uc');
     let seen={},proof=[];
     for(let name in names) {
-        let instance=instances[name],pid=instance?.pid,cmd=instance?.command;
+        let instance=instances[name],pid=instance?.pid,cmd=instance?.command,env=instance?.env??{};
+        require(type(env)=='object','SERVICE_ENV');
+        let allowed_env={HG_LIBDIR:prefix+'/usr/lib/home-gateway',HG_TELEGRAM_SECRETS_DIR:prefix+'/etc/home-gateway/secrets',
+            HG_TELEGRAM_RUNTIME_DIR:prefix+'/tmp/home-gateway',HG_TELEGRAM_TOKEN_FILE:prefix+'/etc/home-gateway/secrets/telegram.token',
+            HG_NOTIFICATION_STATE_DIR:prefix+'/etc/home-gateway/state',HG_NOTIFICATION_RUNTIME_DIR:prefix+'/tmp/home-gateway',
+            HG_NOTIFICATION_SECRETS_DIR:prefix+'/etc/home-gateway/secrets',HG_INCIDENT_STATE_DIR:prefix+'/etc/home-gateway/state',
+            HG_INCIDENT_RUNTIME_DIR:prefix+'/tmp/home-gateway'};
+        require(root!='' || length(keys(env))==0,'SERVICE_ENV');
+        for(let key in keys(env))require(allowed_env[key]!=null && env[key]==allowed_env[key],'SERVICE_ENV');
+        let respawn=instance?.respawn;
+        if(root=='' || respawn!=null)require(type(respawn)=='object' && respawn.threshold==3600 && respawn.timeout==5 && respawn.retry==5,'RESPAWN');
         require(match(name,/^[A-Za-z0-9_-]{1,64}$/) && (instance.running==true || expected=='quiesce') && type(cmd)=='array' && length(cmd)==4 &&
             cmd[0]==prefix+'/usr/bin/ucode' && index(allowed,cmd[1])>=0 && !seen[cmd[1]] && cmd[2]==prefix+'/usr/bin/gateway' && cmd[3]=='loop','COMMAND');
         seen[cmd[1]]=true;
@@ -91,10 +102,9 @@ const PRIVATE=['etc/home-gateway/secrets/telegram.token','etc/home-gateway/secre
     'etc/home-gateway/secrets/telegram.chat_id','tmp/home-gateway/telegram.offset','tmp/home-gateway/telegram.callback'];
 function private_context(root,state,bb,label) {
     require(index(['prepare','apply','rollback'],label)>=0,'PRIVATE_LABEL');
-    let io=snapshot_io(root,state,bb),base=io.BASE+'/private-'+label;
-    io.checked(root+'/etc/home-gateway','directory',0700,0);
-    io.checked(root+'/etc/home-gateway/secrets','directory',0700,0);
-    return {io,base};
+    let io=snapshot_io(root,state,bb),name='private-'+label;
+    io.checked(root+'/etc/home-gateway','directory',0700,0);io.checked(root+'/etc/home-gateway/secrets','directory',0700,0);
+    return {io,base:io.BASE+'/'+name,record:io.BASE+'/'+name+'.json',name};
 }
 function private_inventory(c,root,records,partial) {
     let actual=[],dirs=0;
@@ -104,14 +114,17 @@ function private_inventory(c,root,records,partial) {
         for(let name in names) {
             let rel=prefix?prefix+'/'+name:name;
             require(length(filter(PRIVATE,p=>p==rel || index(p,rel+'/')==0))>0,'PRIVATE_INVENTORY');
+            if(!partial)require(length(filter(keys(records),p=>records[p]!=null && (p==rel || index(p,rel+'/')==0)))>0,'PRIVATE_INVENTORY');
             if(fs.lstat(path+'/'+name)?.type=='directory')walk(path+'/'+name,rel);
             else {
                 require(index(PRIVATE,rel)>=0,'PRIVATE_INVENTORY');let raw=c.io.read(path+'/'+name,0600,8192);
-                if(partial) {
-                    let st=fs.lstat(root+'/'+rel);require(st!=null && (st.mode==0600 || (index(rel,'tmp/')==0 && st.mode==0644)),'PRIVATE_UNKNOWN_PENDING');
-                    let live=c.io.read(root+'/'+rel,st.mode,8192);
+                if(partial && index(rel,'etc/')==0) {
+                    let live=c.io.read(root+'/'+rel,0600,8192);
                     require(length(raw)<=length(live) && raw==substr(live,0,length(raw)),'PRIVATE_UNKNOWN_PENDING');
-                } else require(records[rel]!=null,'PRIVATE_INVENTORY');
+                }
+                // Abandoned volatile copies are bounded opaque evidence only.
+                // They are NEVER adopted, restored, deleted or used to grant
+                // admission. A retry captures current live data in a fresh slot.
                 push(actual,rel);
             }
         }
@@ -119,22 +132,31 @@ function private_inventory(c,root,records,partial) {
     if(fs.lstat(c.base)!=null)walk(c.base,'');
     if(!partial)require(length(actual)==length(filter(keys(records),p=>records[p]!=null)),'PRIVATE_INVENTORY');
 }
+export function private_live_state(root,state,bb) {
+    let c=private_context(root,state,bb,'rollback'),files={},paths=[];
+    for(let rel in PRIVATE) {
+        let st=fs.lstat(root+'/'+rel),secret=index(rel,'etc/')==0;
+        if(st==null) {require(!secret,'PRIVATE_MISSING');files[rel]=null;continue;}
+        require(st.mode==0600 || (!secret && st.mode==0644),'PRIVATE_MODE');c.io.read(root+'/'+rel,st.mode,8192);
+        files[rel]={mode:st.mode};push(paths,root+'/'+rel);
+    }
+    let hashes=c.io.hashes(paths);for(let rel in PRIVATE)if(files[rel]!=null)files[rel].sha256=hashes[root+'/'+rel];
+    return files;
+};
 export function verify_private_state(root,state,bb,label,after_start) {
-    require(type(after_start)=='bool','PRIVATE_SCOPE');let c=private_context(root,state,bb,label);
-    require(fs.lstat(c.base+'.json.new')==null,'PRIVATE_PARTIAL');
-    let r=json(c.io.read(c.base+'.json',0600,4096));
-    require(type(r)=='object' && join(',',sort(keys(r)))=='files,format,marker' && r.format=='HG_PRIVATE_CHECKPOINT_V1' &&
+    require(type(after_start)=='bool','PRIVATE_SCOPE');let c=private_context(root,state,bb,label),r=json(c.io.read(c.record,0600,4096));
+    require(type(r)=='object' && join(',',sort(keys(r)))=='files,format,marker,storage' && r.format=='HG_PRIVATE_CHECKPOINT_V2' &&
         r.marker==c.io.read(c.io.BASE+'/marker',0600,128) && type(r.files)=='object' && join(',',sort(keys(r.files)))==join(',',sort([...PRIVATE])),'PRIVATE_RECEIPT');
-    private_inventory(c,root,r.files,false);
+    let choices=label=='rollback'?map([0,1,2,3,4,5,6,7],i=>c.name+(i?'.'+i:'')):[c.name];
+    require(index(choices,r.storage)>=0,'PRIVATE_STORAGE');
+    let suffix=substr(r.storage,length(c.name));c.base=c.io.BASE+'/'+r.storage;
+    require(fs.lstat(c.record+'.new'+suffix)==null,'PRIVATE_PARTIAL');private_inventory(c,root,r.files,false);
     for(let rel in PRIVATE) {
         let rec=r.files[rel],secret=index(rel,'etc/')==0;
         if(rec!=null) {
-            require(type(rec)=='object' && join(',',sort(keys(rec)))=='mode,sha256' &&
-                (rec.mode==0600 || (!secret && rec.mode==0644)) && match(rec.sha256,/^[0-9a-f]{64}$/),'PRIVATE_RECEIPT');
+            require(type(rec)=='object' && join(',',sort(keys(rec)))=='mode,sha256' && (rec.mode==0600 || (!secret && rec.mode==0644)) && match(rec.sha256,/^[0-9a-f]{64}$/),'PRIVATE_RECEIPT');
             c.io.read(c.base+'/'+rel,0600,8192);require(c.io.hashes([c.base+'/'+rel])[c.base+'/'+rel]==rec.sha256,'PRIVATE_SNAPSHOT');
         } else require(!secret,'PRIVATE_MISSING');
-        // Running workers legitimately advance volatile state; never restore
-        // an old offset or callback (which would replay processed updates).
         if(after_start && !secret)continue;
         if(rec==null)require(fs.lstat(root+'/'+rel)==null,'PRIVATE_DRIFT');
         else {c.io.read(root+'/'+rel,rec.mode,8192);require(c.io.hashes([root+'/'+rel])[root+'/'+rel]==rec.sha256,'PRIVATE_DRIFT');}
@@ -142,35 +164,29 @@ export function verify_private_state(root,state,bb,label,after_start) {
     return true;
 };
 export function capture_private_state(root,state,bb,label) {
-    inspect_telegram(root,state,label=='prepare'?'initial':'stopped');let c=private_context(root,state,bb,label),files={};
-    require(fs.lstat(c.base+'.json')==null,'PRIVATE_NO_REPLAY');
-    require(label=='rollback' || (fs.lstat(c.base+'.json.new')==null && fs.lstat(c.base)==null),'PRIVATE_PARTIAL');
-    if(label=='rollback')private_inventory(c,root,null,true);
+    inspect_telegram(root,state,label=='prepare'?'initial':'stopped');let c=private_context(root,state,bb,label),files={},suffix='';
+    require(fs.lstat(c.record)==null,'PRIVATE_NO_REPLAY');
+    if(label=='rollback') {
+        let selected=null,original=c.base;
+        // Eight bounded attempts, preserving interrupted copies verbatim. No
+        // replay of a stale offset after reboot or of a newer callback state.
+        for(let i=0;i<8;i++) {
+            let tail=i?'.'+i:'',path=original+tail,pending=c.record+'.new'+tail;
+            if(fs.lstat(path)!=null) {private_inventory({...c,base:path},root,null,true);if(fs.lstat(pending)!=null)c.io.read(pending,0600,4096);}
+            else {require(fs.lstat(pending)==null,'PRIVATE_UNKNOWN_PENDING');if(selected==null)selected=tail;}
+        }
+        require(selected!=null,'PRIVATE_EVIDENCE_LIMIT');suffix=selected;c.base=original+suffix;
+    } else require(fs.lstat(c.record+'.new')==null && fs.lstat(c.base)==null,'PRIVATE_PARTIAL');
     let total=0;
     for(let rel in PRIVATE) {
         let path=root+'/'+rel,st=fs.lstat(path),secret=index(rel,'etc/')==0;
         if(label=='prepare' && !secret) {files[rel]=null;continue;}
         if(st==null) {require(!secret,'PRIVATE_MISSING');files[rel]=null;continue;}
         require(st.mode==0600 || (!secret && st.mode==0644),'PRIVATE_MODE');
-        let raw=c.io.read(path,st.mode,8192);total+=length(raw);require(total<=32768,'PRIVATE_BUDGET');
-        c.io.space(total);
-        let saved=c.base+'/'+rel;
-        if(fs.lstat(saved)!=null) {
-            require(label=='rollback','PRIVATE_PARTIAL');let partial=c.io.read(saved,0600,8192);
-            require(length(partial)<=length(raw) && partial==substr(raw,0,length(partial)),'PRIVATE_UNKNOWN_PENDING');
-            if(partial!=raw) {require(fs.unlink(saved),'PRIVATE_UNLINK');c.io.sync([replace(saved,/\/[^/]+$/,'')]);}
-        }
-        if(fs.lstat(saved)==null)c.io.write(saved,raw,0600);
-        files[rel]={mode:st.mode,sha256:c.io.hashes([c.base+'/'+rel])[c.base+'/'+rel]};
+        let raw=c.io.read(path,st.mode,8192);total+=length(raw);require(total<=32768,'PRIVATE_BUDGET');c.io.space(total);
+        c.io.write(c.base+'/'+rel,raw,0600);files[rel]={mode:st.mode,sha256:c.io.hashes([c.base+'/'+rel])[c.base+'/'+rel]};
     }
-    let record={format:'HG_PRIVATE_CHECKPOINT_V1',marker:c.io.read(c.io.BASE+'/marker',0600,128),files};
-    let pending=c.base+'.json.new',raw=sprintf('%J\n',record);
-    if(fs.lstat(pending)!=null) {
-        require(label=='rollback','PRIVATE_PARTIAL');let partial=c.io.read(pending,0600,4096);
-        require(length(partial)<=length(raw) && partial==substr(raw,0,length(partial)),'PRIVATE_UNKNOWN_PENDING');
-        if(partial!=raw) {require(fs.unlink(pending),'PRIVATE_UNLINK');c.io.sync([c.io.BASE]);}
-    }
-    if(fs.lstat(pending)==null)c.io.write(pending,raw,0600);
-    require(fs.rename(c.base+'.json.new',c.base+'.json'),'PRIVATE_PUBLISH');c.io.sync([c.io.BASE]);
+    let record={format:'HG_PRIVATE_CHECKPOINT_V2',marker:c.io.read(c.io.BASE+'/marker',0600,128),storage:c.name+suffix,files},pending=c.record+'.new'+suffix;
+    c.io.write(pending,sprintf('%J\n',record),0600);require(fs.rename(pending,c.record),'PRIVATE_PUBLISH');c.io.sync([c.io.BASE]);
     verify_private_state(root,state,bb,label,label=='prepare');return true;
 };

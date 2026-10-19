@@ -15,13 +15,15 @@ const TRANSITIONS = {
     RESTORING: [ 'ROLLED_BACK' ], ROLLED_BACK: [],
 };
 
-export function open_state(root, create, test_busybox, rollback_only, boot_only, borrowed_guard) {
+export function open_state(root, create, test_busybox, rollback_only, boot_only, borrowed_guard, delivery_guard) {
+    require(delivery_guard==null || type(delivery_guard)=='function','DELIVERY_BOUNDARY');
+    require(delivery_guard==null || (root=='' && borrowed_guard==true && delivery_guard()=='HGDEPLOY2_DELIVERY_B_V1'),'DELIVERY_BOUNDARY');
     require(borrowed_guard==null || borrowed_guard==true, 'BORROW_MODE');
-    require(!borrowed_guard || (!boot_only && !rollback_only), 'BORROW_MODE');
+    require(!borrowed_guard || (!boot_only && (!rollback_only || delivery_guard!=null)), 'BORROW_MODE');
     require(boot_only==null || boot_only==true, 'BOOT_MODE');
     require(!boot_only || (!create && !rollback_only), 'BOOT_MODE');
     require(rollback_only==null || rollback_only==true, 'RECOVERY_MODE');
-    require(!rollback_only || (root!=null && root!='' && !create), 'RECOVERY_NOT_ACCEPTED');
+    require(!rollback_only || (root!=null && (root!='' || delivery_guard!=null) && !create), 'RECOVERY_NOT_ACCEPTED');
     root ??= '';
     require(type(root) == 'string' && (root == '' ||
         (match(root, /^\/[A-Za-z0-9_.\/-]+$/) && root != '/' &&
@@ -155,13 +157,8 @@ export function open_state(root, create, test_busybox, rollback_only, boot_only,
         let st = fs.lstat(RAM);
         require(st?.type == 'link' && st.nlink == 1 && st.uid == owner && st.gid == group && fs.readlink(RAM) == FENCE, 'FOREIGN_FENCE');
     }
-    return {
-        close: function() { guard.close(); },
-        assert_root: function(expected) { require(expected == root, 'ROOT_MISMATCH'); held_guard(); },
-        phase,
-        recover_rollback_phase: function() {
-            held_guard(); owned_fence();
-            if(fs.lstat(BASE+'/phase.new')==null)return;
+    function pending_rollback_phase() {
+            if(fs.lstat(BASE+'/phase.new')==null)return null;
             require(rollback_only, 'EXPLICIT_RECOVERY_REQUIRED');
             let current=phase();
             require(index(['PREPARING','PREPARED','APPLYING','COMMITTED','RESTORING'],current)>=0, 'RECOVERY_PHASE');
@@ -179,6 +176,17 @@ export function open_state(root, create, test_busybox, rollback_only, boot_only,
                     length(prior)<=length(p+'\n') && prior==substr(p+'\n',0,length(prior))))>0,'UNKNOWN_RECOVERY_EVIDENCE');
             }
             require(target!=null, 'RECOVERY_EVIDENCE_LIMIT');
+            return {target};
+    }
+    return {
+        close: function() { guard.close(); },
+        assert_root: function(expected) { require(expected == root, 'ROOT_MISMATCH'); held_guard(); },
+        phase,
+        assert_delivery:function() {held_guard();require(delivery_guard!=null && delivery_guard()=='HGDEPLOY2_DELIVERY_B_V1','DELIVERY_NOT_ACCEPTED');return true;},
+        preflight_rollback_phase:function() {held_guard();pending_rollback_phase();return true;},
+        recover_rollback_phase: function() {
+            held_guard(); owned_fence();
+            let pending=pending_rollback_phase();if(pending==null)return;let target=pending.target;
             require(fs.rename(BASE+'/phase.new',target), 'RECOVERY_ARCHIVE');
             sync([BASE]);
         },

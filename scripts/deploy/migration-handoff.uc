@@ -6,7 +6,7 @@ import { verify_candidate_snapshot } from './migration-candidate.uc';
 import { verify_runtime } from './migration-runtime.uc';
 function require(ok, reason) { if(!ok)die('MIGRATION_HANDOFF_'+reason); }
 function context(root,state,bb) {
-    require(type(root)=='string' && root!='','COORDINATOR_NOT_ACCEPTED');
+    require(type(root)=='string' && (root!='' || (type(state.assert_delivery)=='function' && state.assert_delivery())),'COORDINATOR_NOT_ACCEPTED');
     let io=snapshot_io(root,state,bb), old=verify_legacy_snapshot(root,state,bb),
         candidate=verify_candidate_snapshot(root,state,bb);
     let marker=io.read(io.BASE+'/marker',0600,128), nonce=trim(substr(marker,22)),

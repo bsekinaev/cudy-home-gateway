@@ -7,7 +7,7 @@ import { verify_candidate_snapshot } from './migration-candidate.uc';
 
 function require(ok, reason) { if (!ok) die('MIGRATION_RUNTIME_' + reason); }
 function context(root, state, bb) {
-    require(type(root)=='string' && root!='', 'COORDINATOR_NOT_ACCEPTED');
+    require(type(root)=='string' && (root!='' || (type(state.assert_delivery)=='function' && state.assert_delivery())), 'COORDINATOR_NOT_ACCEPTED');
     let io=snapshot_io(root,state,bb), old=verify_legacy_snapshot(root,state,bb),
         candidate=verify_candidate_snapshot(root,state,bb), records={};
     for (let name in keys(old.files)) if (index(name,'runtime/')==0)

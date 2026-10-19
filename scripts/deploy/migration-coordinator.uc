@@ -7,7 +7,7 @@ import { prepare_runtime,apply_runtime,restore_runtime,preflight_restore_runtime
 import { prepare_handoff,verify_handoff,publish_handoff,restore_handoff,preflight_restore_handoff } from './migration-handoff.uc';
 function require(ok,reason) { if(!ok)die('MIGRATION_COORDINATOR_'+reason); }
 function plan(root,state,bb) {
-    require(root!='','PRODUCTION_NOT_ACCEPTED');
+    require(root!='' || (type(state.assert_delivery)=='function' && state.assert_delivery()),'PRODUCTION_NOT_ACCEPTED');
     let io=snapshot_io(root,state,bb),old=verify_legacy_snapshot(root,state,bb),candidate=verify_candidate_snapshot(root,state,bb);
     require(fs.lstat(io.BASE+'/coordinator.json.new')==null && fs.lstat(io.BASE+'/coordinator.publish-pending')==null,'PARTIAL');
     let p=json(io.read(io.BASE+'/coordinator.json',0600,1024));
@@ -18,7 +18,7 @@ function plan(root,state,bb) {
     return {io,p,old};
 }
 export function prepare_coordinator(root,state,bb,commit,was_running) {
-    require(root!='' && state.phase()=='PREPARING' && match(commit,/^[0-9a-f]{40}$/) &&
+    require((root!='' || (type(state.assert_delivery)=='function' && state.assert_delivery())) && state.phase()=='PREPARING' && match(commit,/^[0-9a-f]{40}$/) &&
         type(was_running)=='int' && (was_running==0 || was_running==1),'INPUT');
     let io=snapshot_io(root,state,bb),old=verify_legacy_snapshot(root,state,bb),candidate=verify_candidate_snapshot(root,state,bb),
         p={format:'HG_NATIVE_COORDINATOR_V1',marker:old.marker,manifest_sha256:candidate.manifest_sha256,commit,was_running};

@@ -120,6 +120,34 @@ class PrivateHandoff(unittest.TestCase):
   self.assertFalse((self.base/'private-rollback.json').exists())
   self.ok('rollback_service_coordinator(ARGV[0],s,ARGV[1]);complete_service_rollback(ARGV[0],s,ARGV[1])')
   self.fixture.fixture.fixture.lab.assert_previous()
+ def test_prepared_unpublished_transaction_aborts_without_rewriting_runtime(self):
+  before={p:(self.root/p).stat().st_ino for p in self.fixture.fixture.fixture.lab.previous}
+  self.ok('prepare_service_coordinator(ARGV[0],s,ARGV[1],ARGV[2],ARGV[3],"'+'c'*40+'")')
+  self.assertEqual((self.base/'phase').read_text(),'PREPARED\n')
+  self.ok('abort_service_preparation(ARGV[0],s,ARGV[1]);complete_preparation_abort(ARGV[0],s,ARGV[1])')
+  self.assertEqual(before,{p:(self.root/p).stat().st_ino for p in before})
+ def test_prepared_published_transaction_can_roll_back(self):
+  self.ok('prepare_service_coordinator(ARGV[0],s,ARGV[1],ARGV[2],ARGV[3],"'+'c'*40+'");apply_controls(ARGV[0],s,ARGV[1])')
+  self.ok('rollback_service_coordinator(ARGV[0],s,ARGV[1]);complete_service_rollback(ARGV[0],s,ARGV[1])')
+  self.assertEqual((self.base/'phase').read_text(),'ROLLED_BACK\n');self.fixture.fixture.fixture.lab.assert_previous()
+ def test_external_boot_disable_after_commit_is_not_owned_quarantine(self):
+  link=self.root/'etc/rc.d/S95home-gateway-telegram';link.symlink_to('../init.d/home-gateway-telegram')
+  self.apply();self.ok('commit_service_coordinator(ARGV[0],s,ARGV[1])')
+  self.assertFalse((self.base/'telegram-boot-quarantine').exists());link.unlink()
+  self.assertNotEqual(self.runuc('rollback_service_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
+  self.assertEqual((self.base/'phase').read_text(),'COMMITTED\n');self.assertFalse((self.root/'tmp/home-gateway-deploy.lock').is_symlink())
+ def test_control_drift_refuses_before_rollback_fence(self):
+  self.apply();self.ok('commit_service_coordinator(ARGV[0],s,ARGV[1])')
+  p=self.root/'usr/libexec/home-gateway-deploy/migration-service.uc';p.write_text('foreign')
+  self.assertNotEqual(self.runuc('rollback_service_coordinator(ARGV[0],s,ARGV[1])').returncode,0)
+  self.assertEqual((self.base/'phase').read_text(),'COMMITTED\n');self.assertFalse((self.root/'tmp/home-gateway-deploy.lock').is_symlink());self.assertEqual(p.read_text(),'foreign')
+ def test_interrupted_rollback_checkpoint_after_ram_loss_uses_fresh_slot(self):
+  self.apply();self.ok('commit_service_coordinator(ARGV[0],s,ARGV[1])')
+  self.interrupt('rollback_service_coordinator(ARGV[0],s,ARGV[1])','rollback')
+  partial=self.base/'private-rollback/etc/home-gateway/secrets/telegram.token';saved=partial.read_bytes()
+  for p in (self.root/'tmp/home-gateway').iterdir():p.unlink()
+  self.ok('rollback_service_coordinator(ARGV[0],s,ARGV[1]);complete_service_rollback(ARGV[0],s,ARGV[1])')
+  self.assertEqual(partial.read_bytes(),saved);self.assertEqual(json.loads((self.base/'private-rollback.json').read_text())['storage'],'private-rollback.1')
  def test_secret_drift_refuses_even_after_service_start(self):
   self.apply();p=self.root/'etc/home-gateway/secrets/telegram.token';p.write_text('changed\n')
   self.assertNotEqual(self.runuc('verify_private_state(ARGV[0],s,ARGV[1],"apply",true)').returncode,0)

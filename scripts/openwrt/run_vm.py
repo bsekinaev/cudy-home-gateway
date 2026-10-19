@@ -97,10 +97,11 @@ def inject(image, workspace, commit, packages, scenario):
         env=('HG_LIBDIR='+lab+'/usr/lib/home-gateway HG_TELEGRAM_SECRETS_DIR='+lab+'/etc/home-gateway/secrets '
              'HG_TELEGRAM_RUNTIME_DIR='+lab+'/tmp/home-gateway HG_TELEGRAM_TOKEN_FILE='+lab+'/etc/home-gateway/secrets/telegram.token '
              'HG_NOTIFICATION_STATE_DIR='+lab+'/etc/home-gateway/state HG_NOTIFICATION_RUNTIME_DIR='+lab+'/tmp/home-gateway '
-             'HG_NOTIFICATION_SECRETS_DIR='+lab+'/etc/home-gateway/secrets')
+             'HG_NOTIFICATION_SECRETS_DIR='+lab+'/etc/home-gateway/secrets HG_INCIDENT_STATE_DIR='+lab+'/etc/home-gateway/state '
+             'HG_INCIDENT_RUNTIME_DIR='+lab+'/tmp/home-gateway')
         body=body.replace('procd_set_param respawn','procd_set_param env '+env+'\n\tprocd_set_param respawn')
         return (first+'\n'+body).encode()
-    if scenario in ('service-cycle', 'control-cycle', 'legacy-snapshot', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
+    if scenario in ('rc-b-crash-apply', 'rc-b-crash-restore', 'rc-b-root-cycle', 'service-cycle', 'control-cycle', 'legacy-snapshot', 'candidate-snapshot', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
         put('/opt/hg-vm-lab/migration-snapshot.uc', git('show', commit + ':scripts/deploy/migration-snapshot.uc'), 0o600)
         # Public synthetic 18-file fixture on the guest's persistent filesystem.
         # Create its journal through the exact trusted shell receiver, not a mock.
@@ -114,12 +115,12 @@ def inject(image, workspace, commit, packages, scenario):
             raw=(b'#!/bin/sh\ncase "$1" in running) exit 1;; *) exit 0;; esac\n'
                  if rel.startswith('etc/init.d/') else b'// synthetic VM library\n' if rel.endswith('.uc')
                  else b'#!/bin/sh\nexit 0\n')
-            if scenario=='service-cycle' and rel in ('etc/init.d/home-gateway-telegram','usr/lib/home-gateway/telegram-poller.uc'):
+            if scenario in ('rc-b-crash-apply','rc-b-crash-restore','rc-b-root-cycle','service-cycle') and rel in ('etc/init.d/home-gateway-telegram','usr/lib/home-gateway/telegram-poller.uc'):
                 # Real legacy workers/init, explicitly synthetic old CLI: the
                 # networkless VM cannot satisfy CUDY hardware doctor checks.
                 raw=git('show','c921c2d:src/'+rel)
-                if rel=='etc/init.d/home-gateway-telegram':raw=service_init_namespace(raw)
-                else:raw=raw.replace(b'/etc/home-gateway', (lab+'/etc/home-gateway').encode()).replace(b'/tmp/home-gateway',(lab+'/tmp/home-gateway').encode())
+                if scenario=='service-cycle' and rel=='etc/init.d/home-gateway-telegram':raw=service_init_namespace(raw)
+                elif scenario=='service-cycle':raw=raw.replace(b'/etc/home-gateway', (lab+'/etc/home-gateway').encode()).replace(b'/tmp/home-gateway',(lab+'/tmp/home-gateway').encode())
             put(lab + '/' + rel, raw, perm)
             if rel.endswith('/common.sh'): raw += b'# installed legacy revision\n'
             wire += [f'{perm:04o} {len(raw)} {hashlib.sha256(raw).hexdigest()}\n'.encode(),
@@ -185,12 +186,17 @@ def inject(image, workspace, commit, packages, scenario):
         setup="    if [ -d /etc/hg-native-snapshot/etc/home-gateway-migration ]; then\n        umask 077\n        mkdir -p /tmp/hg-crash-ram\n        mount --bind /tmp/hg-crash-ram /etc/hg-native-snapshot/tmp || return 1\n        if [ ! -e /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ] && [ ! -L /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ]; then\n            printf 'ABSENT\\n' > /etc/hg-vm-lab/boot-fence-before\n        else printf 'PRESENT\\n' > /etc/hg-vm-lab/boot-fence-before; fi\n        cat /proc/sys/kernel/random/boot_id > /etc/hg-vm-lab/boot-guard.boot\n    fi\n"
         boot=boot.replace('start() {\n','start() {\n'+setup)
         put('/etc/rc.d/S08hg-migration-lab-guard',boot.encode(),0o755)
+    if scenario in ('rc-b-root-cycle','rc-b-crash-apply','rc-b-crash-restore'):
+        subprocess.run(['python3', str(ROOT / 'scripts/migration_rc/build_b.py'), '--ref', commit,
+                        '--output', str(workspace / 'rc-b-package')], check=True, stdout=subprocess.DEVNULL)
+        archive=next((workspace / 'rc-b-package').glob('*.tar.gz'))
+        put('/opt/hg-vm-lab/rc-b.tar.gz', archive.read_bytes(), 0o600)
     if scenario == 'rc-a-package':
         subprocess.run(['python3', str(ROOT / 'scripts/migration_rc/build.py'), '--ref', commit,
                         '--output', str(workspace / 'rc-package')], check=True, stdout=subprocess.DEVNULL)
         archive = next((workspace / 'rc-package').glob('*.tar.gz'))
         put('/opt/hg-vm-lab/rc-a.tar.gz', archive.read_bytes(), 0o600)
-    guest={'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh', 'rc-a-package':'guest-rc-a.sh', 'control-cycle':'guest-controls.sh', 'service-cycle':'guest-service-cycle.sh'}[scenario]
+    guest={'rc-b-crash-apply':'guest-rc-b-crash-apply.sh','rc-b-crash-restore':'guest-rc-b-crash-restore.sh','rc-b-root-cycle':'guest-rc-b.sh', 'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh', 'rc-a-package':'guest-rc-a.sh', 'control-cycle':'guest-controls.sh', 'service-cycle':'guest-service-cycle.sh'}[scenario]
     smoke = git('show', commit + ':scripts/openwrt/' + guest)
     subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
@@ -237,7 +243,7 @@ def run(args):
                    '-drive', 'file=' + str(image) + ',format=raw,if=virtio', '-snapshot',
                    '-display', 'none', '-vga', 'none', '-monitor', 'none', '-serial', 'stdio',
                    '-nic', 'none', '-no-user-config']
-        if args.scenario in ('overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
+        if args.scenario in ('rc-b-crash-apply', 'rc-b-crash-restore', 'overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'):
             # A real guest reboot exits QEMU; supervise a cold boot of the same
             # private writable disk. The immutable input is never mounted.
             command.remove('-snapshot'); command += ['-no-reboot']
@@ -245,9 +251,9 @@ def run(args):
         if args.bios: command += ['-bios', str(args.bios)]
         # The control scenario snapshots runtime plus its dependency closure.
         # TCG-only hosts need a separate bounded budget; assertions are unchanged.
-        console = bytearray(); deadline = time.monotonic() + (300 if args.scenario in ('control-cycle','service-cycle') else 180)
+        console = bytearray(); deadline = time.monotonic() + (600 if args.scenario in ('rc-b-crash-apply','rc-b-crash-restore') else 300 if args.scenario in ('rc-b-root-cycle','control-cycle','service-cycle') else 180)
         try:
-            for boot in range(2 if args.scenario in ('overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') else 1):
+            for boot in range(2 if args.scenario in ('rc-b-crash-apply', 'rc-b-crash-restore', 'overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') else 1):
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, start_new_session=True)
                 try:
@@ -271,7 +277,7 @@ def run(args):
                         try: child.wait(timeout=2)
                         except subprocess.TimeoutExpired: child.kill(); child.wait(timeout=2)
                     child.stdout.close()
-                if args.scenario in ('overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') and boot == 0:
+                if args.scenario in ('rc-b-crash-apply', 'rc-b-crash-restore', 'overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') and boot == 0:
                     raw=console.decode('utf-8',errors='replace')
                     require(raw.count('HGVM_REBOOT=REQUESTED') == boot+1 and 'reboot: Restarting system' in raw and not RESULT.search(raw), 'GUEST_REBOOT_NOT_OBSERVED')
         finally:
@@ -285,7 +291,7 @@ def run(args):
             report['native_refusals']=sorted(set(re.findall(r'\bMIGRATION_[A-Z0-9_]{1,80}\b', console.decode('utf-8',errors='replace'))))[:32]
         report.update(commit=commit, scenario=args.scenario, kernel_sha256=KERNEL_SHA, rootfs_sha256=ROOTFS_SHA,
                       network_devices=0, host_shared_directories=0, package_sha256=PACKAGE_SHA)
-        if args.scenario in ('overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'): report['reboot_mechanism']='GUEST_REBOOT_SUPERVISED_COLD_BOOT'
+        if args.scenario in ('rc-b-crash-apply', 'rc-b-crash-restore', 'overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase'): report['reboot_mechanism']='GUEST_REBOOT_SUPERVISED_COLD_BOOT'
         return report
 
 
@@ -312,7 +318,7 @@ def main():
     parser.add_argument('--bios', type=Path)
     parser.add_argument('--packages-directory', type=Path, required=True, help='Pinned official stat/timeout APKs, installed offline only in guest')
     parser.add_argument('--ref', default='HEAD')
-    parser.add_argument('--scenario', choices=('baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase', 'rc-a-package', 'control-cycle', 'service-cycle'), default='baseline')
+    parser.add_argument('--scenario', choices=('rc-b-crash-apply', 'rc-b-crash-restore', 'rc-b-root-cycle', 'baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase', 'rc-a-package', 'control-cycle', 'service-cycle'), default='baseline')
     parser.add_argument('--diagnostic-log', type=Path, help='Private local diagnostic only; never CI artifact')
     args = parser.parse_args()
     try: report = run(args)

@@ -34,4 +34,21 @@ class ServiceAdmission(unittest.TestCase):
   receipt=base/'handoff.json';raw=receipt.read_bytes();value=json.loads(raw);value['commit']='d'*40;receipt.write_text(json.dumps(value));self.assertNotEqual(run(*flags).returncode,0);receipt.write_bytes(raw)
   self.assertEqual(run(*flags).returncode,0)
   ram=root/'tmp/home-gateway-deploy.lock';ram.unlink();self.assertNotEqual(run(*flags).returncode,0)
+  # Normal boot has no active receiver and no provisional ticket. It must
+  # still certify runtime and the published journal, including future HG2 CD.
+  admission=base/'admission';admission.write_text(f'HG_MIGRATION_ADMITTED_V2 COMMITTED {nonce} {lock.stat().st_ino}\n');admission.chmod(0o600)
+  p=fixture.run_native('s.fence();s.transition("COMMITTED");s.release()');self.assertEqual(p.returncode,0,p.stderr)
+  normal=('--telegram-start','--held-telegram-guard')
+  self.assertEqual(run(*normal).returncode,0)
+  target=root/'usr/bin/gateway';raw=target.read_bytes();target.write_bytes(b'drift')
+  self.assertNotEqual(run(*normal).returncode,0);target.write_bytes(raw)
+  target=anchor/'backup/usr/bin/gateway';raw=target.read_bytes();target.write_bytes(b'drift')
+  self.assertNotEqual(run(*normal).returncode,0);target.write_bytes(raw)
+  import shutil
+  newer=anchor.parent/'tx.newhg2';shutil.copytree(anchor,newer)
+  latest.write_text(newer.name+'\n')
+  p=run(*normal);self.assertEqual(p.returncode,0,p.stderr)
+  target=newer/'backup/usr/bin/gateway';target.write_bytes(b'bad-backup')
+  self.assertNotEqual(run(*normal).returncode,0)
+
 if __name__=='__main__':unittest.main()
