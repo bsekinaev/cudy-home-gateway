@@ -17,6 +17,12 @@ function mac_address(s, a,n,i) {
     for(i=1;i<=6;i++)if(a[i]!~/^[0-9a-f][0-9a-f]$/)return 0
     return 1
 }
+function after_match(t) {
+    # A value followed by a range/set/operator is not a complete exclusion.
+    return t=="counter" || t=="ip" || t=="udp" || t=="tcp" || t=="meta" ||
+           t=="ct" || t=="jump" || t=="goto" || t=="return" || t=="tproxy" ||
+           t=="accept" || t=="drop"
+}
 function safe_prefix(line, a,n,off) {
     sub(/^[ \t]+/,"",line);sub(/[ \t]+# handle [0-9]+[ \t]*$/,"",line)
     gsub(/[ \t]+/," ",line)
@@ -29,13 +35,13 @@ function safe_prefix(line, a,n,off) {
     n=split(line,a," ")
     # A false first predicate prevents evaluation of later side effects.
     if(n>=4 && ((a[1]=="meta" && a[2]=="l4proto") ||
-                (a[1]=="ip" && a[2]=="protocol")) && (a[3]=="tcp" || a[3]=="6"))return 1
+                (a[1]=="ip" && a[2]=="protocol")) && (a[3]=="tcp" || a[3]=="6") && after_match(a[4]))return 1
     off=0
     if(a[1]=="ip" && a[2]=="protocol" && a[3]=="udp")off=3
     if(n>=off+4 && a[off+1]=="ip" && a[off+2]=="saddr" &&
-       ipv4(a[off+3]) && a[off+3]!=policy_ip)return 1
+       ipv4(a[off+3]) && a[off+3]!=policy_ip && after_match(a[off+4]))return 1
     if(policy_ip=="192.168.1.140" && off==3 && n>=7 && a[4]=="ether" && a[5]=="saddr" &&
-       mac_address(identity_mac) && mac_address(a[6]) && a[6]!=identity_mac)return 1
+       mac_address(identity_mac) && mac_address(a[6]) && a[6]!=identity_mac && after_match(a[7]))return 1
     return 0
 }
 AWK

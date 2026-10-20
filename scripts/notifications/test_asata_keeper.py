@@ -112,6 +112,9 @@ exit 97
 
     def test_intercepting_or_unproven_prefix_remains_blocked(self):
         bad=['meta l4proto udp jump PSW2_RULE',
+             'ip saddr 192.0.2.228 - 192.168.1.140 jump PSW2_RULE',
+             'ip protocol 6 - 17 jump PSW2_RULE',
+             'ip saddr 192.0.2.228 . meta l4proto udp jump PSW2_RULE',
              'ip saddr 192.168.1.140 meta mark 1 tproxy ip to :2003',
              'ip saddr 192.168.1.0/24 jump PSW2_RULE',
              'ip saddr != 192.0.2.228 jump PSW2_RULE',
