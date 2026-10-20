@@ -20,3 +20,17 @@ class RetirementIdentity(unittest.TestCase):
   for source,pin in [('f'*40,'a'*64),('6b7d3ada6fe6b513e08db22469ccde10a6d47ee3','f'*64),('908dd3222b81992d9fee056bd015a1266a0ce8d7','10a5ac968a539a9c0287d4b711f065acdc71d54382854803d1b3fc0b551b6501')]:
    self.assertNotEqual(self.gate(source,pin).returncode,0)
   self.assertNotEqual(self.gate('f'*40,'a'*64,nonce='bad').returncode,0)
+
+ def test_live_gate_rechecked_before_retire_but_not_interrupted_recovery(self):
+  block=SOURCE[SOURCE.index("if(op=='retire' || op=='retire-check' || op=='verify-retired') {"):SOURCE.index("if(op=='preflight' || op=='prepare') {")]
+  for op in ('retire-check','retire','verify-retired'):
+   for state in ('untouched','journal','journal-new','init','init-new','boot','archived'):
+    with self.subTest(op=op,state=state):
+     base='/etc/home-gateway-migration'
+     paths=[] if state=='archived' else [base]
+     extra={'journal':base+'/retirement.json','journal-new':base+'/retirement.json.new','init':'/etc/init.d/home-gateway-retirement','init-new':'/etc/init.d/home-gateway-retirement.new','boot':'/etc/rc.d/S07home-gateway-retirement'}
+     if state in extra:paths.append(extra[state])
+     program='let op='+json.dumps(op)+';let base='+json.dumps(base)+';let tx="fixture";let present='+json.dumps(paths)+';let fs={lstat:function(p){return index(present,p)>=0?{}:null;}};function require(ok,why){if(!ok)die(why);}function verify_asata_baseline(){print("GATE\\n");}function retire(a,b,c){return "archive";}'+block
+     r=subprocess.run(['ucode','-e',program,'--','a','b','c','d'],capture_output=True,text=True,timeout=10)
+     self.assertEqual(r.returncode,0,r.stderr)
+     self.assertEqual('GATE' in r.stdout,op in ('retire-check','retire') and state=='untouched')

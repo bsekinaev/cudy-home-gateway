@@ -117,7 +117,7 @@ if(op=='retire' || op=='retire-check' || op=='verify-retired') {
  require(length(ARGV)==4,'RETIRE_ARGUMENTS');
  // Check compatibility before an untouched old state is retired. An already
  // interrupted retirement must remain recoverable without network-health gates.
- if(op=='retire-check' && fs.lstat(base)!=null &&
+ if((op=='retire-check' || op=='retire') && fs.lstat(base)!=null &&
     fs.lstat(base+'/retirement.json')==null && fs.lstat(base+'/retirement.json.new')==null &&
     fs.lstat('/etc/init.d/home-gateway-retirement')==null && fs.lstat('/etc/init.d/home-gateway-retirement.new')==null &&
     fs.lstat('/etc/rc.d/S07home-gateway-retirement')==null)verify_asata_baseline();
