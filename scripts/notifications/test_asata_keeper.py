@@ -100,6 +100,10 @@ exit 97
         (self.base/'rules').write_text(chain(rows.replace('02:00:00:00:00:02','58:04:4f:81:09:6b')+RULE))
         self.assertEqual(self.keeper().returncode,1) # ASATA itself must not be exempted
         (self.base/'rules').write_text(chain(rows+RULE))
+        lease.write_text(('0 58:04:4f:81:09:6b 192.168.1.140 fixture *\n')*2)
+        self.assertEqual(self.keeper().returncode,1) # ambiguous lease
+        lease.write_text('0 58:04:4f:81:09:6b 192.168.1.140 fixture *\n'+'\n'*65537)
+        self.assertEqual(self.keeper().returncode,1) # trailing newlines still count
         lease.write_text('')
         self.assertEqual(self.keeper().returncode,1) # no MAC exclusion without identity
         ip.write_text('#!/bin/sh\necho "192.168.1.140 dev br-lan lladdr 02:00:00:00:00:02 REACHABLE"\n')
@@ -130,6 +134,9 @@ exit 97
         p=subprocess.run(args,env=self.env,capture_output=True,text=True,timeout=8)
         self.assertEqual(p.returncode,0,p.stderr);self.assertEqual(p.stdout,'RC_B_ASATA_PREFLIGHT=PASS\n')
         self.assertFalse((self.base/'runtime').exists())
+        raw=chain(RULE);(self.base/'rules').write_text(raw+'\n'*(65537-len(raw)))
+        p=subprocess.run(args,env=self.env,capture_output=True,text=True,timeout=8)
+        self.assertNotEqual(p.returncode,0);self.assertFalse((self.base/'runtime').exists())
         (self.base/'rules').write_text(chain('meta l4proto udp jump PSW2_RULE # handle 91\n'+RULE))
         p=subprocess.run(args,env=self.env,capture_output=True,text=True,timeout=8)
         self.assertNotEqual(p.returncode,0);self.assertFalse((self.base/'runtime').exists())

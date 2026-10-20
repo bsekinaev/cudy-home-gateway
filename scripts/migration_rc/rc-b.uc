@@ -124,7 +124,7 @@ if(op=='preflight' || op=='prepare') {
  verify_available_memory(fs.readfile('/proc/meminfo')??'');
  let old=command(['timeout','-k','2','90','/bin/sh',kit+'/legacy-preflight.sh','4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e']);require(old.code==0,'LEGACY_BASELINE');
  if(owner) {
-  const probe='set -o pipefail; . "$1"; chain=$(timeout -k 1 5 nft -a list chain inet passwall2 PSW2_MANGLE | head -c 65537) || exit 1; [ "$(printf %s "$chain" | wc -c)" -le 65536 ] || exit 1; result=$(printf "%s\\n" "$chain" | hg_asata_keeper_plan /dev/stdin) || exit 1; [ "$result" = OK ] || exit 1; printf "RC_B_ASATA_PREFLIGHT=PASS\\n"';
+  const probe='set -o pipefail; . "$1"; chain=$(timeout -k 1 5 nft -a list chain inet passwall2 PSW2_MANGLE | head -c 65537; rc=$?; printf .; exit "$rc") || exit 1; chain=${chain%.}; [ "$(printf %s "$chain" | wc -c)" -le 65536 ] || exit 1; result=$(printf "%s\\n" "$chain" | hg_asata_keeper_plan /dev/stdin) || exit 1; [ "$result" = OK ] || exit 1; printf "RC_B_ASATA_PREFLIGHT=PASS\\n"';
   let r=command(['timeout','-k','2','30','/bin/ash','-c',probe,'asata-preflight',kit+'/candidate/usr/lib/home-gateway/asata.sh'],1024);
   require(r.code==0 && r.raw=='RC_B_ASATA_PREFLIGHT=PASS\n','ASATA_BASELINE');
   print(r.raw);

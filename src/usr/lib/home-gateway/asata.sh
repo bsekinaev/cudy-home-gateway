@@ -44,7 +44,8 @@ AWK
 # MAC exclusions are accepted only with a matching, unambiguous current
 # neighbor/lease observation. Missing/conflicting identity fails closed.
 hg_asata_prefix_mac() (
-    neighbors=$(timeout -k 1 3 ip neigh show 192.168.1.140 2>/dev/null | head -c 4097) || exit 0
+    neighbors=$(timeout -k 1 3 ip neigh show 192.168.1.140 2>/dev/null | head -c 4097; rc=$?; printf .; exit "$rc") || exit 0
+    neighbors=${neighbors%.}
     [ "$(printf %s "$neighbors" | wc -c)" -le 4096 ] || exit 0
     observed=$(printf '%s\n' "$neighbors" | awk '
         NF {rows++;for(i=1;i<NF;i++)if($i=="lladdr"){n++;m=tolower($(i+1))}}
@@ -54,7 +55,8 @@ hg_asata_prefix_mac() (
     if [ -e "$lease_file" ] || [ -L "$lease_file" ]; then
         meta=$(LC_ALL=C stat -c '%u %a %F' "$lease_file") || exit 0
         case "$meta" in '0 600 regular file'|'0 644 regular file'|'0 600 regular empty file'|'0 644 regular empty file') ;; *) exit 0;; esac
-        leases=$(head -c 65537 "$lease_file" 2>/dev/null) || exit 0
+        leases=$(head -c 65537 "$lease_file" 2>/dev/null; rc=$?; printf .; exit "$rc") || exit 0
+        leases=${leases%.}
         [ "$(printf %s "$leases" | wc -c)" -le 65536 ] || exit 0
         leased=$(printf '%s\n' "$leases" | awk '$3=="192.168.1.140"{n++;m=tolower($2)} END{if(n>1)print "AMBIGUOUS";else if(n==1)print m}')
     fi
