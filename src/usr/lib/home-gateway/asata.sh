@@ -1,6 +1,69 @@
 #!/bin/sh
 # Read-only статус ASATA UDP-direct policy CUDY Home Gateway.
 
+# nft evaluates expressions left-to-right. Only known return-only forms or
+# an initial predicate proven disjoint from the fixed ASATA identity may precede
+# its return. No rule, set, counter, mark or service is modified by this check.
+hg_asata_prefix_awk() {
+    cat <<'AWK'
+BEGIN { if(policy_ip=="")policy_ip="192.168.1.140" }
+function ipv4(s, a,n,i) {
+    n=split(s,a,".");if(n!=4)return 0
+    for(i=1;i<=4;i++)if(a[i]!~/^[0-9]+$/ || length(a[i])>3 || (length(a[i])>1 && substr(a[i],1,1)=="0") || a[i]+0>255)return 0
+    return 1
+}
+function mac_address(s, a,n,i) {
+    n=split(s,a,":");if(n!=6)return 0
+    for(i=1;i<=6;i++)if(a[i]!~/^[0-9a-f][0-9a-f]$/)return 0
+    return 1
+}
+function safe_prefix(line, a,n,off) {
+    sub(/^[ \t]+/,"",line);sub(/[ \t]+# handle [0-9]+[ \t]*$/,"",line)
+    gsub(/[ \t]+/," ",line)
+    sub(/ comment "[^"]*"$/,"",line)
+    sub(/counter packets [0-9]+ bytes [0-9]+ /,"",line)
+    sub(/^ip protocol 17 /,"ip protocol udp ",line)
+    if(line=="ip daddr @psw2_vps return" || line=="ip daddr @psw2_wan return" ||
+       line=="ct direction 1 return" || line=="ct direction reply return" ||
+       line=="ip protocol udp udp dport 53 return")return 1
+    n=split(line,a," ")
+    # A false first predicate prevents evaluation of later side effects.
+    if(n>=4 && ((a[1]=="meta" && a[2]=="l4proto") ||
+                (a[1]=="ip" && a[2]=="protocol")) && (a[3]=="tcp" || a[3]=="6"))return 1
+    off=0
+    if(a[1]=="ip" && a[2]=="protocol" && a[3]=="udp")off=3
+    if(n>=off+4 && a[off+1]=="ip" && a[off+2]=="saddr" &&
+       ipv4(a[off+3]) && a[off+3]!=policy_ip)return 1
+    if(policy_ip=="192.168.1.140" && off==3 && n>=7 && a[4]=="ether" && a[5]=="saddr" &&
+       mac_address(identity_mac) && mac_address(a[6]) && a[6]!=identity_mac)return 1
+    return 0
+}
+AWK
+}
+
+# MAC exclusions are accepted only with a matching, unambiguous current
+# neighbor/lease observation. Missing/conflicting identity fails closed.
+hg_asata_prefix_mac() (
+    neighbors=$(timeout -k 1 3 ip neigh show 192.168.1.140 2>/dev/null | head -c 4097) || exit 0
+    [ "$(printf %s "$neighbors" | wc -c)" -le 4096 ] || exit 0
+    observed=$(printf '%s\n' "$neighbors" | awk '
+        NF {rows++;for(i=1;i<NF;i++)if($i=="lladdr"){n++;m=tolower($(i+1))}}
+        END{if(rows>1 || n>1)print "AMBIGUOUS";else if(n==1)print m}')
+    leased=''
+    lease_file="${HG_ASATA_LEASE_FILE:-/tmp/dhcp.leases}"
+    if [ -e "$lease_file" ] || [ -L "$lease_file" ]; then
+        meta=$(LC_ALL=C stat -c '%u %a %F' "$lease_file") || exit 0
+        case "$meta" in '0 600 regular file'|'0 644 regular file'|'0 600 regular empty file'|'0 644 regular empty file') ;; *) exit 0;; esac
+        leases=$(head -c 65537 "$lease_file" 2>/dev/null) || exit 0
+        [ "$(printf %s "$leases" | wc -c)" -le 65536 ] || exit 0
+        leased=$(printf '%s\n' "$leases" | awk '$3=="192.168.1.140"{n++;m=tolower($2)} END{if(n>1)print "AMBIGUOUS";else if(n==1)print m}')
+    fi
+    [ -z "$observed" ] || [ -z "$leased" ] || [ "$observed" = "$leased" ] || exit 0
+    identity=${observed:-$leased}
+    [ "$identity" = 58:04:4f:81:09:6b ] && printf '%s\n' "$identity"
+    exit 0
+)
+
 hg_asata_collect() {
     HG_ASATA_STATE='UNKNOWN'
     HG_ASATA_CLIENT_IPV4="${HG_ASATA_CLIENT_IPV4:-192.168.1.140}"
@@ -82,8 +145,9 @@ hg_asata_collect() {
     if command -v nft >/dev/null 2>&1; then
         set -- $(
             nft -a list chain inet passwall2 PSW2_MANGLE 2>/dev/null |
-                awk -v ip="$HG_ASATA_CLIENT_IPV4" -v comment="$HG_ASATA_RULE_COMMENT" '
+                awk -v ip="$HG_ASATA_CLIENT_IPV4" -v policy_ip="$HG_ASATA_CLIENT_IPV4" -v comment="$HG_ASATA_RULE_COMMENT" -v identity_mac="$(hg_asata_prefix_mac)" "$(hg_asata_prefix_awk)"'
                     /# handle [0-9]+[ \t]*$/ && $1 != "chain" && $1 != "table" { rule_position++ }
+                    /# handle [0-9]+[ \t]*$/ && $1 != "chain" && $1 != "table" && !index($0, "comment \"" comment "\"") { if(!comment_rules && !safe_prefix($0)) prefix_bad=1 }
                     index($0, "comment \"" comment "\"") {
                         comment_rules++
                         # Exact canonical nft expression, not substring matches.
@@ -94,13 +158,13 @@ hg_asata_collect() {
                         n = split(line, fields, /[ \t]+/)
                         if (n == 14 && fields[1] == "ip" && fields[2] == "saddr" &&
                             fields[3] == ip && fields[4] == "meta" &&
-                            fields[5] == "l4proto" && fields[6] == "udp" &&
+                            fields[5] == "l4proto" && (fields[6] == "udp" || fields[6] == "17") &&
                             fields[7] == "counter" && fields[8] == "packets" &&
                             fields[9] ~ /^[0-9]+$/ && fields[10] == "bytes" &&
                             fields[11] ~ /^[0-9]+$/ && fields[12] == "return" &&
                             fields[13] == "comment" && fields[14] == "\"" comment "\"") {
                             valid_rules++
-                            if (rule_position == 1) valid_first=1
+                            if (!prefix_bad) valid_first=1
                             packets += fields[9]
                             bytes += fields[11]
                         }
@@ -207,23 +271,23 @@ hg_asata_keeper_capture() {
 }
 
 hg_asata_keeper_plan() {
-    awk '
+    awk -v identity_mac="$(hg_asata_prefix_mac)" "$(hg_asata_prefix_awk)"'
         /^[ \t]*table inet passwall2[ \t]*\{/ { tables++; next }
         /^[ \t]*}[ \t]*$/ { closes++; next }
         /^[ \t]*chain PSW2_MANGLE[ \t]*\{/ { chains++; next }
         /# handle [0-9]+[ \t]*$/ {
             if ($1 == "table" || $1 == "chain") next
             position++
-            if (!index($0, "comment \"ASATA-UDP-DIRECT\"")) next
+            if (!index($0, "comment \"ASATA-UDP-DIRECT\"")) { if(!marked && !safe_prefix($0)) prefix_bad=1; next }
             marked++
             line=$0; sub(/^[ \t]+/, "", line)
             handle=$NF
             if (handle !~ /^[0-9]+$/ || length(handle)>10 || seen[handle]++) { bad=1; next }
             sub(/[ \t]+# handle [0-9]+[ \t]*$/, "", line)
             n=split(line,f,/[ \t]+/)
-            if (position == 1 && n == 14 && f[1] == "ip" && f[2] == "saddr" &&
+            if (!prefix_bad && n == 14 && f[1] == "ip" && f[2] == "saddr" &&
                 f[3] == "192.168.1.140" && f[4] == "meta" && f[5] == "l4proto" &&
-                f[6] == "udp" && f[7] == "counter" && f[8] == "packets" &&
+                (f[6] == "udp" || f[6] == "17") && f[7] == "counter" && f[8] == "packets" &&
                 f[9] ~ /^[0-9]+$/ && f[10] == "bytes" && f[11] ~ /^[0-9]+$/ &&
                 f[12] == "return" && f[13] == "comment" && f[14] == "\"ASATA-UDP-DIRECT\"") valid++
             # Captured handles are validated, but never used for mutation.

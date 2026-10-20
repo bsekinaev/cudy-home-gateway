@@ -1,4 +1,4 @@
-# HGDEPLOY2 RC-B 20261020.1 — verified retirement before a fresh transaction.
+# HGDEPLOY2 RC-B 20261020.2 — verified retirement before a fresh transaction.
 # Explicit owner stages, Windows PowerShell 5.1 / PowerShell 7. No automatic Apply.
 [CmdletBinding()]
 param(
@@ -86,7 +86,14 @@ if ($Stage -eq 'Retire' -or $Stage -eq 'RetireCheck') {
  $oldPath=[IO.Path]::GetFullPath($PreviousSessionFile)
  if ([String]::Equals($oldPath,$SessionFile,[StringComparison]::OrdinalIgnoreCase)) { throw 'Old and new session must be separate; preserve the old session.' }
  $old=Get-Content -Raw -LiteralPath $oldPath | ConvertFrom-Json
- if ($old.format -ne 'HG_RC_B_SESSION_V1' -or $old.target -ne $Target -or $old.source -ne '908dd3222b81992d9fee056bd015a1266a0ce8d7' -or $old.bundleSha256 -ne 'd10beec6bc376a819a04e51cff1b4c779f2f0e1dec0412f20b38c6d2100a8f56' -or $old.manifestSha256 -ne '67b65f1ceabe1534ff74fba8f6c486e9d02bfce9a7e7999875bd11929df467a1' -or $old.transaction -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'Old session is not the pinned RC-B 20261019.2 transaction.' }
+ $acceptedPrevious=@{
+  '908dd3222b81992d9fee056bd015a1266a0ce8d7'=@('d10beec6bc376a819a04e51cff1b4c779f2f0e1dec0412f20b38c6d2100a8f56','67b65f1ceabe1534ff74fba8f6c486e9d02bfce9a7e7999875bd11929df467a1')
+  '6b7d3ada6fe6b513e08db22469ccde10a6d47ee3'=@('e1e7df7fa84d9e1cfc8a3881b16d374fa3d417d2ec41a440f999b7c708e236d6','10a5ac968a539a9c0287d4b711f065acdc71d54382854803d1b3fc0b551b6501')
+ }
+ if ($old.format -ne 'HG_RC_B_SESSION_V1' -or $old.target -ne $Target -or !$acceptedPrevious.ContainsKey([string]$old.source)) { throw 'Old session source is not an accepted immutable RC-B.' }
+ $previousPins=$acceptedPrevious[[string]$old.source]
+ if ($old.bundleSha256 -ne $previousPins[0] -or $old.manifestSha256 -ne $previousPins[1] -or $old.transaction -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'Old session does not match its immutable RC-B pins.' }
+
  if ($session.retirementTransaction -and $session.retirementTransaction -ne $old.transaction) { throw 'Retirement transaction mismatch; STOP.' }
  if ($Stage -eq 'RetireCheck') {
   $session.retirementTransaction=$old.transaction;$session.retirementChecked=$false;Save-Session

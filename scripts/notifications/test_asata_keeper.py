@@ -1,5 +1,6 @@
 """Production keeper over an isolated nft process boundary; no live network writes."""
 import os
+import re,json,shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -74,6 +75,65 @@ exit 97
             self.assertEqual(result.stdout, 'ASATA_KEEPER=OK\n')
             self.assertFalse((self.base / 'applied').exists())
 
+    def test_owner_position_15_shape_with_numeric_and_symbolic_protocol(self):
+        # Structural reproduction only: client IP/MAC are synthetic, not owner data.
+        lease=self.base/'leases';lease.write_text('0 58:04:4f:81:09:6b 192.168.1.140 fixture *\n')
+        self.env['HG_ASATA_LEASE_FILE']=str(lease)
+        ip=self.base/'bin/ip';ip.write_text('#!/bin/sh\nexit 0\n');ip.chmod(0o755)
+        prefix=['ip daddr @psw2_vps counter packets 0 bytes 0 return',
+                'ct direction 1 counter packets 0 bytes 0 return',
+                'ip daddr @psw2_wan counter packets 0 bytes 0 return']
+        for guard in ['ether saddr 02:00:00:00:00:02','ip saddr 192.0.2.228']:
+            for tail in ['udp dport 53 return','ip daddr 198.18.0.0/16 jump PSW2_RULE',
+                         'jump PSW2_RULE','meta mark 0x50535732 tproxy ip to :2003','return']:
+                prefix.append('ip protocol 17 '+guard+' '+tail.replace(' return',' counter packets 0 bytes 0 return'))
+        prefix.append('ip protocol 17 udp dport 53 counter packets 0 bytes 0 return')
+        rows=''.join(r+' # handle '+str(i+100)+'\n' for i,r in enumerate(prefix))
+        self.assertEqual(len(prefix),14)
+        for proto in ['udp','17']:
+            (self.base/'rules').write_text(chain(rows+RULE.replace('l4proto udp','l4proto '+proto)))
+            r=self.keeper();self.assertEqual(r.returncode,0,r.stderr+r.stdout)
+            self.assertFalse((self.base/'applied').exists())
+            script='. "$HG_LIBDIR/common.sh"; . "$HG_LIBDIR/doctor.sh"; hg_doctor_asata; printf "FAIL=%s\\n" "$HG_DOCTOR_FAIL"'
+            d=subprocess.run([self.busybox,'ash','-c',script],env=self.env,capture_output=True,text=True,timeout=8)
+            self.assertEqual(d.returncode,0,d.stderr);self.assertIn('FAIL=0',d.stdout)
+        (self.base/'rules').write_text(chain(rows.replace('02:00:00:00:00:02','58:04:4f:81:09:6b')+RULE))
+        self.assertEqual(self.keeper().returncode,1) # ASATA itself must not be exempted
+        (self.base/'rules').write_text(chain(rows+RULE))
+        lease.write_text('')
+        self.assertEqual(self.keeper().returncode,1) # no MAC exclusion without identity
+        ip.write_text('#!/bin/sh\necho "192.168.1.140 dev br-lan lladdr 02:00:00:00:00:02 REACHABLE"\n')
+        lease.write_text('0 58:04:4f:81:09:6b 192.168.1.140 fixture *\n')
+        self.assertEqual(self.keeper().returncode,1) # conflicting current identity
+
+    def test_intercepting_or_unproven_prefix_remains_blocked(self):
+        bad=['meta l4proto udp jump PSW2_RULE',
+             'ip saddr 192.168.1.140 meta mark 1 tproxy ip to :2003',
+             'ip saddr 192.168.1.0/24 jump PSW2_RULE',
+             'ip saddr != 192.0.2.228 jump PSW2_RULE',
+             'meta mark set 1 ip saddr 192.0.2.228 return',
+             'ip saddr 192.168.001.140 jump PSW2_RULE',
+             'ip daddr @psw2_vps meta mark set 1 return']
+        for prefix in bad:
+            with self.subTest(prefix=prefix):
+                (self.base/'rules').write_text(chain(prefix+' # handle 92\n'+RULE))
+                self.assertEqual(self.keeper().returncode,1)
+                self.assertFalse((self.base/'applied').exists())
+
+    @unittest.skipUnless(shutil.which('ucode'),'ucode required')
+    def test_exact_candidate_preflight_script_is_read_only_and_refuses_bad_prefix(self):
+        source=(ROOT/'scripts/migration_rc/rc-b.uc').read_text()
+        literal=re.search(r"const probe=('.*');",source).group(1)
+        result=subprocess.run(['ucode','-e','print('+literal+');'],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        args=[self.busybox,'ash','-c',result.stdout,'preflight',str(ROOT/'src/usr/lib/home-gateway/asata.sh')]
+        p=subprocess.run(args,env=self.env,capture_output=True,text=True,timeout=8)
+        self.assertEqual(p.returncode,0,p.stderr);self.assertEqual(p.stdout,'RC_B_ASATA_PREFLIGHT=PASS\n')
+        self.assertFalse((self.base/'runtime').exists())
+        (self.base/'rules').write_text(chain('meta l4proto udp jump PSW2_RULE # handle 91\n'+RULE))
+        p=subprocess.run(args,env=self.env,capture_output=True,text=True,timeout=8)
+        self.assertNotEqual(p.returncode,0);self.assertFalse((self.base/'runtime').exists())
+
     def test_repair_disabled_even_with_bad_rule(self):
         (self.base / 'rules').write_text(chain(''))
         self.assertEqual(self.keeper('repair').returncode, 70)
@@ -83,7 +143,7 @@ exit 97
         wrong = [RULE.replace('.140 ', '.140/24 '), RULE.replace('udp ', 'tcp '),
                  RULE.replace('return ', 'accept '), RULE.replace('counter ', 'udp dport 53 counter '),
                  RULE.replace('return ', 'meta mark set 1 return '),
-                 'meta l4proto tcp return # handle 2\n' + RULE, RULE + RULE.replace('handle 7', 'handle 8')]
+                 'meta l4proto udp jump PSW2_RULE # handle 2\n' + RULE, RULE + RULE.replace('handle 7', 'handle 8')]
         for rules in wrong:
             with self.subTest(rules=rules):
                 (self.base / 'rules').write_text(chain(rules))

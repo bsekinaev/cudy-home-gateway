@@ -148,9 +148,9 @@ hg_doctor_asata() {
     keeper_rc=0
     hg_asata_keeper check >/dev/null 2>&1 || keeper_rc=$?
     case "$keeper_rc" in
-        0) hg_doctor_result OK 'ASATA UDP DIRECT' 'точное правило первым в цепочке' ;;
+        0) hg_doctor_result OK 'ASATA UDP DIRECT' 'точное правило; предшествующие правила проверены' ;;
         73) hg_doctor_result WARN 'ASATA UDP DIRECT' 'keeper busy; семантика пока не проверена' ;;
-        *) hg_doctor_result FAIL 'ASATA UDP DIRECT' 'семантика или порядок правила не подтверждены' ;;
+        *) hg_doctor_result FAIL 'ASATA UDP DIRECT' 'семантика правила или безопасность префикса не подтверждены' ;;
     esac
 }
 
