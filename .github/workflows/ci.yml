@@ -68,18 +68,24 @@ jobs:
       - name: Build only from successful exact-source acceptance
         env:
           GH_TOKEN: ${{ github.token }}
-          REVIEW_ACCEPTANCE_URL: https://github.com/bsekinaev/cudy-home-gateway/pull/29#issuecomment-6300526418
+          REVIEW_ACCEPTANCE_URL: https://github.com/bsekinaev/cudy-home-gateway/pull/29#issuecomment-6300730269
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import base64,hashlib,importlib.util,json,os,pathlib,re,subprocess,tarfile,urllib.request
+          import base64,hashlib,importlib.util,json,os,pathlib,re,subprocess,tarfile,urllib.request,urllib.parse
           SOURCE='62592457237e7f026786c086d1ca6fdd4b6c095d'
           RUN=39490486354
           REPO='bsekinaev/cudy-home-gateway'
+          class SafeRedirect(urllib.request.HTTPRedirectHandler):
+           def redirect_request(self,req,fp,code,msg,headers,newurl):
+            result=super().redirect_request(req,fp,code,msg,headers,newurl)
+            if result is not None and urllib.parse.urlparse(newurl).netloc!=urllib.parse.urlparse(req.full_url).netloc:result.remove_header('Authorization')
+            return result
+          opener=urllib.request.build_opener(SafeRedirect())
           def api(path):
            req=urllib.request.Request('https://api.github.com/repos/'+REPO+path,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-           with urllib.request.urlopen(req,timeout=60) as r:return r.read()
+           with opener.open(req,timeout=60) as r:return r.read()
           run=json.loads(api('/actions/runs/'+str(RUN)))
           assert run['head_sha']==SOURCE and run['status']=='completed' and run['conclusion']=='success','SOURCE_CI_NOT_ACCEPTED'
           jobs=json.loads(api('/actions/runs/'+str(RUN)+'/jobs?per_page=100'))['jobs']
