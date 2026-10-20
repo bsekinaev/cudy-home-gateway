@@ -46,6 +46,8 @@ if args[0] == 'vtest':
     sys.stdout.buffer.write(result.stdout)
     sys.exit(result.returncode)
 if args[:2] == ['actions', 'cancel'] and (base / 'fail-cancel').exists(): sys.exit(73)
+if args[:2] == ['telegram', 'edit-message'] and (base / 'unchanged').exists():
+    print(json.dumps({'ok': False, 'error_code': 400, 'description': 'Bad Request: message is not modified: same content'})); sys.exit(22)
 if args[:2] == ['telegram', 'edit-message'] and (base / 'fail-edit').exists(): sys.exit(1)
 if args[:2] == ['telegram', 'get-updates']:
     print(json.dumps({'ok': True, 'result': json.loads((base / 'updates').read_text())}))
@@ -275,6 +277,14 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         self.assertNotIn('?', edit[4])
         self.assertIn('только просмотр', edit[4])
         self.assertNotIn('prepare-', edit[5])
+
+    def test_identical_refresh_does_not_spam_or_rotate_capability_state(self):
+        self.nav('vtest')
+        original = (self.base / 'runtime/telegram.callback').read_bytes()
+        (self.base / 'unchanged').touch()
+        calls = self.nav('vtest')
+        self.assertFalse(any(c[:2] == ['telegram', 'send-message'] for c in calls))
+        self.assertEqual((self.base / 'runtime/telegram.callback').read_bytes(), original)
 
     def test_cancel_failure_is_visible_without_blocking_read_only_navigation(self):
         (self.base / 'fail-cancel').touch()

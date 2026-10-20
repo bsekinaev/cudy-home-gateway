@@ -400,6 +400,16 @@ function edit_dashboard(chat_id, message_id, view) {
 		markup
 	]);
 
+	// Stable read-only buttons may refresh identical content. Telegram returns
+	// HTTP 400 (curl exit 22) instead of success in that case. Keep the existing
+	// capability state: no new message, no phantom nonce/TTL rotation.
+	let unchanged;
+	try { unchanged = json(response.output); } catch (e) { unchanged = null; }
+	if ((response.code == 0 || response.code == 22) && unchanged?.ok == false &&
+	    unchanged?.error_code == 400 && type(unchanged?.description) == 'string' &&
+	    match(unchanged.description, /^Bad Request: message is not modified(:|$)/) != null)
+		return true;
+
 	let payload = parse_response(response, 'editMessageText');
 
 	if (payload == null)
