@@ -85,8 +85,13 @@ jobs:
           jobs=json.loads(api('/actions/runs/'+str(RUN)+'/jobs?per_page=100'))['jobs']
           assert len(jobs)==12 and all(j['conclusion']=='success' for j in jobs),'SOURCE_JOBS_NOT_ACCEPTED'
           reports={}
+          offline_runs=[]
           for job in jobs:
-           if job['name']=='Validate control plane':continue
+           if job['name']=='Validate control plane':
+            validation_log=api('/actions/jobs/'+str(job['id'])+'/logs').decode()
+            offline_runs=[int(n) for n in re.findall(r'Ran ([0-9]+) tests in',validation_log)]
+            assert offline_runs and 'FAILED (' not in validation_log
+            continue
            log=api('/actions/jobs/'+str(job['id'])+'/logs').decode()
            for line in log.splitlines():
             start=line.find('{"checks":')
@@ -98,6 +103,8 @@ jobs:
           assert len(reports)==15
           required={'rc-b-root-cycle','rc-b-crash-apply','rc-b-crash-restore','overlay-identity','service-cycle','retirement-reboot'}
           acceptance=dict(format='HG_DELIVERY_B_ACCEPTANCE_V1',commit=SOURCE,ci_head=SOURCE,ci_conclusion='success',ci_url=run['html_url'],review_blockers=0,review_acceptance_url=os.environ['REVIEW_ACCEPTANCE_URL'],reports={k:reports[k] for k in sorted(required)},additional_reports={k:reports[k] for k in sorted(set(reports)-required)},owner_evidence=dict(previous_attempt='a7376b1d-2405-440b-9349-e5e94cb88ae6',previous_source='6b7d3ada6fe6b513e08db22469ccde10a6d47ee3',apply='SELFTEST_62_PASS_DOCTOR_ASATA_FAIL_NOT_COMMITTED',rollback='OWNER_REPORTED_ROLLED_BACK_SELFTEST_58_PASS_DOCTOR_11_OK_VERIFY_PASS',current_candidate_live='NOT_RUN',backup_restore='NOT_TESTED'),scope='VM acceptance is not CUDY installation evidence')
+          acceptance['review']=dict(kind='codex_bot_no_findings_plus_one',head=SOURCE,pr=29,reaction_created_at='2026-10-20T20:19:15Z')
+          acceptance['offline_suite_runs']=offline_runs
           raw=(json.dumps(acceptance,sort_keys=True,indent=2)+'\n').encode()
           out=pathlib.Path('rc-b-20261020.2');out.mkdir()
           (out/'acceptance.json').write_bytes(raw)
