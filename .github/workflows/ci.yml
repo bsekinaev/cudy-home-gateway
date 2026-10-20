@@ -68,7 +68,7 @@ jobs:
       - name: Build only from successful exact-source acceptance
         env:
           GH_TOKEN: ${{ github.token }}
-          REVIEW_ACCEPTANCE_URL: https://github.com/bsekinaev/cudy-home-gateway/pull/29#issuecomment-6300526418
+          REVIEW_ACCEPTANCE_URL: https://github.com/bsekinaev/cudy-home-gateway/pull/29#issuecomment-6300730269
         shell: bash
         run: |
           set -euo pipefail
