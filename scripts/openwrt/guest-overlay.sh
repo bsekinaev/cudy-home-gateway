@@ -22,14 +22,29 @@ if [ ! -f "$LAB/reboot-pending" ]; then
     check procd_pid1 sh -c '[ "$(cat /proc/1/comm)" = procd ]'
     check vendor_prerequisites apk --repositories-file /opt/hg-vm-lab/packages/repositories --no-network add coreutils-stat=9.9-r2 coreutils-timeout=9.9-r2
 fi
-# Exercise non-unified overlay stat identities explicitly, not ext4-only behavior.
-mount -t overlay overlay -o "lowerdir=$LAB/lower,upperdir=$LAB/upper,workdir=$LAB/work,xino=off" "$ROOT"
+# Lower must be on tmpfs and upper on durable ext4. Merely xino=off with
+# both layers on the same filesystem still yields uniform st_dev and misses
+# the CUDY regression. Recreate only the empty/public lower after reboot.
+LOWER=/tmp/hg-overlay-lower
+mkdir -p "$LOWER/etc" "$LOWER/tmp"
+chmod 700 "$LOWER" "$LOWER/etc" "$LOWER/tmp"
+printf 'DISPOSABLE\n' > "$LOWER/.hg-deploy-test-root"
+refused() { "$@"; [ "$?" -eq 73 ]; }
+if [ "$first" = 1 ]; then
+    check overlay_layers_different_devices sh -c '[ "$(stat -c %d /tmp/hg-overlay-lower)" != "$(stat -c %d /etc/hg-overlay-lab/upper)" ]'
+else
+    check overlay_layers_different_devices_after_reboot sh -c '[ "$(stat -c %d /tmp/hg-overlay-lower)" != "$(stat -c %d /etc/hg-overlay-lab/upper)" ]'
+fi
+# Exercise actual non-uniform regular-file/directory st_dev identities.
+mount -t overlay overlay -o "lowerdir=$LOWER,upperdir=$LAB/upper,workdir=$LAB/work,xino=off" "$ROOT"
 mkdir -m 700 /tmp/hg-overlay-ram
 mount --bind /tmp/hg-overlay-ram "$ROOT/tmp"
 if [ "$first" = 1 ]; then
     check overlay_mounted grep -q '^overlay /etc/hg-overlay-identity overlay ' /proc/mounts
     check overlay_initial_state ucode -e 'import * as fs from "fs"; import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; let r="/etc/hg-overlay-identity", s=open_state(r,true,"/bin/busybox"); s.fence(); s.transition("PREPARED"); s.transition("APPLYING"); s.transition("COMMITTED"); let b=r+"/etc/home-gateway-migration", nonce=split(trim(fs.readfile(b+"/marker"))," ")[1]; fs.writefile(b+"/admission","HG_MIGRATION_ADMITTED_V2 COMMITTED "+nonce+" "+fs.lstat(r+"/etc/home-gateway-migration.lock").inode+"\n"); fs.chmod(b+"/admission",0600); let p=fs.popen("/bin/busybox fsync "+b+"/admission "+b,"r"); if(p.close()!=0)exit(1); s.release();'
     cat /tmp/hg-vm-lab/check.out
+    check overlay_guard_directory_devices_differ ucode -e 'import * as fs from "fs";let a=fs.lstat("/etc/hg-overlay-identity/etc/home-gateway-migration.lock"),b=fs.lstat("/etc/hg-overlay-identity/etc/home-gateway-migration");exit(a.dev.major!=b.dev.major || a.dev.minor!=b.dev.minor?0:1);'
+    check overlay_old_admission_reproduces_live_refusal refused sh /opt/hg-vm-lab/admission-before-overlay-fix.sh --test-root "$ROOT"
     check overlay_initial_admission sh /usr/libexec/home-gateway-deploy/migration-admission.sh --test-root "$ROOT"
     cat /tmp/hg-vm-lab/check.out
     stat -c %i "$ROOT/etc/home-gateway-migration.lock" > "$LAB/guard-inode.before"
@@ -46,8 +61,21 @@ check overlay_remounted grep -q '^overlay /etc/hg-overlay-identity overlay ' /pr
 check overlay_reboot_changed sh -c '[ "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat /etc/hg-overlay-lab/boot.before)" ]'
 check overlay_guard_inode_stable sh -c '[ "$(stat -c %i /etc/hg-overlay-identity/etc/home-gateway-migration.lock)" = "$(cat /etc/hg-overlay-lab/guard-inode.before)" ]'
 check overlay_reopen_after_reboot ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; let s=open_state("/etc/hg-overlay-identity",false,"/bin/busybox"); exit(s.phase()=="COMMITTED"?0:1);'
+check overlay_guard_directory_devices_differ_after_reboot ucode -e 'import * as fs from "fs";let a=fs.lstat("/etc/hg-overlay-identity/etc/home-gateway-migration.lock"),b=fs.lstat("/etc/hg-overlay-identity/etc/home-gateway-migration");exit(a.dev.major!=b.dev.major || a.dev.minor!=b.dev.minor?0:1);'
+check overlay_old_admission_refuses_after_reboot refused sh /opt/hg-vm-lab/admission-before-overlay-fix.sh --test-root "$ROOT"
 check overlay_admission_after_reboot sh /usr/libexec/home-gateway-deploy/migration-admission.sh --test-root "$ROOT"
 cat /tmp/hg-vm-lab/check.out
+# Same-object metadata/receipt checks must still refuse invalid admission.
+chmod 644 "$ROOT/etc/home-gateway-migration.lock"
+check overlay_guard_mode_refused refused sh /usr/libexec/home-gateway-deploy/migration-admission.sh --test-root "$ROOT"
+chmod 600 "$ROOT/etc/home-gateway-migration.lock"
+mv "$ROOT/etc/home-gateway-migration.lock" "$ROOT/etc/original-migration.lock"
+: > "$ROOT/etc/home-gateway-migration.lock"
+chmod 600 "$ROOT/etc/home-gateway-migration.lock"
+check overlay_replaced_guard_refused refused sh /usr/libexec/home-gateway-deploy/migration-admission.sh --test-root "$ROOT"
+rm "$ROOT/etc/home-gateway-migration.lock"
+mv "$ROOT/etc/original-migration.lock" "$ROOT/etc/home-gateway-migration.lock"
+check overlay_original_guard_readmitted sh /usr/libexec/home-gateway-deploy/migration-admission.sh --test-root "$ROOT"
 total=$(wc -l < "$LAB/checks.log")
 failed=$(grep -c ':FAIL$' "$LAB/checks.log" || true)
 [ "$failed" -eq 0 ] && status=PASS || status=FAIL

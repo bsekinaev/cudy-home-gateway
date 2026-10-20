@@ -86,6 +86,8 @@ def inject(image, workspace, commit, packages, scenario):
     put('/opt/hg-vm-lab/packages/repositories', b'/opt/hg-vm-lab/packages/packages.adb\n', 0o600)
     for source in ('migration-admission.sh', 'engine.sh'):
         put('/usr/libexec/home-gateway-deploy/' + source, git('show', commit + ':scripts/deploy/' + source), 0o700)
+    if scenario == 'overlay-identity':
+        put('/opt/hg-vm-lab/admission-before-overlay-fix.sh', git('show', '908dd3222b81992d9fee056bd015a1266a0ce8d7:scripts/deploy/migration-admission.sh'), 0o700)
     put('/opt/hg-vm-lab/legacy-engine.sh', git('show', commit + ':scripts/deploy/fixtures/legacy-engine-18.sh'), 0o700)
     put('/opt/hg-vm-lab/migration-state.uc', git('show', commit + ':scripts/deploy/migration-state.uc'), 0o600)
     put('/opt/hg-vm-lab/native-batch-inventory.uc', git('show', commit + ':scripts/deploy/native-batch-inventory.uc'), 0o600)
