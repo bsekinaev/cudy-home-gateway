@@ -15,8 +15,8 @@ class Retirement(unittest.TestCase):
   self.put('delivery.json',json.dumps(dict(format='HG_DELIVERY_B_RECORD_V1',source=self.source,manifest_sha256=self.pin,marker=(self.base/'marker').read_text(),guard_inode=self.inode,profile='B_VM_ACCEPTANCE',boot_id='11111111-2222-3333-4444-555555555555')))
  def put(self,name,raw):
   p=self.base/name;p.write_text(raw);p.chmod(0o600)
- def runret(self,mutate=True,nonce=None,bb=None,background=False):
-  code='import {retire_rolled_back} from '+json.dumps(str(MOD))+';print(retire_rolled_back(ARGV[0],ARGV[1],ARGV[2],ARGV[3],ARGV[4],'+str(mutate).lower()+'));'
+ def runret(self,mutate=True,nonce=None,bb=None,background=False,check_only=False):
+  code='import {retire_rolled_back} from '+json.dumps(str(MOD))+';print(retire_rolled_back(ARGV[0],ARGV[1],ARGV[2],ARGV[3],ARGV[4],'+str(mutate).lower()+',null,'+('true' if check_only else 'null')+'));'
   args=['ucode','-e',code,'--',str(self.root),bb or self.bb,nonce or self.nonce,self.source,self.pin]
   body='exec 8< '+shlex.quote(str(self.lock))+'; '+shlex.join([self.bb,'flock','-n','8'])+' && exec '+shlex.join(args)
   cmd=[self.bb,'ash','-c',body]
@@ -26,6 +26,9 @@ class Retirement(unittest.TestCase):
   p=self.runret(mutate);self.assertEqual(p.returncode,0,p.stderr);return p
  def test_retire_repeat_verification_and_new_preparation_preserve_old_evidence(self):
   marker=(self.base/'marker').read_bytes();old=(self.base/'snapshot.json').read_bytes()
+  before={str(p):p.read_bytes() for p in self.base.rglob('*') if p.is_file()}
+  r=self.runret(False,check_only=True);self.assertEqual(r.returncode,0,r.stderr)
+  self.assertEqual(before,{str(p):p.read_bytes() for p in self.base.rglob('*') if p.is_file()});self.assertFalse((self.root/'tmp/home-gateway-deploy.lock').is_symlink())
   self.assertNotEqual(self.runret(False).returncode,0)
   self.ok();self.assertFalse(self.base.exists());self.assertEqual(self.lock.stat().st_ino,self.inode)
   self.assertEqual((self.archive/'snapshot.json').read_bytes(),old);self.assertEqual((self.archive/'marker').read_bytes(),marker)
@@ -44,6 +47,7 @@ class Retirement(unittest.TestCase):
   self.assertNotEqual(self.runret(nonce='11111111-2222-3333-4444-555555555555').returncode,0)
   self.put('phase','COMMITTED\n');self.assertNotEqual(self.runret().returncode,0);self.put('phase','ROLLED_BACK\n')
   ram=self.root/'tmp/home-gateway-deploy.lock';ram.mkdir(mode=0o700);self.assertNotEqual(self.runret().returncode,0);self.assertTrue(ram.is_dir());ram.rmdir()
+  extra=self.root/'etc/rc.d/K08home-gateway-migration';extra.symlink_to('../init.d/home-gateway-migration');self.assertNotEqual(self.runret().returncode,0);self.assertTrue(extra.is_symlink());extra.unlink()
   self.assertFalse(self.archive.exists());self.assertTrue(self.base.exists());self.ok()
  def test_corrupt_archived_snapshot_and_newer_deployment_refuse(self):
   self.ok();p=self.archive/'old/runtime/usr/bin/gateway';raw=p.read_bytes();p.write_bytes(b'corrupt');self.assertNotEqual(self.runret(False).returncode,0);p.write_bytes(raw)

@@ -93,8 +93,9 @@ if ($Stage -eq 'Retire' -or $Stage -eq 'RetireCheck') {
   if (!$session.remoteKit) { Upload-Kit }
   Require-Kit
   $r=Remote ('sh '+$session.remoteKit+'/rc-b.sh retire-check '+$manifestPin+' '+$old.transaction);Success $r
-  $expected='RC_B_RETIREMENT_CHECK=PASS TRANSACTION='+$old.transaction+' ARCHIVE='
-  if (@($r.Lines | Where-Object { $_.StartsWith($expected,[StringComparison]::Ordinal) }).Count -ne 1) { throw 'No retirement check receipt; STOP.' }
+  $expected='RC_B_RETIREMENT_CHECK=PASS TRANSACTION='+$old.transaction+' ARCHIVE=/etc/home-gateway-migration'
+  $receipts=@($expected,($expected+'.retired.'+$old.transaction))
+  if (@($r.Lines | Where-Object { $receipts -ccontains $_ }).Count -ne 1) { throw 'No retirement check receipt; STOP.' }
   $session.retirementChecked=$true;Save-Session
   Write-Host 'RC_B_OWNER_STAGE=RetireCheck RESULT=PASS. Read-only target check; review before explicit Retire.'
   exit 0

@@ -40,6 +40,7 @@ export function retire_rolled_back(root,bb,nonce,source,pin,mutate,authorize,che
   let p=json(raw(where+'/coordinator.json',0600,1024));require(join(',',sort(keys(p)))=='commit,format,manifest_sha256,marker,was_running' && p.format=='HG_NATIVE_COORDINATOR_V1' && p.marker==marker && p.commit==source && type(p.was_running)=='int' && (p.was_running==0 || p.was_running==1) && io.hashes([where+'/candidate/migration.sha256'])[where+'/candidate/migration.sha256']==p.manifest_sha256,'PLAN');
   verify_runtime(root,s,bb,false);verify_private_state(root,s,bb,'prepare',true);verify_private_state(root,s,bb,'rollback',true);
   verify_telegram_boot(root,s,bb,true);inspect_telegram(root,s,p.was_running?'legacy':'stopped');
+  let boots=fs.lsdir(root+'/etc/rc.d');require(boots!=null && length(boots)<=256 && length(filter(boots,n=>match(n,/home-gateway-migration$/) && n!='S08home-gateway-migration'))==0,'EXTRA_BOOT_LINK');
   let controls=json(raw(where+'/controls.json',0600,8192));require(join(',',sort(keys(controls.files)))==join(',',sort([...CONTROLS])),'CONTROL_INVENTORY');
   for(let rel in CONTROLS) {
    if(index(KEEP,rel)>=0 && fs.lstat(root+'/'+rel)!=null) {let rec=controls.files[rel];io.read(root+'/'+rel,rec.mode,262144);require(io.hashes([root+'/'+rel])[root+'/'+rel]==rec.sha256,'CONTROL_DRIFT');}
