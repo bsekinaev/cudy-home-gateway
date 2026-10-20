@@ -1,0 +1,13 @@
+{
+  "bundle": "cudy-hgdeploy2-rc-b-62592457237e7f026786c086d1ca6fdd4b6c095d.tar.gz",
+  "bundle_sha256": "599ebe1d46e644bea3465b336ee74b61f5fb802569dd2c17d9bb82cf0603ef42",
+  "ci": "https://github.com/bsekinaev/cudy-home-gateway/actions/runs/39490486354",
+  "manifest_sha256": "538f8db8f9bcf6ab9a8f074ce5087693d8c140357a2fefe85f0b927b1d546513",
+  "previous_apply_replay": "FORBIDDEN",
+  "production_apply": "OWNER_MANUAL_ONLY",
+  "runner_sha256": "9b2b0ddf2cedf7d59492b94e14e5294d9d4877c02be1456f5ca8eb70947a14ca",
+  "source_commit": "62592457237e7f026786c086d1ca6fdd4b6c095d",
+  "version": "20261020.2",
+  "vm_checks": 506,
+  "vm_failed": 0
+}
