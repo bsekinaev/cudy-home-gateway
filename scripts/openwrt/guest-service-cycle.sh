@@ -58,10 +58,10 @@ result=$(nft -a list chain inet passwall2 PSW2_MANGLE | hg_asata_keeper_plan /de
 [ "$result" = OK ]
 SH
 check asata_real_kernel_position_15 sh "$LAB/asata-check.sh"
-check asata_real_kernel_doctor_ok env HG_ASATA_LEASE_FILE="$LAB/asata.leases" sh -c '. /usr/lib/home-gateway/common.sh; . /usr/lib/home-gateway/doctor.sh; hg_doctor_asata; [ "$HG_DOCTOR_OK" = 1 ] && [ "$HG_DOCTOR_FAIL" = 0 ]'
+check asata_real_kernel_doctor_ok env HG_LIBDIR=/usr/lib/home-gateway HG_ASATA_LEASE_FILE="$LAB/asata.leases" sh -c '. /usr/lib/home-gateway/common.sh; . /usr/lib/home-gateway/doctor.sh; hg_doctor_asata; [ "$HG_DOCTOR_OK" = 1 ] && [ "$HG_DOCTOR_FAIL" = 0 ]'
 check asata_interceptor_insert nft insert rule inet passwall2 PSW2_MANGLE meta l4proto udp jump PSW2_RULE
 check asata_real_kernel_interceptor_refused refused sh "$LAB/asata-check.sh"
-check asata_real_kernel_doctor_refuses env HG_ASATA_LEASE_FILE="$LAB/asata.leases" sh -c '. /usr/lib/home-gateway/common.sh; . /usr/lib/home-gateway/doctor.sh; hg_doctor_asata; [ "$HG_DOCTOR_FAIL" = 1 ]'
+check asata_real_kernel_doctor_refuses env HG_LIBDIR=/usr/lib/home-gateway HG_ASATA_LEASE_FILE="$LAB/asata.leases" sh -c '. /usr/lib/home-gateway/common.sh; . /usr/lib/home-gateway/doctor.sh; hg_doctor_asata; [ "$HG_DOCTOR_FAIL" = 1 ]'
 check asata_fixture_removed nft delete table inet passwall2
 
 root=/etc/hg-native-snapshot
