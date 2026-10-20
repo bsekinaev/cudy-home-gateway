@@ -20,6 +20,50 @@ check prerequisites apk --repositories-file /opt/hg-vm-lab/packages/repositories
 sha256sum /etc/config/network /etc/config/firewall /etc/config/dhcp > "$LAB/network"
 ip route show > "$LAB/routes"
 nft -s list ruleset > "$LAB/nft"
+# Real kernel/nft output, isolated networkless VM only. No owner rule values.
+check asata_fixture_table_absent refused nft list table inet passwall2
+cat > "$LAB/asata.nft" <<'NFT'
+table inet passwall2 {
+ set psw2_vps { type ipv4_addr; }
+ set psw2_wan { type ipv4_addr; }
+ chain PSW2_RULE { }
+ chain PSW2_MANGLE {
+ ip daddr @psw2_vps counter return
+ ct direction reply counter return
+ ip daddr @psw2_wan counter return
+NFT
+printf '%s\n' 'ip protocol udp ether saddr 02:00:00:00:00:02 counter udp dport 53 return' >> "$LAB/asata.nft"
+printf '%s\n' 'ip protocol udp ether saddr 02:00:00:00:00:02 counter ip daddr 198.18.0.0/16 jump PSW2_RULE' >> "$LAB/asata.nft"
+printf '%s\n' 'ip protocol udp ether saddr 02:00:00:00:00:02 counter jump PSW2_RULE' >> "$LAB/asata.nft"
+printf '%s\n' 'ip protocol udp ether saddr 02:00:00:00:00:02 counter jump PSW2_RULE' >> "$LAB/asata.nft"
+printf '%s\n' 'ip protocol udp ether saddr 02:00:00:00:00:02 counter return' >> "$LAB/asata.nft"
+printf '%s\n' 'ip protocol udp ip saddr 192.0.2.228 counter udp dport 53 return' >> "$LAB/asata.nft"
+printf '%s\n' 'ip protocol udp ip saddr 192.0.2.228 counter ip daddr 198.18.0.0/16 jump PSW2_RULE' >> "$LAB/asata.nft"
+printf '%s\n' 'ip protocol udp ip saddr 192.0.2.228 counter jump PSW2_RULE' >> "$LAB/asata.nft"
+printf '%s\n' 'ip protocol udp ip saddr 192.0.2.228 counter jump PSW2_RULE' >> "$LAB/asata.nft"
+printf '%s\n' 'ip protocol udp ip saddr 192.0.2.228 counter return' >> "$LAB/asata.nft"
+cat >> "$LAB/asata.nft" <<'NFT'
+ ip protocol udp udp dport 53 counter return
+ ip saddr 192.168.1.140 meta l4proto udp counter return comment "ASATA-UDP-DIRECT"
+ }
+}
+NFT
+printf '0 58:04:4f:81:09:6b 192.168.1.140 fixture *\n' > "$LAB/asata.leases"
+check asata_kernel_fixture nft -f "$LAB/asata.nft"
+cat > "$LAB/asata-check.sh" <<'SH'
+. /usr/lib/home-gateway/asata.sh
+export HG_ASATA_LEASE_FILE=/tmp/hg-service-cycle/asata.leases
+set -o pipefail
+result=$(nft -a list chain inet passwall2 PSW2_MANGLE | hg_asata_keeper_plan /dev/stdin) || exit 1
+[ "$result" = OK ]
+SH
+check asata_real_kernel_position_15 sh "$LAB/asata-check.sh"
+check asata_real_kernel_doctor_ok env HG_LIBDIR=/usr/lib/home-gateway HG_ASATA_LEASE_FILE="$LAB/asata.leases" sh -c '. /usr/lib/home-gateway/common.sh; . /usr/lib/home-gateway/doctor.sh; hg_doctor_asata; [ "$HG_DOCTOR_OK" = 1 ] && [ "$HG_DOCTOR_FAIL" = 0 ]'
+check asata_interceptor_insert nft insert rule inet passwall2 PSW2_MANGLE meta l4proto udp jump PSW2_RULE
+check asata_real_kernel_interceptor_refused refused sh "$LAB/asata-check.sh"
+check asata_real_kernel_doctor_refuses env HG_LIBDIR=/usr/lib/home-gateway HG_ASATA_LEASE_FILE="$LAB/asata.leases" sh -c '. /usr/lib/home-gateway/common.sh; . /usr/lib/home-gateway/doctor.sh; hg_doctor_asata; [ "$HG_DOCTOR_FAIL" = 1 ]'
+check asata_fixture_removed nft delete table inet passwall2
+
 root=/etc/hg-native-snapshot
 # Production OpenWrt can report backing-file st_dev different from overlay
 # directories. Exercise the actual rc.common/procd + FD8 handshake in that

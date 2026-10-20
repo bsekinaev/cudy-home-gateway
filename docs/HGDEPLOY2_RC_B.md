@@ -181,3 +181,18 @@ they reconstruct the PID-less receiver fence even while the active state path
 is absent. Only durable retirement completion permits their removal. Unknown
 or changed retirement guards refuse recovery. The reboot gate attempts the
 unmodified trusted HG1 writer before resume and verifies its journal unchanged.
+
+## RC-B 20261020.2: ASATA prefix compatibility
+
+Owner RC-B 20261020.1 transaction a7376b1d-2405-440b-9349-e5e94cb88ae6
+reached candidate service handoff and selftest 62/0, but doctor refused the
+exact ASATA rule at position 15. Explicit rollback/verify reached ROLLED_BACK,
+legacy selftest 58/0 and doctor 11/0/0. No COMMITTED result was published.
+Owner read-only evidence isolated the absolute-first-position predicate; no
+network repair is authorized or included. Prefix compatibility follows the
+restricted proof in ASATA_KEEPER.md and is checked before Prepare.
+
+Retirement now accepts exactly the immutable source/manifest/bundle pins for
+20261019.2 and 20261020.1. Both archived states and both old Windows sessions
+must be preserved. Use a fresh 20261020.2 session and the 20261020.1 session as
+PreviousSessionFile. No wildcard source acceptance or old Apply replay.

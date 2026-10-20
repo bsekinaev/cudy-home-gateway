@@ -58,8 +58,8 @@ class AsataTests(unittest.TestCase):
     def test_duplicate_is_degraded(self):
         self.assertEqual(self.collect(self.rule() * 2), 'DEGRADED 2 24 690')
 
-    def test_valid_rule_after_another_rule_is_degraded(self):
-        self.assertEqual(self.collect('meta l4proto tcp return # handle 1\n' + self.rule()), 'DEGRADED 1 12 345')
+    def test_disjoint_tcp_prefix_is_safe(self):
+        self.assertEqual(self.collect('meta l4proto tcp return # handle 1\n' + self.rule()), 'OK 1 12 345')
 
     def test_missing_rule(self):
         self.assertEqual(self.collect(''), 'DOWN 0 0 0')

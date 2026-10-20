@@ -92,10 +92,35 @@ if(vm) {
  verify_owner_hardware(b,fs.readfile('/proc/meminfo')??'');
 }
 const retired_prefix='home-gateway-migration.retired.';
-function retirement_identity() {return owner?{source:'908dd3222b81992d9fee056bd015a1266a0ce8d7',pin:'67b65f1ceabe1534ff74fba8f6c486e9d02bfce9a7e7999875bd11929df467a1'}:{source:m.source_commit,pin};}
-function retire(nonce,mutate,check_only) {let old=retirement_identity();return retire_rolled_back('',null,nonce,old.source,old.pin,mutate,function(){return 'HGDEPLOY2_DELIVERY_B_V1';},check_only);}
+function verify_asata_baseline() {
+ if(owner) {
+  const probe='set -o pipefail; . "$1"; chain=$(timeout -k 1 5 nft -a list chain inet passwall2 PSW2_MANGLE | head -c 65537; rc=$?; printf .; exit "$rc") || exit 1; chain=${chain%.}; [ "$(printf %s "$chain" | wc -c)" -le 65536 ] || exit 1; result=$(printf "%s\\n" "$chain" | hg_asata_keeper_plan /dev/stdin) || exit 1; [ "$result" = OK ] || exit 1; printf "RC_B_ASATA_PREFLIGHT=PASS\\n"';
+  let r=command(['timeout','-k','2','30','/bin/ash','-c',probe,'asata-preflight',kit+'/candidate/usr/lib/home-gateway/asata.sh'],1024);
+  require(r.code==0 && r.raw=='RC_B_ASATA_PREFLIGHT=PASS\n','ASATA_BASELINE');
+  print(r.raw);
+ }
+}
+function retirement_identity(nonce) {
+ if(!owner)return {source:m.source_commit,pin};
+ require(match(nonce,/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),'RETIRE_IDENTITY');
+ let where=fs.lstat(base)!=null?base:base+'.retired.'+nonce;
+ let record=json(read(where+'/delivery.json',0600,1024));
+ const accepted={
+  '908dd3222b81992d9fee056bd015a1266a0ce8d7':'67b65f1ceabe1534ff74fba8f6c486e9d02bfce9a7e7999875bd11929df467a1',
+  '6b7d3ada6fe6b513e08db22469ccde10a6d47ee3':'10a5ac968a539a9c0287d4b711f065acdc71d54382854803d1b3fc0b551b6501'
+ };
+ require(accepted[record.source]!=null && accepted[record.source]==record.manifest_sha256,'RETIRE_OLD_PACKAGE');
+ return {source:record.source,pin:record.manifest_sha256};
+}
+function retire(nonce,mutate,check_only) {let old=retirement_identity(nonce);return retire_rolled_back('',null,nonce,old.source,old.pin,mutate,function(){return 'HGDEPLOY2_DELIVERY_B_V1';},check_only);}
 if(op=='retire' || op=='retire-check' || op=='verify-retired') {
  require(length(ARGV)==4,'RETIRE_ARGUMENTS');
+ // Check compatibility before an untouched old state is retired. An already
+ // interrupted retirement must remain recoverable without network-health gates.
+ if((op=='retire-check' || op=='retire') && fs.lstat(base)!=null &&
+    fs.lstat(base+'/retirement.json')==null && fs.lstat(base+'/retirement.json.new')==null &&
+    fs.lstat('/etc/init.d/home-gateway-retirement')==null && fs.lstat('/etc/init.d/home-gateway-retirement.new')==null &&
+    fs.lstat('/etc/rc.d/S07home-gateway-retirement')==null)verify_asata_baseline();
  let archive=retire(tx,op=='retire',op=='retire-check'?true:null);print((op=='retire'?'RC_B_RETIREMENT=PASS':op=='retire-check'?'RC_B_RETIREMENT_CHECK=PASS':'RC_B_RETIREMENT_VERIFIED=PASS')+' TRANSACTION='+tx+' ARCHIVE='+archive+'\n');exit(0);
 }
 if(op=='preflight' || op=='prepare') {
@@ -112,6 +137,7 @@ if(op=='preflight' || op=='prepare') {
  for(let n in ['telegram.token','telegram.user_id','telegram.chat_id'])require(length(read('/etc/home-gateway/secrets/'+n,0600,8192))>0,'PRIVATE_INPUT');
  verify_available_memory(fs.readfile('/proc/meminfo')??'');
  let old=command(['timeout','-k','2','90','/bin/sh',kit+'/legacy-preflight.sh','4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e']);require(old.code==0,'LEGACY_BASELINE');
+ verify_asata_baseline();
  if(op=='preflight') {print('RC_B_PREFLIGHT=PASS SOURCE='+m.source_commit+' SERVICE_INTENT=CHECKED_DURING_PREPARE\n');exit(0);}
 }
 require(op=='prepare'?length(ARGV)==3:(type(tx)=='string' && match(tx,/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)),'TRANSACTION');

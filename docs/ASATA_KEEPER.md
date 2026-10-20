@@ -8,11 +8,20 @@ Runtime inventory не расширяется; обычный deploy Gateway н�
 gateway asata-keeper check
 ```
 
-Read-only nft check проверяет единственное правило `ASATA-UDP-DIRECT` первым в
+Read-only nft check проверяет единственное правило `ASATA-UDP-DIRECT` с проверенным префиксом в
 `inet passwall2 PSW2_MANGLE`: ровно source `192.168.1.140`, `meta l4proto udp`,
 `counter`, `return`, comment; никаких дополнительных условий/verdict/mark.
 Имена таблицы/цепочки и адрес фиксированы, аргументы пользователя не становятся
-nft expressions. Доктор использует эту проверку, collector учитывает порядок.
+nft expressions. Доктор и collector используют одну проверку безопасного префикса.
+Требование абсолютной позиции 1 устранено: допускаются только известные
+return-only формы PassWall2 или начальный match, доказанно исключающий ASATA
+(другой одиночный IPv4 / TCP / другой MAC при подтверждённой identity).
+Для MAC нужны непротиворечивые bounded neighbor/lease observations ожидаемого
+ASATA; неизвестная identity, subnet/negation, mark перед match, потенциальный
+перехват UDP или неизвестный префикс остаются отказом. Никакие наборы/правила
+не перемещаются и не меняются. Числовой l4proto 17 эквивалентен udp.
+Вывод OK подтверждает этот ограниченный контракт, а не проверку всех routes.
+Candidate ASATA проверяется read-only до Prepare; malformed input остаётся NO-GO.
 
 Коды: 0 — OK; 1 — NEEDS_REPAIR; 2 — usage; 70 — disabled/ошибка/неподтверждённый
 input; 73 — lock busy. Check не делает repair и не возвращает batch наружу.
