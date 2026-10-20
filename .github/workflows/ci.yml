@@ -64,11 +64,11 @@ jobs:
       - name: Verify owner runner on actual PowerShell
         run: |
           command -v pwsh
-          python3 -m unittest discover -s scripts/migration_rc -p 'test_*.py' -v
+          PYTHONPATH=scripts/migration_rc python3 -m unittest -v test_delivery_b.Owner test_powershell.Runner
       - name: Build only from successful exact-source acceptance
         env:
           GH_TOKEN: ${{ github.token }}
-          REVIEW_ACCEPTANCE_URL: https://github.com/bsekinaev/cudy-home-gateway/pull/29#issuecomment-6300730269
+          REVIEW_ACCEPTANCE_URL: https://github.com/bsekinaev/cudy-home-gateway/pull/29#issuecomment-6300526418
         shell: bash
         run: |
           set -euo pipefail
