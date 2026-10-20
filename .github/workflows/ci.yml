@@ -111,7 +111,7 @@ jobs:
           for row in manifest['files']:
            p=row['path'];prefix=next((x for x in ('candidate/','controls/') if p.startswith(x)),None)
            if prefix is None or p.endswith('.sha256'):continue
-           item=dict(row);item['install_path']='/'+p[len(prefix):];item['category']='control' if prefix=='controls/' else 'receiver' if p[len(prefix):] in receiver else 'runtime';install.append(item)
+           item=dict(row);item['mode_octal']=format(row['mode'],'04o');item['install_path']='/'+p[len(prefix):];item['category']='control' if prefix=='controls/' else 'receiver' if p[len(prefix):] in receiver else 'runtime';install.append(item)
           assert {k:sum(x['category']==k for x in install) for k in ('runtime','receiver','control')}==dict(runtime=20,receiver=3,control=11)
           (out/'install-manifest.json').write_text(json.dumps(install,sort_keys=True,indent=2)+'\n')
           def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
