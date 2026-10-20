@@ -21,6 +21,13 @@ sha256sum /etc/config/network /etc/config/firewall /etc/config/dhcp > "$LAB/netw
 ip route show > "$LAB/routes"
 nft -s list ruleset > "$LAB/nft"
 root=/etc/hg-native-snapshot
+# Production OpenWrt can report backing-file st_dev different from overlay
+# directories. Exercise the actual rc.common/procd + FD8 handshake in that
+# configuration too, rather than only the terminal admission primitive.
+mkdir -m 700 /tmp/hg-service-overlay-upper /tmp/hg-service-overlay-work
+chmod 700 "$root"
+mount -t overlay overlay -o "lowerdir=$root,upperdir=/tmp/hg-service-overlay-upper,workdir=/tmp/hg-service-overlay-work,xino=off" "$root" || exit 1
+check service_overlay_mounted grep -q '^overlay /etc/hg-native-snapshot overlay ' /proc/mounts
 mkdir -m 700 "$root/tmp" "$root/etc/home-gateway-deploy"
 mkdir -m 755 "$root/etc/rc.d"
 chmod 700 "$root"
@@ -72,6 +79,7 @@ check running_service_apply ucode "$LAB/stage.uc" apply
 check old_service_stopped ucode "$LAB/stage.uc" stopped
 check apply_boot_quarantined sh -c '[ ! -L /etc/hg-native-snapshot/etc/rc.d/S95home-gateway-telegram ]'
 check private_unchanged_before_start sha256sum -c "$LAB/private.sha256"
+check service_guard_directory_devices_differ ucode -e 'import * as fs from "fs";let a=fs.lstat("/etc/hg-native-snapshot/etc/home-gateway-migration.lock"),b=fs.lstat("/etc/hg-native-snapshot/etc/home-gateway-migration");exit(a.dev.major!=b.dev.major || a.dev.minor!=b.dev.minor?0:1);'
 check candidate_provisional_start env HG_MIGRATION_SERVICE_HANDOFF=1 "$root/etc/init.d/home-gateway-telegram" start
 sleep 1
 check candidate_processes_verified ucode "$LAB/stage.uc" candidate

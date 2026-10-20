@@ -75,8 +75,13 @@ if (fs.lstat(BASE) != null || fs.lstat(LOCK) != null || borrowed) {
     identity=st;
 }
 if (fs.lstat(BASE) == null) { require(!provisional && fs.lstat(FENCE) == null); exit(0); }
-let base_stat=checked(BASE, 'directory', 0700, 0);
-require(identity.dev.major == base_stat.dev.major && identity.dev.minor == base_stat.dev.minor);
+checked(BASE, 'directory', 0700, 0);
+// Overlayfs may report its own st_dev for directories and the upper backing
+// st_dev for regular files. Compare the guard to the SAME guard, never to BASE.
+// Revalidate path identity after acquiring/borrowing the lock; fail closed if
+// the lock path was replaced, including a same-inode object on another device.
+let current_guard=checked(LOCK, 'file', 0600, 0);
+require(current_guard.inode == identity.inode && current_guard.dev.major == identity.dev.major && current_guard.dev.minor == identity.dev.minor);
 let marker=read(BASE + '/marker', 128);
 require(match(marker, /^HG_MIGRATION_STATE_V1 [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\n$/) != null);
 require(fs.lstat(BASE + '/phase.new') == null && fs.lstat(BASE + '/admission.new') == null);

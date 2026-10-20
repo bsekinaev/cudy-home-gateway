@@ -36,4 +36,31 @@ class ReportTests(unittest.TestCase):
             with self.assertRaises(ValueError): parse_result(text, {'boot'})
 
 
+class AdmissionFixtureTests(unittest.TestCase):
+    def test_fresh_repository_needs_only_vendored_fixture_and_refuses_drift(self):
+        import subprocess
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import run_vm
+        rel = 'scripts/deploy/fixtures/rc-b-20261019.2-admission.sh'
+        expected = (run_vm.ROOT / rel).read_bytes()
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            def commit(raw):
+                f = root / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(raw)
+                subprocess.run(['git', '-C', d, 'add', '.'], check=True)
+                subprocess.run(['git', '-C', d, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'Fixture only'], check=True)
+                return subprocess.check_output(['git', '-C', d, 'rev-parse', 'HEAD'], text=True).strip()
+            head = commit(expected)
+            missing = subprocess.run(['git', '-C', d, 'cat-file', '-e', '908dd3222b81992d9fee056bd015a1266a0ce8d7'], capture_output=True)
+            self.assertNotEqual(missing.returncode, 0)
+            with patch.object(run_vm, 'ROOT', root):
+                self.assertEqual(run_vm.regression_admission(head), expected)
+                corrupt = commit(expected + b'# drift\n')
+                with self.assertRaisesRegex(ValueError, 'ADMISSION_REGRESSION_FIXTURE_SHA256'):
+                    run_vm.regression_admission(corrupt)
+
+
 if __name__ == '__main__': unittest.main()

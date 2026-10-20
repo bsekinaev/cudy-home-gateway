@@ -55,6 +55,13 @@ def debug_quote(value):
     return value
 
 
+def regression_admission(commit):
+    # Exact published .2 bytes; do not depend on a squashed PR object.
+    before = git('show', commit + ':scripts/deploy/fixtures/rc-b-20261019.2-admission.sh')
+    require(hashlib.sha256(before).hexdigest() == 'fd67fe516a98da0fd9cef2a444af85c573c66ea096efcd90cc60bed6e3e4875a', 'ADMISSION_REGRESSION_FIXTURE_SHA256')
+    return before
+
+
 def inject(image, workspace, commit, packages, scenario):
     commands = []
     created = set()
@@ -86,6 +93,8 @@ def inject(image, workspace, commit, packages, scenario):
     put('/opt/hg-vm-lab/packages/repositories', b'/opt/hg-vm-lab/packages/packages.adb\n', 0o600)
     for source in ('migration-admission.sh', 'engine.sh'):
         put('/usr/libexec/home-gateway-deploy/' + source, git('show', commit + ':scripts/deploy/' + source), 0o700)
+    if scenario == 'overlay-identity':
+        put('/opt/hg-vm-lab/admission-before-overlay-fix.sh', regression_admission(commit), 0o700)
     put('/opt/hg-vm-lab/legacy-engine.sh', git('show', commit + ':scripts/deploy/fixtures/legacy-engine-18.sh'), 0o700)
     put('/opt/hg-vm-lab/migration-state.uc', git('show', commit + ':scripts/deploy/migration-state.uc'), 0o600)
     put('/opt/hg-vm-lab/native-batch-inventory.uc', git('show', commit + ':scripts/deploy/native-batch-inventory.uc'), 0o600)
