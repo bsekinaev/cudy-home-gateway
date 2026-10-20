@@ -23,9 +23,10 @@ class LiveDiagnostics(unittest.TestCase):
         self.put('admission', f'HG_MIGRATION_ADMITTED_V2 ROLLED_BACK {NONCE} {self.lock.stat().st_ino}\n')
         self.put('service-check', f'HG_MIGRATION_SERVICE_CHECK_V1 {NONCE} {self.lock.stat().st_ino}\n')
         # The diagnostic has no production input/root override. Adapt constants
-        # in a disposable source copy solely for the native test.
+        # and fixture UID/GID in a disposable source copy solely for the native
+        # test. GitHub hosted runners are not root; production still requires 0:0.
         self.script = self.root / 'probe.uc'
-        self.script.write_text(SOURCE.read_text().replace("const BASE='/etc/home-gateway-migration', LOCK='/etc/home-gateway-migration.lock';", f"const BASE='{self.base}', LOCK='{self.lock}';"))
+        self.script.write_text(SOURCE.read_text().replace("const BASE='/etc/home-gateway-migration', LOCK='/etc/home-gateway-migration.lock';", f"const BASE='{self.base}', LOCK='{self.lock}';").replace("st.uid!=0 || st.gid!=0", f"st.uid!={os.getuid()} || st.gid!={os.getgid()}"))
 
     def put(self, name, raw):
         path = self.base / name
