@@ -15,7 +15,7 @@ Transaction: `38bd5771-7472-45e7-8e2f-e4a37f7948ab`.
 - Windows session and owner evidence must be preserved. Published RC-B bundles
   remain immutable. Owner RC-A directories must not be removed.
 
-## RCA status: specific rejecting predicate UNCONFIRMED
+## Initial RCA before owner metadata: specific predicate was UNCONFIRMED
 
 `migration-admission.sh` has one generic require() failure message for every
 assertion. The quoted message alone does not identify FD8, ticket, metadata,
@@ -59,3 +59,39 @@ old Apply or edit Windows session to reset applyAttempted.
 
 `PRODUCTION_MIGRATION=BLOCKED`
 `READY_FOR_OWNER_MANUAL_MIGRATION=NO`
+
+## Confirmed owner diagnostic and reproduced defect (2026-10-20)
+
+Owner read-only probe: FD8_PRESENT=true, FD8_IDENTITY=true,
+GUARD_SAME_FILESYSTEM=false. Guard is regular root:root 0600, inode 2399,
+st_dev=0:21; migration BASE is root:root 0700, st_dev=0:20. Marker, phase,
+admission, service ticket, coordinator and handoff bindings match. No pending
+publication files; RAM fence absent after verified rollback. The retained
+handoff directory is expected rollback evidence, not grounds to replay Apply.
+
+The specific faulty assertion in migration-admission.sh compared the regular
+lock file's device to BASE directory's device. Linux overlayfs permits these to
+differ: https://docs.kernel.org/filesystems/overlayfs.html . The path is reached
+before provisional phase/ticket/runtime checks, and the supplied owner metadata
+makes its predicate false. FD8 loss is not needed to explain this failure; this
+does not prove every later candidate admission predicate would pass on CUDY.
+
+Minimal fix compares the same guard's inode AND device again after acquiring
+or borrowing the lock. FD8, lock metadata, ancestry, receipts, fence, manifest,
+runtime and anchor verification remain intact. Do not require uniform st_dev,
+enable xino or change production mounts to accommodate the installer.
+
+The previous VM overlay regression used lower/upper on the same ext4 backing
+filesystem, which reports uniform st_dev even with xino=off. Corrected test uses
+a tmpfs lower and durable ext4 upper and asserts their device IDs differ.
+Unfixed source 908dd32 gate exits 73; fixed gate admits the exact same fixture,
+before and after real guest reboot/supervised cold boot. Wrong-mode and replaced
+guard refusals remain mandatory. Local initial reproduction: 19 PASS / 0 FAIL
+at 61a98fc772c247ed2cf8f19e4ed7b041bb1e7392. Exact final-head acceptance must be
+recorded separately; do not relabel that report with a later source SHA.
+
+Owner rc.common SHA dd8ae95c78d10cccf78cb487874f163ace4c1ee14dace05fe28393b19ba639e4
+and procd.sh SHA 496d6c5246390db3c514ca1dc9c34305f5806fb59cc627127072617ffd0719e1
+match the locally extracted official OpenWrt input. These are public system-file
+hashes; private configuration was not requested. Production access/operations
+by Work remain zero. Installer retry remains BLOCKED by retained terminal state.
