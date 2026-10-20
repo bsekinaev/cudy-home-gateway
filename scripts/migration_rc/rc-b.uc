@@ -1,5 +1,6 @@
 // Delivery B's sole production boundary. No arbitrary command/file interface.
 import * as fs from 'fs';
+import {retire_rolled_back} from './native/migration-retirement.uc';
 import {open_state} from './native/migration-state.uc';
 import {snapshot_io,prepare_legacy_snapshot} from './native/migration-snapshot.uc';
 import {prepare_candidate_snapshot} from './native/migration-candidate.uc';
@@ -73,12 +74,12 @@ require(owner || vm,'PRODUCTION_NOT_ACCEPTED');
 if(owner) {
  require(records['acceptance.json']!=null,'ACCEPTANCE_REQUIRED');let a=json(read(kit+'/acceptance.json',0600,262144));
  require(a.format=='HG_DELIVERY_B_ACCEPTANCE_V1' && a.commit==m.source_commit && type(a.reports)=='object','ACCEPTANCE_SOURCE');
- for(let name in ['rc-b-root-cycle','rc-b-crash-apply','rc-b-crash-restore','overlay-identity']) {
+ for(let name in ['rc-b-root-cycle','rc-b-crash-apply','rc-b-crash-restore','overlay-identity','service-cycle','retirement-reboot']) {
   let r=a.reports[name];require(r?.commit==m.source_commit && r.status=='PASS' && r.failed==0 && r.total>0 && type(r.checks)=='object' && length(filter(keys(r.checks),k=>r.checks[k]!='PASS'))==0,'ACCEPTANCE_FAILED');
  }
 }
 if(op=='check') {print('RC_B_PACKAGE=VERIFIED SOURCE='+m.source_commit+' PROFILE='+m.delivery+'\n');exit(0);}
-require(index(['preflight','prepare','apply','commit','rollback','complete-rollback','complete-abort','verify','service'],op)>=0,'OPERATION');
+require(index(['preflight','prepare','apply','commit','rollback','complete-rollback','complete-abort','verify','service','retire','retire-check','verify-retired'],op)>=0,'OPERATION');
 require(match(fs.readfile('/etc/openwrt_release')??'',/DISTRIB_RELEASE='25\.12\.5'/),'OPENWRT_VERSION');
 let version=fs.popen('/bin/busybox ash --help 2>&1','r');require(version!=null,'BUSYBOX');let v=version.read(4097);version.close();require(type(v)=='string' && length(v)<=4096 && index(v,'BusyBox v1.37.0')>=0,'BUSYBOX_VERSION');
 require(trim(fs.readfile('/proc/1/comm')??'')=='procd','PROCD_PID1');
@@ -90,13 +91,28 @@ if(vm) {
  let board=command(['ubus','-S','call','system','board'],8192);require(board.code==0,'BOARD');let b=json(board.raw);
  verify_owner_hardware(b,fs.readfile('/proc/meminfo')??'');
 }
-if(op=='preflight') {
+const retired_prefix='home-gateway-migration.retired.';
+function retirement_identity() {return owner?{source:'908dd3222b81992d9fee056bd015a1266a0ce8d7',pin:'67b65f1ceabe1534ff74fba8f6c486e9d02bfce9a7e7999875bd11929df467a1'}:{source:m.source_commit,pin};}
+function retire(nonce,mutate,check_only) {let old=retirement_identity();return retire_rolled_back('',null,nonce,old.source,old.pin,mutate,function(){return 'HGDEPLOY2_DELIVERY_B_V1';},check_only);}
+if(op=='retire' || op=='retire-check' || op=='verify-retired') {
+ require(length(ARGV)==4,'RETIRE_ARGUMENTS');
+ let archive=retire(tx,op=='retire',op=='retire-check'?true:null);print((op=='retire'?'RC_B_RETIREMENT=PASS':op=='retire-check'?'RC_B_RETIREMENT_CHECK=PASS':'RC_B_RETIREMENT_VERIFIED=PASS')+' TRANSACTION='+tx+' ARCHIVE='+archive+'\n');exit(0);
+}
+if(op=='preflight' || op=='prepare') {
  require(length(ARGV)==3 && fs.lstat(base)==null,'EXISTING_MIGRATION');
+ let retired=filter(fs.lsdir('/etc')??[],n=>index(n,retired_prefix)==0);require(length(retired)<=8,'RETIREMENT_BUDGET');
+ for(let name in retired) {
+  // The verifier borrows/closes only its child FD8. Keep this caller's FD8
+  // intact for Prepare's open_state() and for every subsequent archive.
+  let nonce=substr(name,length(retired_prefix));require(match(nonce,/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),'ARCHIVE_NAME');
+  let r=command(['timeout','-k','2','180','/usr/bin/ucode',kit+'/rc-b.uc',kit,'verify-retired',pin,nonce],4096);
+  require(r.code==0 && r.raw=='RC_B_RETIREMENT_VERIFIED=PASS TRANSACTION='+nonce+' ARCHIVE=/etc/'+name+'\n','RETIREMENT_ARCHIVE');
+ }
  checked('/etc/home-gateway','directory',0700,0);checked('/etc/home-gateway/secrets','directory',0700,0);
  for(let n in ['telegram.token','telegram.user_id','telegram.chat_id'])require(length(read('/etc/home-gateway/secrets/'+n,0600,8192))>0,'PRIVATE_INPUT');
  verify_available_memory(fs.readfile('/proc/meminfo')??'');
  let old=command(['timeout','-k','2','90','/bin/sh',kit+'/legacy-preflight.sh','4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e']);require(old.code==0,'LEGACY_BASELINE');
- print('RC_B_PREFLIGHT=PASS SOURCE='+m.source_commit+' SERVICE_INTENT=CHECKED_DURING_PREPARE\n');exit(0);
+ if(op=='preflight') {print('RC_B_PREFLIGHT=PASS SOURCE='+m.source_commit+' SERVICE_INTENT=CHECKED_DURING_PREPARE\n');exit(0);}
 }
 require(op=='prepare'?length(ARGV)==3:(type(tx)=='string' && match(tx,/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)),'TRANSACTION');
 let delivery=function() {

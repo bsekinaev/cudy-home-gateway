@@ -98,6 +98,23 @@ check complete_rollback_repeat ucode "$LAB/stage.uc" complete
 check rolled_back_and_released sh -c '[ "$(cat /etc/hg-native-snapshot/etc/home-gateway-migration/phase)" = ROLLED_BACK ] && [ ! -e /etc/hg-native-snapshot/tmp/home-gateway-deploy.lock ]'
 check rollback_boot_enablement_restored test -L "$root/etc/rc.d/S95home-gateway-telegram"
 check private_unchanged_after_rollback sha256sum -c "$LAB/private.sha256"
+# Explicit synthetic delivery metadata for the namespace primitive. The real
+# root/owner package entrypoint is tested separately by retirement-reboot.
+cat > "$LAB/retire.uc" <<'UC'
+import * as fs from 'fs';
+import {retire_rolled_back} from '/opt/hg-vm-lab/migration-retirement.uc';
+let root='/etc/hg-native-snapshot',base=root+'/etc/home-gateway-migration';
+if(ARGV[0]=='retire') {
+ let marker=fs.readfile(base+'/marker'),nonce=trim(substr(marker,22)),lock=fs.lstat(root+'/etc/home-gateway-migration.lock');
+ fs.writefile(base+'/delivery.json',sprintf('%J\n',{format:'HG_DELIVERY_B_RECORD_V1',source:'cccccccccccccccccccccccccccccccccccccccc',manifest_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',marker,guard_inode:lock.inode,profile:'B_VM_ACCEPTANCE',boot_id:trim(fs.readfile('/proc/sys/kernel/random/boot_id'))}));fs.chmod(base+'/delivery.json',0600);
+ fs.writefile('/tmp/hg-service-cycle/retirement-nonce',nonce);fs.chmod('/tmp/hg-service-cycle/retirement-nonce',0600);
+ let p=fs.popen('busybox fsync '+base+'/delivery.json '+base,'r');if(p.close()!=0)die('FSYNC');
+}
+let nonce=fs.readfile('/tmp/hg-service-cycle/retirement-nonce');
+print(retire_rolled_back(root,'/bin/busybox',nonce,'cccccccccccccccccccccccccccccccccccccccc','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',ARGV[0]=='retire'));
+UC
+check nonuniform_overlay_retirement ucode "$LAB/retire.uc" retire
+check nonuniform_overlay_retirement_verified ucode "$LAB/retire.uc" verify
 check network_config_unchanged sha256sum -c "$LAB/network"
 ip route show > "$LAB/routes.after"
 nft -s list ruleset > "$LAB/nft.after"
