@@ -14,6 +14,11 @@ check() {
  cat /tmp/hg-retirement-output
 }
 refused() { "$@";[ "$?" -ne 0 ]; }
+legacy_fenced() {
+ sh /usr/libexec/home-gateway-deploy/engine.sh "$@" > /tmp/hg-retirement-legacy-probe 2>&1
+ rc=$?
+ [ "$rc" -ne 0 ] && grep -qx 'DEPLOY_ERROR: lock incomplete; inspect locally' /tmp/hg-retirement-legacy-probe
+}
 if [ ! -e "$LAB/stage" ];then
 : > "$LAB/checks"
 check procd_pid1 sh -c '[ "$(cat /proc/1/comm)" = procd ]'
@@ -87,6 +92,12 @@ archive=/etc/home-gateway-migration.retired.$nonce
 check reboot_changed_boot_id refused cmp "$LAB/boot.before" /proc/sys/kernel/random/boot_id
 check archive_survives_reboot test -d "$archive"
 check no_boot_replay sh -c '[ ! -e /etc/home-gateway-migration ]'
+# The trusted HG1 receiver must remain fenced after RAM loss and before resume.
+# It must refuse before parsing or modifying any deployment state.
+check retirement_boot_fence_restored test -L /tmp/home-gateway-deploy.lock
+check legacy_apply_after_reboot_refused legacy_fenced apply bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb "$(cat /opt/hg-vm-lab/legacy-fixture.sha256)" < /opt/hg-vm-lab/legacy-fixture.wire
+check legacy_recover_after_reboot_refused legacy_fenced recover
+check legacy_journal_before_resume_unchanged sha256sum -c "$LAB/legacy-journal.sha256"
 check guard_inode_preserved sh -c '[ "$(stat -c %i /etc/home-gateway-migration.lock)" = "$(cat /etc/hg-vm-lab/retirement/guard.before)" ]'
 kit=/tmp/hg-rc-b-kit
 mkdir -m 700 "$kit"

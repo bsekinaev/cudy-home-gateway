@@ -33,7 +33,7 @@ class Retirement(unittest.TestCase):
   self.ok();self.assertFalse(self.base.exists());self.assertEqual(self.lock.stat().st_ino,self.inode)
   self.assertEqual((self.archive/'snapshot.json').read_bytes(),old);self.assertEqual((self.archive/'marker').read_bytes(),marker)
   self.assertFalse((self.root/'tmp/home-gateway-deploy.lock').is_symlink())
-  for rel in ['etc/rc.d/S08home-gateway-migration','etc/init.d/home-gateway-migration','usr/libexec/home-gateway-deploy/migration-state.uc']:self.assertFalse((self.root/rel).exists(),rel)
+  for rel in ['etc/rc.d/S08home-gateway-migration','etc/init.d/home-gateway-migration','usr/libexec/home-gateway-deploy/migration-state.uc','etc/init.d/home-gateway-retirement','etc/rc.d/S07home-gateway-retirement']:self.assertFalse((self.root/rel).exists(),rel)
   self.ok(False);self.ok();self.ok(False)
   p=self.f.runuc('s.close()') # old fixture opens existing state; must refuse.
   self.assertNotEqual(p.returncode,0)
@@ -68,6 +68,13 @@ class Retirement(unittest.TestCase):
    self.assertTrue(ready.exists(),'Retirement did not reach injected checkpoint')
    os.killpg(proc.pid,signal.SIGKILL);proc.communicate(timeout=10)
    self.assertEqual(self.lock.stat().st_ino,self.inode)
+   if phase!='before_archive':
+    ram=self.root/'tmp/home-gateway-deploy.lock';ram.unlink() # simulate lost tmpfs
+    boot=self.root/'etc/init.d/home-gateway-retirement'
+    self.assertTrue(boot.exists());self.assertTrue((self.root/'etc/rc.d/S07home-gateway-retirement').is_symlink())
+    r=subprocess.run([self.bb,'ash','-c','. "$1"; start','sh',str(boot)],capture_output=True,text=True)
+    self.assertEqual(r.returncode,0,r.stderr);self.assertTrue(ram.is_symlink())
+    self.assertEqual(os.readlink(ram),str(self.archive/'fence'))
    self.ok();self.ok(False);self.assertFalse(self.base.exists())
   finally:
    if proc.poll() is None:os.killpg(proc.pid,signal.SIGKILL);proc.communicate()

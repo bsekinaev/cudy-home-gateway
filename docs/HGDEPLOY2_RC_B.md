@@ -174,3 +174,10 @@ A different historical candidate requires separate acceptance; do not repin it.
 Owner bundle generation now additionally requires exact-source running-service
 and retirement SIGKILL/reboot/fresh-install reports. A code commit or host test
 alone does not authorize production retirement or installation.
+
+Retirement publishes a dedicated S07 early-boot fence before archiving the old
+state. Its pinned root-only init and exact boot symlink survive SIGKILL/reboot;
+they reconstruct the PID-less receiver fence even while the active state path
+is absent. Only durable retirement completion permits their removal. Unknown
+or changed retirement guards refuse recovery. The reboot gate attempts the
+unmodified trusted HG1 writer before resume and verifies its journal unchanged.
