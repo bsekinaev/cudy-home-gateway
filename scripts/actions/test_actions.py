@@ -349,6 +349,23 @@ else: print(json.dumps({'ok':True,'result':{'message_id':900}}))
         self.assertEqual(self.state()['records'][0]['phase'],'CANCELLED')
         self.assertFalse((self.base/'executed').exists())
 
+    def test_home_button_cancels_confirmation_and_old_confirm_cannot_execute(self):
+        token = self.confirmation()
+        calls = self.callback('nav:status', update_id=3)
+        self.assertEqual(self.state()['records'][0]['phase'], 'CANCELLED')
+        self.callback(token, update_id=4)
+        self.assertFalse((self.base/'executed').exists())
+        self.assertFalse(any(c[:2] == ['actions','confirm'] for c in calls))
+
+    def test_stale_prepare_is_not_revived_by_permanent_navigation(self):
+        self.menu()
+        nonce = 'a' * 16
+        issued = int(time.time()) - 121
+        (self.base/'runtime/telegram.callback').write_text(f'{issued}:{nonce}:900\n')
+        calls = self.callback(f'prepare-tailscale:{issued}:{nonce}')
+        self.assertFalse(any(c[:2] == ['actions', 'prepare'] for c in calls))
+        self.assertFalse((self.base/'executed').exists())
+
     def test_disabled_menu_has_no_prepare_buttons(self):
         self.env['HG_ACTION_EXECUTION_ENABLED']='0'
         _,sent=self.menu()

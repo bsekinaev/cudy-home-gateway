@@ -198,8 +198,14 @@ function load_callback_state() {
 	};
 }
 
-function dashboard_markup(issued_at, nonce) {
-	return `{"inline_keyboard":[[{"text":"🔄 Обновить","callback_data":"refresh:${issued_at}:${nonce}"},{"text":"🧪 vtest","callback_data":"vtest:${issued_at}:${nonce}"},{"text":"⚙️ Действия","callback_data":"actions:${issued_at}:${nonce}"}]]}`;
+function dashboard_markup(view) {
+	// Navigation only reads fixed views. It never prepares or confirms an action,
+	// so it need not expire with the separate 120-second action capability.
+	return sprintf('%J', { inline_keyboard: [
+		[ { text: view == 'status' ? '🔄 Обновить статус' : '🏠 Главная', callback_data: 'nav:status' },
+		  { text: view == 'vtest' ? '🔄 Обновить результаты' : '🧪 Результаты vtest', callback_data: 'nav:vtest' } ],
+		[ { text: view == 'actions' ? '🔄 Обновить действия' : '⚙️ Действия', callback_data: 'nav:actions' },
+		  { text: 'ℹ️ Помощь', callback_data: 'nav:help' } ] ] });
 }
 
 function answer_callback(callback_id, text) {
@@ -279,17 +285,22 @@ function build_vtest() {
     let cap = data?.latest?.capability;
     // Numbers only: provider node IDs, names, locations and errors stay local.
     function count(value) { return type(value) == 'int' && value >= 0 && value <= 4096 ? `${value}` : '?'; }
-    return `🧪 vtest — offline результаты
-Наличие: ${data?.provider?.installed == true ? 'найден' : 'не подтверждено'}
-Cron: ${data?.cron_configured == true ? 'настроен' : 'не подтверждён'}
-Текущий запуск: UNKNOWN (lock не доказывает живой процесс)
-Speed samples: ${count(speed?.samples)}, OK: ${count(speed?.success)}, FAIL: ${count(speed?.failed)}
-Summary: ${count(summary?.nodes)}, eligible: ${count(summary?.eligible)}
-Capability: ${count(cap?.nodes)}, eligible: ${count(cap?.eligible)}
-История: ${type(data?.history) == 'array' ? length(data.history) : 'UNKNOWN'}
-Это наблюдения файлов; завершение запуска не подтверждено.
-Запуск заблокирован: требуется аудит зависимостей и cleanup.
-Автоматическая смена MAIN запрещена.`;
+    let rows = [ '🧪 Результаты vtest · только просмотр',
+        `Тест: ${data?.provider?.installed == true ? 'найден' : 'не подтверждён'}`,
+        `Расписание: ${data?.cron_configured == true ? 'настроено' : 'не подтверждено'}` ];
+    if (speed != null)
+        push(rows, `Speed samples: ${count(speed.samples)}, OK: ${count(speed.success)}, FAIL: ${count(speed.failed)}`);
+    if (summary != null)
+        push(rows, `Сводка: ${count(summary.nodes)}, подходят: ${count(summary.eligible)}`);
+    if (cap != null)
+        push(rows, `Проверка доступа: ${count(cap.nodes)}, подходят: ${count(cap.eligible)}`);
+    if (speed == null && summary == null && cap == null)
+        push(rows, 'Нет проверенных результатов последнего теста.');
+    push(rows, `История наблюдений: ${type(data?.history) == 'array' ? length(data.history) : 'нет данных'}`);
+    push(rows, 'Состояние запуска: UNKNOWN — по файлам не определяется.');
+    push(rows, 'Запуск из бота заблокирован до проверки безопасности runner.');
+    push(rows, 'MAIN автоматически не переключается.');
+    return join('\n', rows);
 }
 
 function action_payload(response) {
@@ -301,25 +312,37 @@ function actions_view(issued, nonce) {
     let response = run_gateway([ 'actions', 'show' ]);
     let value = action_payload(response);
     let enabled = response.code == 0 && value?.enabled == true && match(nonce, /^[0-9a-f]{16}$/) != null;
-    let markup = dashboard_markup(issued, nonce);
+    let navigation = json(dashboard_markup('actions')).inline_keyboard;
+    let markup = dashboard_markup('actions');
     if (enabled) markup = sprintf('%J', { inline_keyboard: [
-        [ { text: 'Restart Tailscale', callback_data: `prepare-tailscale:${issued}:${nonce}` },
-          { text: 'Restart uhttpd', callback_data: `prepare-uhttpd:${issued}:${nonce}` } ],
-        [ { text: 'Обновить', callback_data: `actions:${issued}:${nonce}` } ] ] });
-    return { text: `⚙️ Safe Actions
-${enabled ? 'Выберите действие; затем подтвердите в течение 120 секунд.' : 'Выполнение отключено или недоступно.'}
-Restart Tailscale прерывает удалённый доступ; требуется доступ по LAN.
+        [ { text: 'Перезапустить Tailscale', callback_data: `prepare-tailscale:${issued}:${nonce}` },
+          { text: 'Перезапустить веб-интерфейс', callback_data: `prepare-uhttpd:${issued}:${nonce}` } ],
+        ...navigation ] });
+    return { text: `⚙️ Действия
+${enabled ? 'Выберите действие и подтвердите за 120 секунд. Перезапуск Tailscale прервёт удалённый доступ: нужен доступ по LAN.' : 'Выполнение отключено или недоступно. Доступен только просмотр; кнопки перезапуска скрыты.'}
 Нельзя перезапускать WAN, DNS, PassWall2, firewall или менять MAIN.`, markup };
+}
+function help_view() {
+    return `ℹ️ Управление Gateway
+🏠 Главная — состояние шлюза и сетевых служб.
+🧪 Результаты vtest — только сохранённые наблюдения; тест не запускается.
+⚙️ Действия — доступные перезапуски с отдельным подтверждением.
+Кнопки просмотра работают и в старых сообщениях.
+Переход в раздел запрашивает отмену ожидающего подтверждения.
+Команды: /start, /status, /vtest, /actions, /help.
+VPN, DNS, firewall и MAIN через это меню не меняются.`;
 }
 function action_confirmation(callback, action) {
     let chat = `${callback.message.chat.id}`, message = `${callback.message.message_id}`;
     let response = run_gateway([ 'actions', 'prepare', action, `${callback.from.id}`, chat, message ]);
     let value = action_payload(response);
     let ok = response.code == 0 && value?.status == 'CONFIRM_REQUIRED' && match(value?.token || '', /^[0-9a-f]{32}$/) != null;
-    let markup = ok ? sprintf('%J', { inline_keyboard: [ [ { text: 'Подтвердить restart', callback_data: `confirm:${value.token}` } ] ] }) : '{"inline_keyboard":[]}';
+    let markup = ok ? sprintf('%J', { inline_keyboard: [
+        [ { text: 'Подтвердить перезапуск', callback_data: `confirm:${value.token}` } ],
+        [ { text: 'Отмена · Главная', callback_data: 'nav:status' } ] ] }) : dashboard_markup('actions');
     let text = ok ? `Подтвердить ${action == 'restart-tailscale' ? 'restart Tailscale (удалённый доступ прервётся)' : 'restart uhttpd'}?
 Подтверждение действует 120 секунд, один раз.
-Для отмены отправьте /status.` : 'Действие недоступно; выполнение не начато.';
+Для отмены нажмите «Отмена · Главная».` : 'Действие недоступно; выполнение не начато.';
     fs.unlink(CALLBACK_FILE); // Old menu callbacks cannot create another confirmation.
     run_gateway([ 'telegram', 'edit-message', chat, message, text, markup ]);
 }
@@ -330,20 +353,21 @@ function confirm_action(callback, token) {
     let text = response.code == 0 && value?.status == 'DONE' ? 'Действие завершено; повторное выполнение запрещено.' :
         value?.status == 'UNKNOWN' ? 'Исход предыдущего выполнения неизвестен. Повторно не запускалось; проверьте сервис по LAN.' :
         'Действие отклонено или завершилось ошибкой. Повторно не запускайте без проверки состояния сервиса.';
-    run_gateway([ 'telegram', 'edit-message', `${callback.message.chat.id}`, `${callback.message.message_id}`, text, '{"inline_keyboard":[]}' ]);
+    run_gateway([ 'telegram', 'edit-message', `${callback.message.chat.id}`, `${callback.message.message_id}`, text, dashboard_markup('actions') ]);
 }
 
 function send_dashboard(chat_id, view) {
+	view = view || 'status';
 	let issued_at = time();
 	let nonce = make_nonce();
 	let view_data = view == 'actions' ? actions_view(issued_at, nonce) : null;
-	let markup = view_data?.markup || dashboard_markup(issued_at, nonce);
+	let markup = view_data?.markup || dashboard_markup(view);
 
 	let response = run_gateway([
 		'telegram',
 		'send-message',
 		`${chat_id}`,
-		view == 'actions' ? view_data.text : view == 'vtest' ? build_vtest() : build_status(),
+		view == 'actions' ? view_data.text : view == 'vtest' ? build_vtest() : view == 'help' ? help_view() : build_status(),
 		markup
 	]);
 
@@ -361,17 +385,18 @@ function send_dashboard(chat_id, view) {
 }
 
 function edit_dashboard(chat_id, message_id, view) {
+	view = view || 'status';
 	let issued_at = time();
 	let nonce = make_nonce();
 	let view_data = view == 'actions' ? actions_view(issued_at, nonce) : null;
-	let markup = view_data?.markup || dashboard_markup(issued_at, nonce);
+	let markup = view_data?.markup || dashboard_markup(view);
 
 	let response = run_gateway([
 		'telegram',
 		'edit-message',
 		`${chat_id}`,
 		`${message_id}`,
-		view == 'actions' ? view_data.text : view == 'vtest' ? build_vtest() : build_status(),
+		view == 'actions' ? view_data.text : view == 'vtest' ? build_vtest() : view == 'help' ? help_view() : build_status(),
 		markup
 	]);
 
@@ -402,10 +427,13 @@ function handle_message(message, allowed_user, allowed_chat) {
 		return;
 
 	let text = message?.text ?? '';
-	if (index([ '/start', '/status', '/vtest', '/actions' ], text) >= 0)
+	if (index([ '/start', '/status', '/vtest', '/actions', '/help' ], text) >= 0)
 		run_gateway([ 'actions', 'cancel', `${from_id}`, `${chat_id}` ]);
 
 	switch (text) {
+	case '/help':
+		send_dashboard(chat_id, 'help');
+		break;
 	case '/actions':
 		send_dashboard(chat_id, 'actions');
 		break;
@@ -425,7 +453,7 @@ function handle_message(message, allowed_user, allowed_chat) {
 				'telegram',
 				'send-message',
 				`${chat_id}`,
-				'Доступные команды:\n/start\n/status\n/vtest\n/actions'
+				help_view(), dashboard_markup('help')
 			]);
 		break;
 	}
@@ -455,6 +483,19 @@ function handle_callback(callback, allowed_user, allowed_chat) {
 	}
 
 	let parts = split(data, ':');
+	if (length(parts) == 2 && parts[0] == 'nav' &&
+	    index([ 'status', 'vtest', 'actions', 'help' ], parts[1]) >= 0) {
+		// Acknowledge before potentially slow status collection. Keep authorization
+		// above this branch; action preparation/confirmation still use bound tokens.
+		answer_callback(`${callback_id}`, '');
+		let cancelled = run_gateway([ 'actions', 'cancel', `${from_id}`, `${chat_id}` ]);
+		if (cancelled.code != 0)
+			run_gateway([ 'telegram', 'send-message', `${chat_id}`,
+				'Отмена действия не подтверждена. Не нажимайте старое подтверждение; дождитесь истечения его 120 секунд.' ]);
+		if (!edit_dashboard(chat_id, message_id, parts[1]))
+			send_dashboard(chat_id, parts[1]);
+		return;
+	}
 	if (length(parts) == 2 && parts[0] == 'confirm' && match(parts[1], /^[0-9a-f]{32}$/) != null) {
 		confirm_action(callback, parts[1]);
 		return;
