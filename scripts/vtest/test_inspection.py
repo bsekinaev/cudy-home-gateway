@@ -48,7 +48,12 @@ if args[0] == 'vtest':
 if args[:2] == ['actions', 'cancel'] and (base / 'fail-cancel').exists(): sys.exit(73)
 if args[:2] == ['telegram', 'edit-message'] and (base / 'unchanged').exists():
     print(json.dumps({'ok': False, 'error_code': 400, 'description': 'Bad Request: message is not modified: same content'})); sys.exit(22)
-if args[:2] == ['telegram', 'edit-message'] and (base / 'fail-edit').exists(): sys.exit(1)
+if args[:2] == ['telegram', 'edit-message'] and (base / 'fail-edit').exists():
+    print(json.dumps({'ok': False, 'error_code': 400, 'description': 'Bad Request: message to edit not found'})); sys.exit(22)
+if args[:2] == ['telegram', 'edit-message'] and (base / 'ambiguous-edit').exists():
+    print(json.dumps({'ok': False, 'error_code': 400, 'description': 'Bad Request: message to edit not found'})); sys.exit(28)
+if args[:2] == ['telegram', 'edit-message'] and (base / 'other-edit-error').exists():
+    print(json.dumps({'ok': False, 'error_code': 400, 'description': 'Bad Request: invalid markup'})); sys.exit(22)
 if args[:2] == ['telegram', 'get-updates']:
     print(json.dumps({'ok': True, 'result': json.loads((base / 'updates').read_text())}))
 else:
@@ -293,6 +298,20 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         warning = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
         self.assertIn('Отмена действия не подтверждена', warning[3])
         self.assertFalse(any(c[:2] in (['actions','prepare'], ['actions','confirm']) for c in calls))
+
+    def test_ambiguous_edit_transport_failure_does_not_create_duplicate(self):
+        self.nav('vtest')
+        original = (self.base / 'runtime/telegram.callback').read_bytes()
+        (self.base / 'ambiguous-edit').touch()
+        calls = self.nav('vtest')
+        self.assertFalse(any(c[:2] == ['telegram', 'send-message'] for c in calls))
+        self.assertEqual((self.base / 'runtime/telegram.callback').read_bytes(), original)
+
+    def test_other_api_errors_do_not_trigger_fresh_dashboard(self):
+        (self.base / 'other-edit-error').touch()
+        calls = self.nav('help')
+        self.assertFalse(any(c[:2] == ['telegram', 'send-message'] for c in calls))
+        self.assertFalse((self.base / 'runtime/telegram.callback').exists())
 
     def test_deleted_or_uneditable_dashboard_sends_fresh_view(self):
         (self.base / 'fail-edit').touch()

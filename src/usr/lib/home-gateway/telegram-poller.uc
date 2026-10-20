@@ -409,6 +409,12 @@ function edit_dashboard(chat_id, message_id, view) {
 	    unchanged?.error_code == 400 && type(unchanged?.description) == 'string' &&
 	    match(unchanged.description, /^Bad Request: message is not modified(:|$)/) != null)
 		return true;
+	// A timeout is ambiguous: Telegram may already have edited the message.
+	// Only a definitive missing/uneditable-message receipt permits a new send.
+	if ((response.code == 0 || response.code == 22) && unchanged?.ok == false &&
+	    unchanged?.error_code == 400 &&
+	    index([ 'Bad Request: message to edit not found', "Bad Request: message can't be edited" ], unchanged?.description) >= 0)
+		return 'UNEDITABLE';
 
 	let payload = parse_response(response, 'editMessageText');
 
@@ -502,7 +508,7 @@ function handle_callback(callback, allowed_user, allowed_chat) {
 		if (cancelled.code != 0)
 			run_gateway([ 'telegram', 'send-message', `${chat_id}`,
 				'Отмена действия не подтверждена. Не нажимайте старое подтверждение; дождитесь истечения его 120 секунд.' ]);
-		if (!edit_dashboard(chat_id, message_id, parts[1]))
+		if (edit_dashboard(chat_id, message_id, parts[1]) == 'UNEDITABLE')
 			send_dashboard(chat_id, parts[1]);
 		return;
 	}
@@ -532,7 +538,7 @@ function handle_callback(callback, allowed_user, allowed_chat) {
 		action_confirmation(callback, parts[0] == 'prepare-tailscale' ? 'restart-tailscale' : 'restart-uhttpd');
 		return;
 	}
-	if (!edit_dashboard(chat_id, message_id, parts[0]))
+	if (edit_dashboard(chat_id, message_id, parts[0]) != true)
 		warn('telegram-poller: dashboard refresh failed\n');
 }
 
