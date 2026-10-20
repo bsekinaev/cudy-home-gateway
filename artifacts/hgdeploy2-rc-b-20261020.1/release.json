@@ -1,0 +1,45 @@
+{
+  "artifacts": {
+    "acceptance.json": {
+      "sha256": "94e70595b312b61dd3a80b521e0e2c65102531fbcba38c10794af0f830e6f4e8",
+      "size": 40468
+    },
+    "cudy-hgdeploy2-rc-b-6b7d3ada6fe6b513e08db22469ccde10a6d47ee3.tar.gz": {
+      "sha256": "e1e7df7fa84d9e1cfc8a3881b16d374fa3d417d2ec41a440f999b7c708e236d6",
+      "size": 137685
+    },
+    "cudy-hgdeploy2-rc-b-6b7d3ada6fe6b513e08db22469ccde10a6d47ee3.tar.gz.sha256": {
+      "sha256": "c917605459d76b4c7e50d43f56ffb16cd954367c1c96a4072c822f39295b499b",
+      "size": 134
+    },
+    "install-manifest.json": {
+      "sha256": "a9731527e0af0f8daa38557020e97cd76e917385768c90b364d732fd1b73aa72",
+      "size": 9080
+    },
+    "manifest.json": {
+      "sha256": "10a5ac968a539a9c0287d4b711f065acdc71d54382854803d1b3fc0b551b6501",
+      "size": 12406
+    },
+    "owner-b.ps1": {
+      "sha256": "15374ace9df5ea423f367d6c2f9687656a0a3eed80867fccee9870e88501057d",
+      "size": 10907
+    },
+    "owner-b.ps1.sha256": {
+      "sha256": "17e476ad7c17435e50f41a4c4a38b91b90883b3f667f17bf2e5b0e888913e83c",
+      "size": 78
+    }
+  },
+  "ci": "https://github.com/bsekinaev/cudy-home-gateway/actions/runs/39444040134",
+  "ci_jobs_success": 12,
+  "merge_commit": "edf77b14f719dd02739f72a2f63be2135d0d563f",
+  "owner_go": "CONDITIONAL_ON_RETIRECHECK_AND_CONFIRMED_RECOVERY_ACCESS",
+  "owner_live_install": "NOT_RUN",
+  "pr": "https://github.com/bsekinaev/cudy-home-gateway/pull/28",
+  "review_blockers": 0,
+  "source_commit": "6b7d3ada6fe6b513e08db22469ccde10a6d47ee3",
+  "technical_installer_acceptance": "PASS",
+  "version": "20261020.1",
+  "vm_checks_fail": 0,
+  "vm_checks_pass": 498,
+  "vm_scenarios": 15
+}

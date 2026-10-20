@@ -1,0 +1,431 @@
+{
+  "candidate_manifest_sha256": "d99a6b006b8b1baf4b8b6b7e90a261570a2980962a1dae378cd3b0d23ebb936a",
+  "controls_manifest_sha256": "348372942ea4f165846cabd5b9299545c353c191def9e201c49f7d66af6eedfb",
+  "delivery": "B_OWNER_MANUAL",
+  "files": [
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "README.md",
+      "sha256": "13fd15bdf50754923b8648d59768fbd2a817652cb4bb18128a83d7fecfbc842b",
+      "size": 10352,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "acceptance.json",
+      "sha256": "94e70595b312b61dd3a80b521e0e2c65102531fbcba38c10794af0f830e6f4e8",
+      "size": 40468,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "candidate/etc/init.d/home-gateway-deploy-recover",
+      "sha256": "5b747dff42649914e4b231de2d5ade0171eedad40d5fb53f43e4d869d08a2630",
+      "size": 167,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "candidate/etc/init.d/home-gateway-telegram",
+      "sha256": "5d23b6a85f7563235d7ef65fbfe91fdbe0b07156c8be00c4c7b0513f595da2b1",
+      "size": 3426,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "candidate/migration.sha256",
+      "sha256": "d99a6b006b8b1baf4b8b6b7e90a261570a2980962a1dae378cd3b0d23ebb936a",
+      "size": 2269,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "candidate/usr/bin/gateway",
+      "sha256": "29a7816bbb725c2c91dc7f9a1f7e59f49607be51d185b596368122f00fbd3b79",
+      "size": 11562,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "candidate/usr/bin/home-gateway-ci-smoke",
+      "sha256": "9c1d08581b4a4fca2adf41f04808990700de09be20423f2ed3aa29f50cfcf42f",
+      "size": 620,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/actions.uc",
+      "sha256": "7ed1572e845576a46bdf82cb6f42cc2aa4488cb375f8fa5343ab9c89c495832f",
+      "size": 11956,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/asata.sh",
+      "sha256": "c5c0183c4e3ba1cb431a4ffffe794c4ea1d6ae85c3a942d8f7f0615741dc944a",
+      "size": 12176,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/common.sh",
+      "sha256": "5d1a6234766efaf225a304d3186d0195bff45b5f96e3e3d4a13e7140892abf82",
+      "size": 1582,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/dns.sh",
+      "sha256": "1cda91ce0c5566694e5072c15a7233e37011ae273c5c0e0587f1e08a0067ec28",
+      "size": 4682,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/doctor.sh",
+      "sha256": "105c33c992d45ff0d7425999a88c11e0a68a793f1402d20bb0ac4dfeb04e98bc",
+      "size": 13429,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/health.sh",
+      "sha256": "3f3d1e354978dd62a4d880a7bbb4229d7972f4414e18a78f26eee4c7febd235b",
+      "size": 16689,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/incidents.uc",
+      "sha256": "0296c322bcd3d079554cc2e78f4b90cba78a8a30c364eb5498d2062db9b30195",
+      "size": 17154,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/network.sh",
+      "sha256": "1698b0f96e4b3c861ba1db599b6a302cc0b8ba6758fa50994e6d088141016f07",
+      "size": 7605,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/notifications.uc",
+      "sha256": "d9f985b15ebd44ce1f4e9e82c7792adf49436cfdc8639c64019cb21fdfbaf5df",
+      "size": 22210,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/redmi.sh",
+      "sha256": "b6086de06a791e4e519e549f5a9768dd6497aadb91c9af63214d890c2ae76211",
+      "size": 6248,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/selftest.sh",
+      "sha256": "57e7d044e242b51d9e942aa6e0cfc5c9b569f78f6ec40d4eda67df173eba8aa0",
+      "size": 14006,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/status.sh",
+      "sha256": "2e6abcdd6dc4a09dad214e80a79b60d443074a2331be04b1f4b2ff12e58d7e0c",
+      "size": 32739,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/tailscale.sh",
+      "sha256": "fb9adfa6212ce84c365cbd5ebf5bf24300bcd61604597ec06699d976bb298c09",
+      "size": 5965,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/telegram-poller.uc",
+      "sha256": "b47b3727f473f9e7a4b5464a2920396d09fc4edc45dea2f77767f6e73b1b9eb8",
+      "size": 17027,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/telegram.sh",
+      "sha256": "8fef41001a75400ee00156c1079186baa0dc48ab0fd46961856d62740842fa92",
+      "size": 7325,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/torrent.sh",
+      "sha256": "166255ece54d2e4762b243d0466c2b19b9a3b654773d006013712069e4be86de",
+      "size": 8012,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "candidate/usr/lib/home-gateway/vpn.sh",
+      "sha256": "d282746a22de23996e55e18dc9d8300ecd3c0f1ed370c4f0beedc8d2d73a2efa",
+      "size": 12553,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 448,
+      "path": "candidate/usr/libexec/home-gateway-deploy/engine.sh",
+      "sha256": "305d70f8778da506932e4397efbe77999e1ea787dad3633da141c6d11c225b1b",
+      "size": 14657,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 448,
+      "path": "candidate/usr/libexec/home-gateway-deploy/wrapper.sh",
+      "sha256": "d8694eb76c86f16dbae2599e8d68e20dfcf9d8334a488f0f407c84264099946f",
+      "size": 406,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "controls/controls.sha256",
+      "sha256": "348372942ea4f165846cabd5b9299545c353c191def9e201c49f7d66af6eedfb",
+      "size": 1299,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "controls/etc/init.d/home-gateway-migration",
+      "sha256": "76587a5b48ec1d3ff913fc8df666ad17132e500fed00f0d255528017452ecb69",
+      "size": 997,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 448,
+      "path": "controls/usr/libexec/home-gateway-deploy/migration-admission.sh",
+      "sha256": "01e67e520fe0b9333002a5ac3395c6cdb975501546b0fc6ed3631eb4f61f7bfc",
+      "size": 16862,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "controls/usr/libexec/home-gateway-deploy/migration-candidate.uc",
+      "sha256": "12c258740dd28fb53921e1ed30d610ed11812809fd548c6b883213ca606feaae",
+      "size": 6883,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "controls/usr/libexec/home-gateway-deploy/migration-controls.uc",
+      "sha256": "4a4b90cd39bdd83622598a34b54c9ca5da27d5b5739b7e0878428c47c97f4c2b",
+      "size": 14941,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "controls/usr/libexec/home-gateway-deploy/migration-coordinator.uc",
+      "sha256": "d32b234851d23c114805c836383a16d5c142d7eb9266cfccb0c03f37758dc371",
+      "size": 5941,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "controls/usr/libexec/home-gateway-deploy/migration-handoff.uc",
+      "sha256": "47a7ce0926e1a1f3718f3bb05f80046f745ebef06fd043677e46926f43f2e195",
+      "size": 8972,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "controls/usr/libexec/home-gateway-deploy/migration-runtime.uc",
+      "sha256": "9b3a145d870af8155c8c70fe19afa3d6ac3b2da4b258c1ba7fc4b9eaf2b1d589",
+      "size": 9966,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "controls/usr/libexec/home-gateway-deploy/migration-service.uc",
+      "sha256": "e0706bfcf49ddae62546f805df012d12cb0fa364dc44cad5dbe713f3ba4d748d",
+      "size": 13863,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "controls/usr/libexec/home-gateway-deploy/migration-snapshot.uc",
+      "sha256": "85a507ca9627e7f7efefe9070ee9e22f6e5d700349273b72cd1b32726788bfa7",
+      "size": 19230,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "controls/usr/libexec/home-gateway-deploy/migration-state.uc",
+      "sha256": "aaf35ec039d0ef21a7e03a9affd1c1fd3aab9be2ec5764c616e047776eff9d70",
+      "size": 14564,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "controls/usr/libexec/home-gateway-deploy/migration-terminal.uc",
+      "sha256": "760c15fe60d2e79079d55b7c8642817a29e2c1973a399095f50e5dfe7dd83c48",
+      "size": 14195,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 448,
+      "path": "legacy-preflight.sh",
+      "sha256": "63dad8b2b508d2afa0301671ac58e2c16a659f984bbd5b743b86c9eb7634bf7e",
+      "size": 4754,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "native/migration-candidate.uc",
+      "sha256": "12c258740dd28fb53921e1ed30d610ed11812809fd548c6b883213ca606feaae",
+      "size": 6883,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "native/migration-controls.uc",
+      "sha256": "4a4b90cd39bdd83622598a34b54c9ca5da27d5b5739b7e0878428c47c97f4c2b",
+      "size": 14941,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "native/migration-coordinator.uc",
+      "sha256": "d32b234851d23c114805c836383a16d5c142d7eb9266cfccb0c03f37758dc371",
+      "size": 5941,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "native/migration-handoff.uc",
+      "sha256": "47a7ce0926e1a1f3718f3bb05f80046f745ebef06fd043677e46926f43f2e195",
+      "size": 8972,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "native/migration-retirement.uc",
+      "sha256": "7416dcb602331adcd312ebc29958791f8b78ff1e9c6b03a219408dd8549b807c",
+      "size": 13446,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "native/migration-runtime.uc",
+      "sha256": "9b3a145d870af8155c8c70fe19afa3d6ac3b2da4b258c1ba7fc4b9eaf2b1d589",
+      "size": 9966,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "native/migration-service.uc",
+      "sha256": "e0706bfcf49ddae62546f805df012d12cb0fa364dc44cad5dbe713f3ba4d748d",
+      "size": 13863,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "native/migration-snapshot.uc",
+      "sha256": "85a507ca9627e7f7efefe9070ee9e22f6e5d700349273b72cd1b32726788bfa7",
+      "size": 19230,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "native/migration-state.uc",
+      "sha256": "aaf35ec039d0ef21a7e03a9affd1c1fd3aab9be2ec5764c616e047776eff9d70",
+      "size": 14564,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "native/migration-terminal.uc",
+      "sha256": "760c15fe60d2e79079d55b7c8642817a29e2c1973a399095f50e5dfe7dd83c48",
+      "size": 14195,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "owner-b.ps1",
+      "sha256": "15374ace9df5ea423f367d6c2f9687656a0a3eed80867fccee9870e88501057d",
+      "size": 10907,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 448,
+      "path": "rc-b.sh",
+      "sha256": "97404decdaa2520993583fdf8d3a8f5a3d69a746a1a76908dfb936b5a6f31f95",
+      "size": 4292,
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 384,
+      "path": "rc-b.uc",
+      "sha256": "af7dfc60dd04069635242dc1b6df7a0c1807e2bb3ca247860847b8293f8ce618",
+      "size": 16074,
+      "uid": 0
+    }
+  ],
+  "format": "HGDEPLOY2_RC_B_V1",
+  "legacy_pins": {
+    "etc/init.d/home-gateway-deploy-recover": "5b747dff42649914e4b231de2d5ade0171eedad40d5fb53f43e4d869d08a2630",
+    "usr/libexec/home-gateway-deploy/engine.sh": "4b1f9ea568167a67f24470615b31efe4b9fd7a68374e666443ad31945e58922e",
+    "usr/libexec/home-gateway-deploy/wrapper.sh": "d8694eb76c86f16dbae2599e8d68e20dfcf9d8334a488f0f407c84264099946f"
+  },
+  "production_apply": true,
+  "source_commit": "6b7d3ada6fe6b513e08db22469ccde10a6d47ee3"
+}
