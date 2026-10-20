@@ -68,13 +68,23 @@ class Retirement(unittest.TestCase):
    self.assertTrue(ready.exists(),'Retirement did not reach injected checkpoint')
    os.killpg(proc.pid,signal.SIGKILL);proc.communicate(timeout=10)
    self.assertEqual(self.lock.stat().st_ino,self.inode)
-   if phase!='before_archive':
-    ram=self.root/'tmp/home-gateway-deploy.lock';ram.unlink() # simulate lost tmpfs
-    boot=self.root/'etc/init.d/home-gateway-retirement'
-    self.assertTrue(boot.exists());self.assertTrue((self.root/'etc/rc.d/S07home-gateway-retirement').is_symlink())
-    r=subprocess.run([self.bb,'ash','-c','. "$1"; start','sh',str(boot)],capture_output=True,text=True)
-    self.assertEqual(r.returncode,0,r.stderr);self.assertTrue(ram.is_symlink())
-    self.assertEqual(os.readlink(ram),str(self.archive/'fence'))
+   ram=self.root/'tmp/home-gateway-deploy.lock';ram.unlink() # simulate lost tmpfs
+   boot=self.root/'etc/init.d/home-gateway-retirement'
+   self.assertTrue(boot.exists());self.assertTrue((self.root/'etc/rc.d/S07home-gateway-retirement').is_symlink())
+   r=subprocess.run([self.bb,'ash','-c','. "$1"; start','sh',str(boot)],capture_output=True,text=True)
+   self.assertEqual(r.returncode,0,r.stderr);self.assertTrue(ram.is_symlink())
+   self.assertEqual(os.readlink(ram),str(self.archive/'fence'))
+   # Execute the existing S08 native boot path as well. It must never release
+   # S07's retirement fence merely because BASE is still terminal ROLLED_BACK.
+   code='import {restore_boot_fence} from '+json.dumps(str(MOD.with_name('migration-state.uc')))+';print(restore_boot_fence(ARGV[0],ARGV[1]));'
+   r=subprocess.run(['ucode','-e',code,'--',str(self.root),self.bb],capture_output=True,text=True)
+   self.assertEqual(r.returncode!=0,phase=='before_archive',r.stderr)
+   self.assertTrue(ram.is_symlink());self.assertEqual(os.readlink(ram),str(self.archive/'fence'))
+   for command in ['apply','recover']:
+    args=[self.bb,'ash',str(MOD.with_name('fixtures')/'legacy-engine-18.sh'),'--test-root',str(self.root),command]
+    if command=='apply':args+=['b'*40,'a'*64]
+    r=subprocess.run(args,capture_output=True,text=True)
+    self.assertNotEqual(r.returncode,0);self.assertIn('DEPLOY_ERROR: lock incomplete; inspect locally',r.stderr)
    self.ok();self.ok(False);self.assertFalse(self.base.exists())
   finally:
    if proc.poll() is None:os.killpg(proc.pid,signal.SIGKILL);proc.communicate()

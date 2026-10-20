@@ -64,7 +64,15 @@ export function retire_rolled_back(root,bb,nonce,source,pin,mutate,authorize,che
  retirement_guard();
  let io=context(),plan=sprintf('%J\n',{format:'HG_RETIREMENT_V1',marker,guard_inode:lock.inode,source,manifest_sha256:pin,archive:ARCHIVE});
  const complete='HG_MIGRATION_RETIRED_V1 '+nonce+' '+lock.inode+'\n';
- function owned_ram() {let s=checked(RAM,'link',0777,0),to=fs.readlink(RAM);require(s.nlink==1 && (to==where+'/fence' || (where==ARCHIVE && to==BASE+'/fence')),'FOREIGN_FENCE');}
+ function owned_ram() {
+  let s=checked(RAM,'link',0777,0),to=fs.readlink(RAM);
+  // S07 deliberately targets the pinned archive even before rename: S08
+  // would release a BASE/fence lease for terminal ROLLED_BACK. The future
+  // archive lease remains PID-less/fail-closed and only this exact verified
+  // retirement boot guard authorizes its explicit pre-rename recovery.
+  let future=where==BASE && to==ARCHIVE+'/fence' && fs.lstat(RBOOT)!=null && fs.lstat(RINIT)!=null;
+  require(s.nlink==1 && (to==where+'/fence' || (where==ARCHIVE && to==BASE+'/fence') || future),'FOREIGN_FENCE');
+ }
  if(fs.lstat(RAM)!=null)owned_ram();
  for(let pair in [['retirement.json',plan,1024],['retirement.complete',complete,128]]) {
   let final=where+'/'+pair[0],pending=final+'.new';
