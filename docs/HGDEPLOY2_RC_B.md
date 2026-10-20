@@ -133,3 +133,44 @@ models or targets refuse. No production input/environment override exists.
 Use a NEW Windows directory/session for 20261019.2. Do not edit/reuse the
 20261019.1 session, pins or uploaded kit. Preserve old evidence; no target
 cleanup, force unlock or manual bypass is required for this Preflight failure.
+
+
+## Retry after the accepted RC-B 20261019.2 rollback
+
+Use only the newly published candidate and its pinned runner. Preserve the old
+Windows directory/session unchanged. The new runner requires a separate session.
+No manual journal/lock deletion, old Apply replay or bootstrap is permitted.
+
+1. `-Stage RetireCheck -PreviousSessionFile <old rc-b-session.json>` uploads only
+   the new kit to /tmp and performs a read-only check of the old ROLLED_BACK
+   transaction. It checks the fixed old source/bundle/manifest identities, 18+3
+   restored runtime/receiver, original journal/latest, private checkpoints,
+   original Telegram intent and retained controls under FD8. It never restarts
+   services or archives anything.
+2. Review the PASS result and confirm a working recovery path. Explicit
+   `-Stage Retire -PreviousSessionFile <old session> -RetirementConfirmed
+   -RecoveryPathConfirmed` rechecks everything, owns the existing marker fence,
+   atomically renames state to
+   `/etc/home-gateway-migration.retired.<old transaction>`, fsyncs /etc, and
+   retires only verified S08 and two retained control files. All original
+   control bytes, runtime backups, journal and private checkpoints remain in
+   the 0700 archive. The original empty guard inode is retained. No runtime,
+   receiver, private file, latest, VPN or service is changed by retirement.
+3. Run new Preflight, Prepare, Apply and Verify separately using the NEW session.
+   Prepare uses a new kernel UUID. The old Apply remains permanently refused.
+   Preflight/Prepare validate the complete archive and refuse incomplete
+   retirement, current drift or a newer legacy deployment.
+
+Retirement is resumable, not automatically replayed. After interrupted Retire,
+keep both sessions. If /tmp was lost, use new `UploadRecovery`, then explicit
+`RetireCheck` and `Retire` with the original PreviousSessionFile. The runner
+never invokes Apply as recovery. It refuses unknown fences/partials/archives.
+Unknown regular RAM locks are not deleted or adopted. Known interrupted
+retirement publications are preserved as bounded interrupted evidence.
+
+Owner production support is deliberately pinned to source 908dd3222b81992d9fee056bd015a1266a0ce8d7
+and manifest 67b65f1ceabe1534ff74fba8f6c486e9d02bfce9a7e7999875bd11929df467a1.
+A different historical candidate requires separate acceptance; do not repin it.
+Owner bundle generation now additionally requires exact-source running-service
+and retirement SIGKILL/reboot/fresh-install reports. A code commit or host test
+alone does not authorize production retirement or installation.

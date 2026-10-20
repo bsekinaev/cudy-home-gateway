@@ -1,4 +1,4 @@
-# HGDEPLOY2 RC-B 20261019.2 — TR3000 256MB NAND / 512MB DDR3 target fix.
+# HGDEPLOY2 RC-B 20261020.1 — verified retirement before a fresh transaction.
 # Explicit owner stages, Windows PowerShell 5.1 / PowerShell 7. No automatic Apply.
 [CmdletBinding()]
 param(
@@ -6,7 +6,9 @@ param(
  [Parameter(Mandatory=$true)][string]$BundleUrl,
  [Parameter(Mandatory=$true)][string]$BundleSha256,
  [Parameter(Mandatory=$true)][string]$SessionFile,
- [ValidateSet('Preflight','Prepare','Apply','Verify','Rollback','UploadRecovery')][string]$Stage='Preflight',
+ [ValidateSet('Preflight','Prepare','Apply','Verify','Rollback','UploadRecovery','Retire','RetireCheck')][string]$Stage='Preflight',
+ [string]$PreviousSessionFile,
+ [switch]$RetirementConfirmed,
  [switch]$RecoveryPathConfirmed
 )
 Set-StrictMode -Version 2
@@ -40,7 +42,7 @@ if (Test-Path -LiteralPath $SessionFile) {
  $session=Get-Content -Raw -LiteralPath $SessionFile | ConvertFrom-Json
  if ($session.format -ne 'HG_RC_B_SESSION_V1' -or $session.target -ne $Target -or $session.source -ne $source -or $session.bundleSha256 -ne $BundleSha256 -or $session.manifestSha256 -ne $manifestPin) { throw 'Session identity mismatch; STOP.' }
 } else {
- $session=[pscustomobject]@{format='HG_RC_B_SESSION_V1';target=$Target;source=$source;bundleSha256=$BundleSha256;manifestSha256=$manifestPin;remoteKit=$null;uploadRoot=$null;transaction=$null;preflightPassed=$false;prepared=$false;applyAttempted=$false}
+ $session=[pscustomobject]@{format='HG_RC_B_SESSION_V1';target=$Target;source=$source;bundleSha256=$BundleSha256;manifestSha256=$manifestPin;remoteKit=$null;uploadRoot=$null;transaction=$null;preflightPassed=$false;prepared=$false;applyAttempted=$false;retirementTransaction=$null;retirementAttempted=$false;retirementPassed=$false;retirementChecked=$false}
 }
 function Save-Session {
  $tmp=$SessionFile+'.'+[guid]::NewGuid().ToString('N')+'.new'
@@ -73,9 +75,40 @@ function Upload-Kit {
  $session.remoteKit=$kit;Save-Session
 }
 if ($Stage -eq 'UploadRecovery') {
- Require-Transaction
+ if ($session.transaction) { Require-Transaction }
+ elseif (!$session.retirementAttempted -or $session.retirementTransaction -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'No recorded transaction or retirement attempt; do not adopt router state.' }
  Upload-Kit
- Write-Host 'RC_B_RECOVERY_KIT=VERIFIED. Run Rollback explicitly; no Apply was run.'
+ if ($session.transaction) { Write-Host 'RC_B_RECOVERY_KIT=VERIFIED. Run Rollback explicitly; no Apply was run.' } else { Write-Host 'RC_B_RECOVERY_KIT=VERIFIED. Resume Retire with the original PreviousSessionFile; no Apply was run.' }
+ exit 0
+}
+if ($Stage -eq 'Retire' -or $Stage -eq 'RetireCheck') {
+ if (!$PreviousSessionFile -or $session.transaction -or $session.applyAttempted) { throw 'Retire requires confirmed recovery, explicit RetirementConfirmed, the old session, and no new transaction.' }
+ $oldPath=[IO.Path]::GetFullPath($PreviousSessionFile)
+ if ([String]::Equals($oldPath,$SessionFile,[StringComparison]::OrdinalIgnoreCase)) { throw 'Old and new session must be separate; preserve the old session.' }
+ $old=Get-Content -Raw -LiteralPath $oldPath | ConvertFrom-Json
+ if ($old.format -ne 'HG_RC_B_SESSION_V1' -or $old.target -ne $Target -or $old.source -ne '908dd3222b81992d9fee056bd015a1266a0ce8d7' -or $old.bundleSha256 -ne 'd10beec6bc376a819a04e51cff1b4c779f2f0e1dec0412f20b38c6d2100a8f56' -or $old.manifestSha256 -ne '67b65f1ceabe1534ff74fba8f6c486e9d02bfce9a7e7999875bd11929df467a1' -or $old.transaction -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'Old session is not the pinned RC-B 20261019.2 transaction.' }
+ if ($session.retirementTransaction -and $session.retirementTransaction -ne $old.transaction) { throw 'Retirement transaction mismatch; STOP.' }
+ if ($Stage -eq 'RetireCheck') {
+  $session.retirementTransaction=$old.transaction;$session.retirementChecked=$false;Save-Session
+  if (!$session.remoteKit) { Upload-Kit }
+  Require-Kit
+  $r=Remote ('sh '+$session.remoteKit+'/rc-b.sh retire-check '+$manifestPin+' '+$old.transaction);Success $r
+  $expected='RC_B_RETIREMENT_CHECK=PASS TRANSACTION='+$old.transaction+' ARCHIVE='
+  if (@($r.Lines | Where-Object { $_.StartsWith($expected,[StringComparison]::Ordinal) }).Count -ne 1) { throw 'No retirement check receipt; STOP.' }
+  $session.retirementChecked=$true;Save-Session
+  Write-Host 'RC_B_OWNER_STAGE=RetireCheck RESULT=PASS. Read-only target check; review before explicit Retire.'
+  exit 0
+ }
+ if (!$RecoveryPathConfirmed -or !$RetirementConfirmed -or !$session.retirementChecked) { throw 'Retire requires successful RetireCheck, RecoveryPathConfirmed and RetirementConfirmed.' }
+ $session.retirementChecked=$false
+ $session.retirementTransaction=$old.transaction;$session.retirementAttempted=$true;$session.retirementPassed=$false;$session.preflightPassed=$false;Save-Session
+ if (!$session.remoteKit) { Upload-Kit }
+ Require-Kit
+ $r=Remote ('sh '+$session.remoteKit+'/rc-b.sh retire '+$manifestPin+' '+$old.transaction+' retire:'+$source+':'+$old.transaction);Success $r
+ $expected='RC_B_RETIREMENT=PASS TRANSACTION='+$old.transaction+' ARCHIVE=/etc/home-gateway-migration.retired.'+$old.transaction
+ if (@($r.Lines | Where-Object { $_ -ceq $expected }).Count -ne 1) { throw 'No exact retirement receipt; STOP and preserve session.' }
+ $session.retirementPassed=$true;Save-Session
+ Write-Host 'RC_B_OWNER_STAGE=Retire RESULT=PASS. Old evidence/session preserved; run fresh Preflight. No Apply was run.'
  exit 0
 }
 if ($Stage -eq 'Preflight') {

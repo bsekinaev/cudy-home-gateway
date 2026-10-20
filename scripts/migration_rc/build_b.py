@@ -19,20 +19,20 @@ def validate_acceptance(raw,commit,repo=REPO):
         raise ValueError('ACCEPTANCE_SOURCE')
     if report.get('ci_head')!=commit or report.get('ci_conclusion')!='success' or report.get('review_blockers')!=0 or not re.fullmatch(r'https://github.com/bsekinaev/cudy-home-gateway/actions/runs/[0-9]+',report.get('ci_url','')):raise ValueError('ACCEPTANCE_CI_REVIEW')
     reports=report.get('reports',{})
-    required={'rc-b-root-cycle','rc-b-crash-apply','rc-b-crash-restore','overlay-identity'}
+    required={'rc-b-root-cycle','rc-b-crash-apply','rc-b-crash-restore','overlay-identity','service-cycle','retirement-reboot'}
     if set(reports)!=required:raise ValueError('ACCEPTANCE_SCENARIOS')
     for name,r in reports.items():
         checks=r.get('checks',{})
-        script={'rc-b-root-cycle':'guest-rc-b.sh','rc-b-crash-apply':'guest-rc-b-crash-apply.sh','rc-b-crash-restore':'guest-rc-b-crash-restore.sh','overlay-identity':'guest-overlay.sh'}[name]
+        script={'rc-b-root-cycle':'guest-rc-b.sh','rc-b-crash-apply':'guest-rc-b-crash-apply.sh','rc-b-crash-restore':'guest-rc-b-crash-restore.sh','overlay-identity':'guest-overlay.sh','service-cycle':'guest-service-cycle.sh','retirement-reboot':'guest-retirement.sh'}[name]
         expected={n.decode() for n in re.findall(rb'^\s*check ([a-z0-9_]+) ',delivery_a.git(repo,'show',commit+':scripts/openwrt/'+script),re.M)}
         if set(checks)!=expected or r.get('scenario')!=name or r.get('kernel_sha256')!=vm_contract.KERNEL_SHA or r.get('rootfs_sha256')!=vm_contract.ROOTFS_SHA or r.get('package_sha256')!=vm_contract.PACKAGE_SHA:raise ValueError('ACCEPTANCE_COMPLETENESS')
         if (r.get('commit')!=commit or r.get('status')!='PASS' or r.get('failed')!=0 or
             not checks or r.get('total')!=len(checks) or set(checks.values())!={'PASS'} or
             r.get('scope')!='ISOLATED_X86_NOT_CUDY' or r.get('network_devices')!=0):
             raise ValueError('ACCEPTANCE_FAILED: '+name)
-        if name.startswith('rc-b-') and checks.get('production_root_entrypoint')!='PASS':
+        if (name.startswith('rc-b-') or name=='retirement-reboot') and checks.get('production_root_entrypoint')!='PASS':
             raise ValueError('ACCEPTANCE_ROOT')
-        if name in ('rc-b-crash-apply','rc-b-crash-restore','overlay-identity') and r.get('reboot_mechanism')!='GUEST_REBOOT_SUPERVISED_COLD_BOOT':
+        if name in ('rc-b-crash-apply','rc-b-crash-restore','overlay-identity','retirement-reboot') and r.get('reboot_mechanism')!='GUEST_REBOOT_SUPERVISED_COLD_BOOT':
             raise ValueError('ACCEPTANCE_REBOOT')
     return report
 
@@ -43,6 +43,7 @@ def content(repo,ref,profile='vm',acceptance=None):
     def put(path,raw,mode=0o600):
         if path in files or len(raw)>262144 or b'\0' in raw or b'\r' in raw:raise ValueError('SOURCE_FILE')
         files[path]=(mode,raw)
+    put('native/migration-retirement.uc',source('scripts/deploy/migration-retirement.uc'))
     for n in ('controls','service','terminal'):put('native/migration-'+n+'.uc',source('scripts/deploy/migration-'+n+'.uc'))
     controls={}
     for n in MODULES:

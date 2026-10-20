@@ -41,7 +41,14 @@ function boundary(root, state, test_busybox) {
     require(type(state) == 'object' && type(state.phase) == 'function' && type(state.assert_root) == 'function', 'GUARD');
     state.assert_root(root);
     state.fence();
-    const BASE=root + '/etc/home-gateway-migration';
+    const active_base=root + '/etc/home-gateway-migration';
+    const BASE=state.archive_base??active_base;
+    // Only an explicitly guarded read-only terminal archive may redirect the
+    // existing verifiers. No archive replay or writes through this view.
+    require(BASE==active_base || (state.read_only==true && state.phase()=='ROLLED_BACK' &&
+        match(BASE, /^\/[A-Za-z0-9_.\/-]+$/) &&
+        index(BASE,active_base+'.retired.')==0 &&
+        match(substr(BASE,length(active_base+'.retired.')), /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)), 'ARCHIVE_SCOPE');
     function ancestry(path) {
         let prefix='', parts=split(path, '/');
         for (let i=1; i<length(parts)-1; i++) {
@@ -77,6 +84,7 @@ function boundary(root, state, test_busybox) {
         require(fs.mkdir(path, 0700), 'MKDIR'); sync([ parent ]);
     }
     function write(path, raw, permissions) {
+        require(BASE==active_base, 'ARCHIVE_READ_ONLY');
         require(fs.lstat(path) == null, 'PARTIAL_OR_FOREIGN');
         let parent=replace(path, /\/[^/]+$/, ''); mkdir(parent);
         let f=fs.open(path, 'wxe', permissions); require(f != null && fs.chmod(path, permissions), 'WRITE');

@@ -11,7 +11,7 @@ class Bundle(unittest.TestCase):
    with tarfile.open(a) as t:
     m=json.load(t.extractfile('manifest.json'));self.assertFalse(m['production_apply']);self.assertEqual(m['delivery'],'B_VM_ACCEPTANCE')
     self.assertEqual(len([r for r in m['files'] if r['path'].startswith('candidate/')]),24)
-    self.assertEqual(len([r for r in m['files'] if r['path'].startswith('native/')]),9)
+    self.assertEqual(len([r for r in m['files'] if r['path'].startswith('native/')]),10)
     for r in m['files']:
      info=t.getmember(r['path']);self.assertEqual((info.uid,info.gid,info.mode,info.size),(0,0,r['mode'],r['size']))
      self.assertEqual(hashlib.sha256(t.extractfile(info).read()).hexdigest(),r['sha256'])
@@ -37,16 +37,33 @@ if 'mktemp -d' in s:print('/tmp/hgdeploy2-rc-b-kit.Abc123')
 if '/rc-b.sh prepare ' in s:
  print('RC_B_TRANSACTION=11111111-2222-3333-4444-555555555555 SOURCE='+'a'*40)
  if os.environ.get('RC_FAIL')=='prepare':sys.exit(255)
+if '/rc-b.sh retire-check ' in s:
+ n=s.split()[-1];print('RC_B_RETIREMENT_CHECK=PASS TRANSACTION='+n+' ARCHIVE=/etc/home-gateway-migration')
+if '/rc-b.sh retire ' in s:
+ n=s.split()[-2];print('RC_B_RETIREMENT=PASS TRANSACTION='+n+' ARCHIVE=/etc/home-gateway-migration.retired.'+n)
 if '/rc-b.sh apply ' in s and os.environ.get('RC_FAIL')=='apply':sys.exit(70)
 '''
    for name in ('ssh','scp'):
     p=commands/name;p.write_text(shim);p.chmod(0o755)
    env=dict(os.environ,PATH=str(commands)+os.pathsep+os.environ['PATH'],RC_CALLS=str(log))
-   def run(session,stage,recovery=False,fail=''):
+   def run(session,stage,recovery=False,fail='',previous=None,retirement=False):
     env['RC_FAIL']=fail
     args=['pwsh','-NoProfile','-File',str(Path(__file__).with_name('owner-b.ps1')),'-Target','root@fixture.invalid','-BundleUrl','https://raw.githubusercontent.com/bsekinaev/cudy-home-gateway/'+source+'/artifacts/test.tar.gz','-BundleSha256',digest,'-SessionFile',str(root/session),'-Stage',stage]
     if recovery:args+=['-RecoveryPathConfirmed']
+    if previous:args+=['-PreviousSessionFile',str(root/previous)]
+    if retirement:args+=['-RetirementConfirmed']
     return subprocess.run(args,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
+   old=dict(format='HG_RC_B_SESSION_V1',target='root@fixture.invalid',source='908dd3222b81992d9fee056bd015a1266a0ce8d7',bundleSha256='d10beec6bc376a819a04e51cff1b4c779f2f0e1dec0412f20b38c6d2100a8f56',manifestSha256='67b65f1ceabe1534ff74fba8f6c486e9d02bfce9a7e7999875bd11929df467a1',transaction=nonce)
+   previous=root/'previous.json';previous.write_text(json.dumps(old));saved=previous.read_bytes()
+   p=run('retire.json','Retire',True,previous='previous.json');self.assertNotEqual(p.returncode,0);self.assertFalse(log.exists())
+   p=run('retire.json','RetireCheck',previous='previous.json');self.assertEqual(p.returncode,0,p.stdout)
+   p=run('retire.json','Retire',True,previous='previous.json',retirement=True);self.assertEqual(p.returncode,0,p.stdout)
+   state=json.loads((root/'retire.json').read_text(encoding='utf-8-sig'));self.assertIsNone(state['transaction']);self.assertTrue(state['retirementPassed']);self.assertFalse(state['applyAttempted'])
+   self.assertEqual(previous.read_bytes(),saved);self.assertNotIn('rc-b.sh apply',log.read_text())
+   p=run('retire.json','UploadRecovery');self.assertEqual(p.returncode,0,p.stdout)
+   p=run('retire.json','RetireCheck',previous='previous.json');self.assertEqual(p.returncode,0,p.stdout)
+   p=run('retire.json','Retire',True,previous='previous.json',retirement=True);self.assertEqual(p.returncode,0,p.stdout)
+   p=run('retire.json','Preflight');self.assertEqual(p.returncode,0,p.stdout)
    p=run('one.json','Preflight');self.assertEqual(p.returncode,0,p.stdout);self.assertNotIn('rc-b.sh apply',log.read_text())
    p=run('one.json','Prepare');self.assertNotEqual(p.returncode,0);self.assertNotIn('rc-b.sh prepare',log.read_text())
    p=run('one.json','Prepare',True);self.assertEqual(p.returncode,0,p.stdout)

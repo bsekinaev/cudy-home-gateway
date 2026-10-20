@@ -7,7 +7,7 @@ export PATH
 trap 'echo RC_B_INTERRUPTED=EXPLICIT_ROLLBACK_REQUIRED >&2; exit 75' HUP INT TERM
 KIT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 op=${1:-};pin=${2:-};nonce=${3:-};confirm=${4:-}
-case "$op" in preflight|prepare|apply|verify|rollback|check) ;; *) echo RC_B_REFUSED_STAGE >&2;exit 64;; esac
+case "$op" in preflight|prepare|apply|verify|rollback|check|retire|retire-check) ;; *) echo RC_B_REFUSED_STAGE >&2;exit 64;; esac
 for tool in ucode timeout sha256sum stat ubus;do command -v "$tool" >/dev/null 2>&1 || { echo "RC_B_PREFLIGHT_REFUSED=MISSING_$tool" >&2;exit 69; };done
 /bin/busybox fsync --help >/dev/null 2>&1
 /bin/busybox flock --help >/dev/null 2>&1
@@ -17,9 +17,13 @@ profile=$(printf '%s\n' "$report" | sed -n 's/^RC_B_PACKAGE=VERIFIED SOURCE=[0-9
 source=$(printf '%s\n' "$report" | sed -n 's/^RC_B_PACKAGE=VERIFIED SOURCE=\([0-9a-f]\{40\}\) PROFILE=.*$/\1/p')
 [ "${#source}" = 40 ] || exit 73
 [ "$op" != check ] || exit 0
-if [ "$op" = preflight ];then exec /usr/bin/env -i PATH="$PATH" /usr/bin/ucode "$KIT/rc-b.uc" "$KIT" preflight "$pin";fi
+if [ "$op" = preflight ];then
+ archived=0
+ for path in /etc/home-gateway-migration.retired.*;do if [ -e "$path" ] || [ -L "$path" ];then archived=1;fi;done
+ if [ "$archived" = 0 ];then exec /usr/bin/env -i PATH="$PATH" /usr/bin/ucode "$KIT/rc-b.uc" "$KIT" preflight "$pin";fi
+fi
 if [ "$op" = prepare ];then
- /usr/bin/env -i PATH="$PATH" /usr/bin/ucode "$KIT/rc-b.uc" "$KIT" preflight "$pin"
+ /bin/sh "$KIT/rc-b.sh" preflight "$pin"
  guard=/etc/home-gateway-migration.lock
  if [ ! -e "$guard" ] && [ ! -L "$guard" ];then
   (set -C;: > "$guard") || exit 73
@@ -31,6 +35,7 @@ guard=/etc/home-gateway-migration.lock
 before=$(stat -c '%d:%i' "$guard")
 exec 8< "$guard"
 [ "$(stat -Lc '%d:%i' /proc/self/fd/8)" = "$before" ] && /bin/busybox flock -n 8 && [ "$(stat -c '%d:%i' "$guard")" = "$before" ] || { echo RC_B_BUSY >&2;exit 73; }
+if [ "$op" = preflight ];then exec /usr/bin/env -i PATH="$PATH" /usr/bin/ucode "$KIT/rc-b.uc" "$KIT" preflight "$pin";fi
 native() { /usr/bin/env -i PATH="$PATH" /usr/bin/ucode "$KIT/rc-b.uc" "$KIT" "$1" "$pin" "$nonce"; }
 if [ "$op" = prepare ];then
  /usr/bin/env -i PATH="$PATH" /usr/bin/ucode "$KIT/rc-b.uc" "$KIT" prepare "$pin"
@@ -39,6 +44,12 @@ fi
 case "$nonce" in ''|*[!0-9a-f-]*) echo RC_B_REFUSED_TRANSACTION >&2;exit 64;; esac
 [ "${#nonce}" = 36 ] || exit 64
 if [ "$op" = verify ];then native verify;exit 0;fi
+if [ "$op" = retire-check ];then native retire-check;exit 0;fi
+if [ "$op" = retire ];then
+ [ "$confirm" = "retire:$source:$nonce" ] || { echo RC_B_REFUSED_RETIRE_CONFIRMATION >&2;exit 73; }
+ native retire
+ exit 0
+fi
 if [ "$op" = apply ];then
  [ "$confirm" = "$source:$nonce" ] || { echo RC_B_REFUSED_EXPLICIT_CONFIRMATION >&2;exit 73; }
  report=$(native apply)
