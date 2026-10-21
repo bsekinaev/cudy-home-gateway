@@ -30,6 +30,22 @@
 
 ## Статус
 
+Production CUDY TR3000 v1 / OpenWrt 25.12.5: HGDEPLOY2 RC-B 20261020.2
+установлен владельцем, transaction `786dbec9-f1b6-4732-9ea4-23df99d372ed` —
+`COMMITTED`, отдельный Owner Verify — PASS. Установленный source:
+`62592457237e7f026786c086d1ca6fdd4b6c095d`; runtime — `0.5.0-dev`.
+Selftest: 62 PASS / 0 FAIL; doctor: 11 OK / 0 WARN / 0 FAIL.
+Миграция завершена в пределах этого LIVE acceptance. Повторный Apply,
+Retire и bootstrap не нужны. Сохранить release, receipts и Windows sessions.
+
+Telegram navigation [PR #30](https://github.com/bsekinaev/cudy-home-gateway/pull/30)
+объединён в main; его код ещё не установлен на CUDY. P0 — отдельное безопасное
+обновление COMMITTED HGDEPLOY2 с откатом на предыдущий HGDEPLOY2.
+[Owner update и ограничения](docs/HGDEPLOY2_OWNER_UPDATE.md).
+
+Reboot persistence, независимый end-to-end traffic, длительный soak и реальный
+sysupgrade restore этим acceptance не доказаны. Окончательного v1.0.0 acceptance нет.
+
 `0.5 — Health & Alerts / in progress`
 
 Health Core нормализует WAN, DNS, MAIN и service/policy observations. Incident State добавляет debounce/hysteresis и persistent journal. Adaptive external confirmation вызывает secondary egress provider только после неуспешного primary probe. Data plane не изменяется.

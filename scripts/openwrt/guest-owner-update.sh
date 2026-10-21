@@ -78,8 +78,10 @@ check update_preflight sh "$update/update.sh" preflight "$pin"
 check unknown_file_refused sh -c 'touch /usr/lib/home-gateway/foreign.uc; sh "$1/update.sh" preflight "$2"; rc=$?; rm /usr/lib/home-gateway/foreign.uc; test "$rc" != 0' -- "$update" "$pin"
 check drift_refused sh -c 'cp -p /usr/lib/home-gateway/telegram-poller.uc /tmp/poller.save; printf "// drift\n" >> /usr/lib/home-gateway/telegram-poller.uc; sh "$1/update.sh" preflight "$2"; rc=$?; cp -p /tmp/poller.save /usr/lib/home-gateway/telegram-poller.uc; test "$rc" != 0' -- "$update" "$pin"
 check foreign_lock_refused sh -c 'mkdir -m 700 /tmp/home-gateway-deploy.lock; sh "$1/update.sh" preflight "$2"; rc=$?; rmdir /tmp/home-gateway-deploy.lock; test "$rc" != 0' -- "$update" "$pin"
+check unknown_manifest_refused sh -c 'cp -p "$1/manifest.json" /tmp/manifest.save; printf " " >> "$1/manifest.json"; sh "$1/update.sh" preflight "$2"; rc=$?; cp -p /tmp/manifest.save "$1/manifest.json"; test "$rc" != 0' -- "$update" "$pin"
 check update_apply sh "$update/update.sh" apply "$pin"
 check update_verify sh "$update/update.sh" verify "$pin"
+check unknown_transaction_file_refused sh -c 'tx=/etc/home-gateway-deploy/$(cat /etc/home-gateway-owner-update/new-id); touch "$tx/foreign"; sh "$1/update.sh" verify "$2"; rc=$?; rm "$tx/foreign"; test "$rc" != 0' -- "$update" "$pin"
 check repeated_update_refused refused sh "$update/update.sh" apply "$pin"
 check update_rollback sh "$update/update.sh" rollback "$pin"
 check baseline_admission sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start
@@ -103,9 +105,23 @@ crash_case() {
 }
 check crash_after_quarantine crash_case after-quarantine
 check crash_before_publication crash_case before-publication
+check crash_staged_poller crash_case staged-poller
 check crash_after_publication crash_case after-publication
 check crash_after_checking crash_case after-checking
 check crash_after_latest crash_case after-latest
+rollback_crash_case() {
+ point=$1
+ sh "$update/update.sh" apply "$pin" || return 1
+ HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" rollback "$pin" > "$LAB/kill-$point.log" 2>&1
+ rc=$?
+ outcome=0
+ [ "$rc" = 137 ] && sh "$update/update.sh" recover "$pin" > "$LAB/recover-$point.log" 2>&1 && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || outcome=1
+ cat "$LAB/recover-$point.log" 2>/dev/null
+ archive_update "$point"
+ return "$outcome"
+}
+check crash_before_rollback rollback_crash_case before-rollback
+check crash_after_rollback rollback_crash_case after-rollback
 HG_OWNER_VM_KILL_AT=after-publication sh "$update/update.sh" apply "$pin" > "$LAB/reboot-kill.log" 2>&1
 check reboot_interrupted sh -c '[ "$(cat /etc/home-gateway-owner-update/phase)" = APPLYING ] && [ ! -e /etc/rc.d/S94home-gateway-deploy-recover ] && [ ! -e /etc/rc.d/S95home-gateway-telegram ]'
 cat /proc/sys/kernel/random/boot_id > "$LAB/boot-before"

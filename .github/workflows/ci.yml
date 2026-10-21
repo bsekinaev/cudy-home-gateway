@@ -100,6 +100,9 @@ jobs:
       - name: Test release bundle builder
         run: python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
 
+      - name: Verify owner update candidate release boundaries
+        run: python3 -m unittest discover -s scripts/owner_update -p 'test_*.py' -v
+
       # The distribution's minimal BusyBox omits flock/fsync. Run the entire
       # deployment suite on pinned 1.37 with mandatory applet checks instead.
       - name: Deployment, crash recovery and regression on pinned BusyBox 1.37.0
@@ -210,7 +213,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [retirement-reboot, rc-b-root-cycle, rc-b-crash-apply, rc-b-crash-restore, runtime-crash-apply, runtime-crash-restore, runtime-crash-phase, rc-a-package, control-cycle, service-cycle]
+        scenario: [owner-update, retirement-reboot, rc-b-root-cycle, rc-b-crash-apply, rc-b-crash-restore, runtime-crash-apply, runtime-crash-restore, runtime-crash-phase, rc-a-package, control-cycle, service-cycle]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:

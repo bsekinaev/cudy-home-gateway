@@ -59,7 +59,7 @@ for(let name in ['baseline','candidate']) {
 }
 require(join(',',filter(PATHS,p=>m.inventories.baseline[p]!=m.inventories.candidate[p]))==DELTA,'DELTA');
 if(operation=='kit') { print('OWNER_UPDATE_KIT=VERIFIED SOURCE='+m.source_commit+' PROFILE=VM_ONLY\n');exit(0); }
-require(index(['baseline','candidate','mixed','journal'],operation)>=0,'OPERATION');
+require(index(['baseline','candidate','mixed','journal','pending'],operation)>=0,'OPERATION');
 require(read('/etc/home-gateway-migration/phase',0600,32)=='COMMITTED\n','MIGRATION_PHASE');
 require(type(m.controls)=='object' && length(keys(m.controls))==14,'CONTROL_INVENTORY');
 for(let p,digest in m.controls) {
@@ -67,6 +67,11 @@ for(let p,digest in m.controls) {
     checked('/'+p,'file',index(p,'etc/init.d/')==0?0755:(match(p,/\.uc$/)?0600:0700),262144);
     require(command('printf '+quote(digest+'  /'+p+'\n')+' | sha256sum -c -')==0,'CONTROL_DRIFT');
 }
+function pending(path) {
+    let raw=read(path,0644,262144);
+    require(length(filter(['baseline','candidate'],n=>substr(fs.readfile(kit+'/'+n+'/'+DELTA),0,length(raw))==raw))>0,'UNKNOWN_PENDING_RUNTIME');
+}
+if(operation=='pending') {pending('/'+DELTA+'.hg-owner-new');exit(0);}
 if(operation=='journal') {
     const J='/etc/home-gateway-owner-update',D='/etc/home-gateway-deploy';
     checked(J,'directory',0700,0);
@@ -97,11 +102,12 @@ if(operation=='journal') {
         read(tx+'/new.sha256',0600,8192)==fs.readfile(kit+'/candidate.sha256'),'TX_MANIFEST');
     for(let p in PATHS)checked(tx+'/backup/'+p,'file',index(PATHS,p)<3?0755:0644,262144);
     let required=['commit','inventory-version','was-running','backup.sha256','new.sha256','phase','preflight.log','postflight.log','service.log',...map(PATHS,p=>'backup/'+p)],actual=[];
+    if(fs.lstat(tx+'/interrupted-poller')!=null) {pending(tx+'/interrupted-poller');push(required,'interrupted-poller');}
     function tx_walk(path,prefix) {
         checked(path,'directory',0700,0);let names=fs.lsdir(path);require(names!=null && length(names)<=32,'TX_DIRECTORY');
         for(let n in names) {let p=prefix?prefix+'/'+n:n;
             require(index(required,p)>=0 || length(filter(required,r=>index(r,p+'/')==0))>0,'TX_UNKNOWN_FILE');
-            if(fs.lstat(path+'/'+n)?.type=='directory')tx_walk(path+'/'+n,p);else {checked(path+'/'+n,'file',index(p,'backup/')==0?(index(PATHS,substr(p,7))<3?0755:0644):0600,262144);push(actual,p);}
+            if(fs.lstat(path+'/'+n)?.type=='directory')tx_walk(path+'/'+n,p);else {checked(path+'/'+n,'file',p=='interrupted-poller'?0644:index(p,'backup/')==0?(index(PATHS,substr(p,7))<3?0755:0644):0600,262144);push(actual,p);}
         }
     }
     tx_walk(tx,'');require(length(actual)==length(required),'TX_INCOMPLETE');

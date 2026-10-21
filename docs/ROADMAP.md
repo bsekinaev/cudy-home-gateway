@@ -1,5 +1,30 @@
 # План релизов
 
+## Ближайший milestone — 21.10.2026
+
+HGDEPLOY2 production migration завершена: RC-B 20261020.2, source
+`62592457237e7f026786c086d1ca6fdd4b6c095d`, COMMITTED / Owner Verify PASS.
+Текущий установленный runtime — `0.5.0-dev`. Предыдущие production rollback
+подтверждены владельцем. Они не доказывают rollback нового updater.
+
+1. P0: принять отдельный owner-controlled HGDEPLOY2 updater в disposable VM,
+   включая SIGKILL/reboot, отказ при drift/foreign writer и возврат на HGDEPLOY2.
+2. Выпустить immutable owner kit только после exact-source CI/review/VM gates.
+   Telegram PR #30 уже merged, но не установлен на CUDY.
+3. Owner поэтапно обновляет Telegram после проверки резервного доступа;
+   затем LIVE UX acceptance и read-only soak 24–72 часа.
+4. 0.5: завершить LIVE notification delivery/recovery acceptance.
+5. 0.6: vtest с owned processes, quotas, progress и уведомлениями; без автосмены MAIN.
+6. 0.7: Safe Actions с явным owner opt-in.
+7. 0.8: MAIN Transactions со snapshot, writer coordination, post-check и rollback;
+   production требует отдельной приёмки.
+8. 0.9: coherent private backup, rotation, audit и проверенный restore.
+9. 1.0: owner LIVE acceptance, длительный soak, восстановление, документация;
+   затем stable tag. Sysupgrade restore пока NOT_TESTED.
+
+Завершать один milestone перед следующим. Не запускать параллельно крупные
+подсистемы. [Текущий updater и owner soak](HGDEPLOY2_OWNER_UPDATE.md).
+
 ## 0.1 — Foundation ✅
 
 * read-only preflight целевого роутера;

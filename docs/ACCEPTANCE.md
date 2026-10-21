@@ -1,5 +1,27 @@
 # Приёмка v1.0.0 — открыта
 
+## Текущий production baseline — 21.10.2026
+
+HGDEPLOY2 RC-B 20261020.2 на CUDY TR3000 v1 / OpenWrt 25.12.5:
+`COMMITTED`, отдельный Owner Verify PASS, source
+`62592457237e7f026786c086d1ca6fdd4b6c095d`, transaction
+`786dbec9-f1b6-4732-9ea4-23df99d372ed`. Установленный runtime `0.5.0-dev`;
+selftest 62/0, doctor 11 OK / 0 WARN / 0 FAIL. Подробное owner evidence ниже.
+
+Telegram [PR #30](https://github.com/bsekinaev/cudy-home-gateway/pull/30) merged;
+exact-head `701bcd44dd0210395cbba1e48581044e4abf6b26` имеет
+[CI SUCCESS 12/12](https://github.com/bsekinaev/cudy-home-gateway/actions/runs/39518047357)
+и review без findings. Telegram update на CUDY ещё НЕ установлен.
+
+Owner updater: VM-only candidate, production rollout BLOCKED. Его rollback/crash
+acceptance учитывается отдельно от принятой RC-B migration и её production rollback.
+Reboot persistence, длительный soak, независимый E2E traffic и фактический sysupgrade
+restore остаются NOT_TESTED в рамках нового production baseline. v1.0.0 acceptance нет.
+
+Исторические BLOCKED ниже не переписываются в PASS задним числом: итог конкретной
+RC-B установки приведён в owner evidence, а остальные milestones сохраняют scope
+своих доказательств. [Updater и read-only soak](HGDEPLOY2_OWNER_UPDATE.md).
+
 Runtime остаётся `0.5.0-dev`. Эта таблица фиксирует инженерные доказательства,
 а не заменяет проверку нового HEAD и приёмку владельцем. **v1.0.0 не готов.**
 PASS ниже относится только к указанному automated/isolated scope. BLOCKED означает,

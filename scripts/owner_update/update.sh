@@ -84,6 +84,7 @@ replace_poller() {
     target=/$DELTA
     absent "$target.hg-owner-new" || fail PENDING_RUNTIME
     cp -p "$source" "$target.hg-owner-new"; sync
+    hook staged-poller
     mv "$target.hg-owner-new" "$target"; sync
 }
 preflight() {
@@ -135,6 +136,11 @@ restore() {
     done
     phase RESTORING
     service stop; ! running || fail TELEGRAM_STILL_RUNNING
+    if ! absent "/$DELTA.hg-owner-new"; then
+        inspect pending
+        absent "$TX/interrupted-poller" || fail REPEATED_PENDING_RUNTIME
+        mv "/$DELTA.hg-owner-new" "$TX/interrupted-poller"; sync
+    fi
     write "$D/active" "$id"
     hook before-rollback
     replace_poller "$TX/backup/$DELTA"
@@ -154,6 +160,7 @@ restore() {
 case "$operation" in
  preflight) preflight; echo OWNER_UPDATE_PREFLIGHT=PASS; exit 0;;
  verify)
+    load_journal
     regular "$J/phase" 600 && [ "$(cat "$J/phase")" = COMMITTED ] || fail NOT_COMMITTED
     inspect candidate; admit --telegram-start; boot_check; running; checks
     echo OWNER_UPDATE_VERIFY=PASS; exit 0;;
