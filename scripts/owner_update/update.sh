@@ -23,6 +23,12 @@ regular() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%g:%a:%h' "$1")" = 
 admit() { /bin/sh /usr/libexec/home-gateway-deploy/migration-admission.sh "$@"; }
 service() { timeout -k 2 30 /etc/init.d/home-gateway-telegram "$1"; }
 running() { service running >/dev/null 2>&1; }
+quiesce() {
+    # Use the same pinned PID/starttime proof as the accepted migration. A
+    # successful procd stop alone does not prove that the old workers exited.
+    /usr/bin/ucode -e 'import { quiesce_telegram } from "/usr/libexec/home-gateway-deploy/migration-service.uc"; quiesce_telegram("",{assert_root:function(r){if(r!="")die("ROOT");}});'
+    ! running || fail TELEGRAM_STILL_RUNNING
+}
 wait_running() { n=0; while ! running; do n=$((n+1)); [ "$n" -lt 6 ] || return 1; sleep 1; done; sleep 2; running; inspect workers; }
 write() {
     absent "$1.new" || fail PENDING_FILE
@@ -212,7 +218,7 @@ restore() {
         fi
     done
     phase RESTORING
-    service stop; ! running || fail TELEGRAM_STILL_RUNNING
+    quiesce
     if ! absent "/$DELTA.hg-owner-new"; then
         inspect pending
         archive_slot "/$DELTA.hg-owner-new" interrupted-poller
@@ -332,7 +338,7 @@ quarantine
 hook after-quarantine
 write "$D/active" "$id"
 phase APPLYING; write "$TX/phase" APPLYING
-service stop; ! running || fail TELEGRAM_STILL_RUNNING
+quiesce
 hook before-publication
 replace_poller "$KIT/candidate/$DELTA"
 hook after-publication
