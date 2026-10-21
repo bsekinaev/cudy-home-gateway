@@ -145,6 +145,19 @@ post_doctor_case() {
  return "$outcome"
 }
 check vm_post_doctor_failure_recovery post_doctor_case
+normal_failure_fence_case() {
+ HG_OWNER_VM_POST_DOCTOR=1 sh "$update/update.sh" apply "$pin" > "$LAB/failure-fence.log" 2>&1
+ [ "$?" != 0 ] && [ "$(cat /etc/home-gateway-owner-update/phase)" = CHECKING ] &&
+ [ -f /tmp/home-gateway-deploy.lock/owner-update ] || return 1
+ refused /etc/init.d/home-gateway-telegram start &&
+ ! /etc/init.d/home-gateway-telegram running &&
+ refused sh /usr/libexec/home-gateway-deploy/engine.sh recover &&
+ ucode "$update/inspect.uc" "$update" "$pin" candidate &&
+ sh "$update/update.sh" recover "$pin" &&
+ sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || return 1
+ archive_update normal-failure-fence
+}
+check normal_failure_keeps_fence normal_failure_fence_case
 crash_case() {
  point=$1
  HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" apply "$pin" > "$LAB/kill-$point.log" 2>&1

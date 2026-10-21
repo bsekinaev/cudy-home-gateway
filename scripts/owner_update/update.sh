@@ -220,7 +220,7 @@ restore() {
     load_journal
     inspect mixed
     acquire
-    trap 'release' EXIT
+    trap 'echo OWNER_UPDATE_LEASE_RETAINED >&2' EXIT
     # Lease ownership is the exact package marker in the receiver exclusion;
     # immutable initial lease evidence is never rewritten during recovery.
     # Recovery rechecks everything after acquiring receiver exclusion.
@@ -251,11 +251,11 @@ restore() {
     rm "$D/active"; sync
     service start; wait_running
     checks
-    release; trap - EXIT
     admit --telegram-start
     hook before-restore-boot
     restore_boot
     phase ROLLED_BACK
+    release; trap - EXIT
     echo OWNER_UPDATE_ROLLBACK=PASS IDENTITY=HGDEPLOY2_BASELINE
 }
 abort_preparation() {
@@ -263,7 +263,7 @@ abort_preparation() {
     # byte against this kit and the still-working baseline, then preserve the
     # entire skeleton by rename; never execute or adopt a partial backup.
     inspect baseline; inspect preparation
-    acquire; trap 'release' EXIT
+    acquire; trap 'echo OWNER_UPDATE_LEASE_RETAINED >&2' EXIT
     inspect baseline; inspect preparation; admit --telegram-start; inspect workers
     source=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$KIT/manifest.json")
     id=tx.u$(printf '%s' "$source" | cut -c1-24)
@@ -296,7 +296,7 @@ if [ "$operation" = recover ] && absent "$J"; then
     old=$(cat "$D/latest")
     printf '%s' "$old" | grep -Eq '^tx\.m[0-9a-f]{24}$' || fail NOT_NATIVE_ANCHOR
     regular "$D/$old/commit" 600 && [ "$(cat "$D/$old/commit")" = 62592457237e7f026786c086d1ca6fdd4b6c095d ] || fail BASELINE_IDENTITY
-    acquire; trap 'release' EXIT
+    acquire; trap 'echo OWNER_UPDATE_LEASE_RETAINED >&2' EXIT
     admit --telegram-start; inspect workers
     release; trap - EXIT
     echo OWNER_UPDATE_RECOVERY=NO_RUNTIME_MUTATION IDENTITY=HGDEPLOY2_BASELINE
@@ -318,7 +318,7 @@ case "$operation" in
 esac
 preflight
 acquire
-trap 'release' EXIT
+trap 'echo OWNER_UPDATE_LEASE_RETAINED >&2' EXIT
 hook lease-only
 # Repeat under receiver exclusion; admission permits this receiver-owned lease.
 inspect baseline; admit --receiver-recover; boot_check; running
