@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from build_kit import BASELINE, DELTA, PATHS, ROOT, build, content
+from build_kit import BASELINE, DELTA, PATHS, ROOT, build, content, validate_acceptance, git
 
 
 class OwnerUpdateBuildTests(unittest.TestCase):
@@ -21,14 +21,29 @@ class OwnerUpdateBuildTests(unittest.TestCase):
                                  hashlib.sha256(files[name + '/' + path][1]).hexdigest())
         self.assertEqual(len(manifest['controls']), 14)
 
-    def test_no_production_profile(self):
+    def test_default_is_vm_and_owner_requires_acceptance(self):
         _, _, manifest = content(ROOT, 'HEAD')
         self.assertEqual(manifest['profile'], 'VM_ONLY')
         self.assertIs(manifest['production_apply'], False)
+        with self.assertRaisesRegex(ValueError, 'OWNER_ACCEPTANCE_REQUIRED'):
+            content(ROOT, 'HEAD', 'owner')
+        with self.assertRaisesRegex(ValueError, 'OWNER_ACCEPTANCE_CI_REVIEW_SOURCE'):
+            content(ROOT, 'HEAD', 'owner', b'{}')
 
     def test_zero_change_cannot_be_relabelled_update(self):
         with self.assertRaisesRegex(ValueError, 'TELEGRAM_ONLY_DELTA_REQUIRED'):
             content(ROOT, BASELINE)
+
+    def test_owner_acceptance_rejects_incomplete_vm_and_wrong_source(self):
+        commit = git(ROOT, 'rev-parse', 'HEAD').decode().strip()
+        a = dict(format='HG_OWNER_UPDATE_ACCEPTANCE_V1', commit=commit,
+                 ci_head=commit, ci_conclusion='success', review_head=commit, review_blockers=0,
+                 ci_url='https://github.com/bsekinaev/cudy-home-gateway/actions/runs/1', report={})
+        with self.assertRaisesRegex(ValueError, 'OWNER_ACCEPTANCE_VM_INCOMPLETE'):
+            validate_acceptance(json.dumps(a).encode(), commit, ROOT)
+        a['review_head'] = BASELINE
+        with self.assertRaisesRegex(ValueError, 'OWNER_ACCEPTANCE_CI_REVIEW_SOURCE'):
+            validate_acceptance(json.dumps(a).encode(), commit, ROOT)
 
     def test_immutable_reproducible_bundle(self):
         with tempfile.TemporaryDirectory() as d:

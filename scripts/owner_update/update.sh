@@ -15,6 +15,8 @@ LOCK=/tmp/home-gateway-deploy.lock
 DELTA=usr/lib/home-gateway/telegram-poller.uc
 inspect() { /usr/bin/ucode "$KIT/inspect.uc" "$KIT" "$pin" "$1"; }
 inspect kit
+PROFILE=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).profile);' -- "$KIT/manifest.json")
+if [ "$PROFILE" = OWNER_MANUAL ]; then unset HG_OWNER_VM_KILL_AT HG_OWNER_VM_TORN_RECORD HG_OWNER_VM_PARTIAL_POLLER; fi
 fail() { echo "OWNER_UPDATE_ERROR=$1" >&2; exit 1; }
 absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
 regular() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%g:%a:%h' "$1")" = "0:0:$2:1" ]; }
@@ -55,8 +57,8 @@ restore_boot() {
 }
 checks() {
     timeout -k 2 90 /usr/bin/gateway selftest
-    # Networkless x86 cannot prove the CUDY-specific doctor observations.
-    echo OWNER_UPDATE_DOCTOR=NOT_TESTED_VM
+    if [ "$PROFILE" = OWNER_MANUAL ]; then timeout -k 2 90 /usr/bin/gateway doctor;
+    else echo OWNER_UPDATE_DOCTOR=NOT_TESTED_VM; fi
 }
 acquire() {
     # Serialize with the trusted receiver using its inode-checked serial flock.
@@ -263,4 +265,4 @@ release; trap - EXIT
 admit --telegram-start
 restore_boot
 inspect journal
-echo OWNER_UPDATE_RESULT=PASS SOURCE="$source" PROFILE=VM_ONLY
+echo OWNER_UPDATE_RESULT=PASS SOURCE="$source" PROFILE="$PROFILE"

@@ -39,15 +39,18 @@ HGDEPLOY2 / 20 файлов. HGDEPLOY1/18 сохраняется в legacy fixtu
 
 ## Кандидат updater
 
-`scripts/owner_update/build_kit.py` выпускает только `VM_ONLY` пакет.
-Production profile и production runner отсутствуют до завершения acceptance.
-**READY_FOR_OWNER_MANUAL_UPDATE=NO. Не загружать VM kit на CUDY.**
+`scripts/owner_update/build_kit.py` по умолчанию выпускает `VM_ONLY` пакет.
+Профиль `owner` требует acceptance report с полным exact-source VM PASS,
+успешным CI и review без блокеров на том же SHA. Принятый пакет имеет
+`profile=OWNER_MANUAL`; VM-only пакет на CUDY запрещён.
+Наличие owner runner в source не означает, что выпуск уже прошёл эти gates.
 
 Пакет содержит exact-source baseline и candidate inventory по 20 файлов,
 14 baseline control pins, SHA256 каждого файла и отдельный package manifest.
 Допустимый runtime delta — только `/usr/lib/home-gateway/telegram-poller.uc`.
 Unknown files, symlink, неверные modes, несовпадающий source/inventory/pin
-отклоняются. Inspection runner PowerShell только проверяет локальный архив.
+отклоняются. PowerShell runner разрешает только отдельные явные stages и
+проверенный owner profile; автоматического All/apply/recovery нет.
 
 Кандидат сохраняет полный проверенный runtime backup в новой HGDEPLOY2 transaction,
 отдельный update journal и hashes исторического migration/native anchor evidence.
@@ -64,9 +67,11 @@ Terminal rollback записывается после восстановлени
 требует одновременно poller и notifications, их running state, PID и exact command
 в procd и `/proc`; общий service running не считается достаточным.
 
-VM-only selftest не доказывает CUDY doctor: кандидат явно печатает
-`OWNER_UPDATE_DOCTOR=NOT_TESTED_VM`. Owner profile обязан выполнять doctor до и после
-обновления; без этой реализации и новых gates production выпуск запрещён.
+VM-only selftest не доказывает CUDY doctor: VM профиль явно печатает
+`OWNER_UPDATE_DOCTOR=NOT_TESTED_VM`. Owner profile выполняет doctor до и после
+обновления и проверяет CUDY TR3000 v1, mediatek/filogic, класс RAM и доступную
+память. При исходной проблеме doctor Apply не начинается. При post-check failure
+состояние сохраняется для явного owner Recover.
 
 ## Проверки и границы
 
@@ -81,10 +86,12 @@ Network config hashes, nft rules и route state сравниваются до/п
 Старые migration VM результаты не являются evidence нового updater.
 Не публиковать GO до полного успешного отчёта, exact-head CI и review.
 
-Дополнительно нужны проверки всех torn journal/pointer writes, SIGKILL во время
-частичного staging, повторной recovery и достаточного persistent space. Отказ
-с сохранением evidence безопаснее продолжения из неизвестного состояния, но
-сам по себе не доказывает завершённое recovery acceptance.
+Сценарий также содержит torn phase/pointer writes, SIGKILL во время частичного
+staging и повторный SIGKILL recovery. Незавершённые записи допускаются только
+как ограниченный префикс собственных pinned данных; сохраняются в evidence,
+не принимаются за завершённую публикацию. Чужие байты/файлы блокируют recovery.
+Preflight требует persistent space для полного backup и резерва. Сам по себе
+fail-closed отказ не доказывает завершённое recovery acceptance.
 
 ## Read-only owner preflight
 
@@ -115,8 +122,41 @@ free
 pinned updater preflight. При несоответствии сохранить вывод и остановиться.
 Не удалять migration locks, не исправлять SHA вручную.
 
-Команды production update/rollback пока не выдаются: production kit не выпущен.
-Нельзя заменять их прямым SCP poller или повторным запуском RC-B installer.
+## Ручные owner stages после принятого выпуска
+
+Подставить путь к принятому owner archive, опубликованный SHA256 и существующий
+доверенный LAN target. Сохранить `owner.ps1`, archive и session рядом со старыми
+Windows sessions, не перезаписывая их. Не использовать VM kit.
+
+```powershell
+$Bundle = 'C:\Cudy\owner-update\hg-owner-update-owner-SOURCE_SHA.tar.gz'
+$Digest = 'PUBLISHED_LOWERCASE_SHA256'
+$Target = 'root@LAN_IP'
+$Session = 'C:\Cudy\owner-update\owner-session.json'
+$Runner = 'C:\Cudy\owner-update\owner.ps1'
+& $Runner -Bundle $Bundle -BundleSha256 $Digest -Target $Target -SessionFile $Session -Stage Preflight
+# Остановиться и проверить PASS; подтвердить рабочий резервный доступ.
+& $Runner -Bundle $Bundle -BundleSha256 $Digest -Target $Target -SessionFile $Session -Stage Apply -ReserveAccessConfirmed
+& $Runner -Bundle $Bundle -BundleSha256 $Digest -Target $Target -SessionFile $Session -Stage Verify
+```
+
+Откат принятого обновления, с тем же archive/SHA/session:
+
+```powershell
+& $Runner -Bundle $Bundle -BundleSha256 $Digest -Target $Target -SessionFile $Session -Stage Rollback -ReserveAccessConfirmed
+```
+
+При прерванной установке/rollback, из рабочего резервного доступа:
+
+```powershell
+& $Runner -Bundle $Bundle -BundleSha256 $Digest -Target $Target -SessionFile $Session -Stage Recover -ReserveAccessConfirmed
+```
+
+Recover восстанавливает предыдущий HGDEPLOY2 и не повторяет Apply. После guest/owner
+reboot runner может заново загрузить тот же immutable kit в `/tmp`, сохранив identity
+Windows session. Он не выполняет reboot. При неизвестном состоянии сохранить
+вывод, прекратить изменения и передать redacted evidence. Не исправлять hashes,
+не удалять migration locks, не заменять poller через SCP и не запускать RC-B Apply.
 
 ## Read-only owner soak — 24–72 часа
 

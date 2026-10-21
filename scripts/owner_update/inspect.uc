@@ -26,13 +26,21 @@ checked(kit,'directory',0700,0);
 read(kit+'/manifest.json',0600,65536);
 require(command('printf '+quote(pin+'  '+kit+'/manifest.json\n')+' | sha256sum -c -')==0,'MANIFEST_PIN');
 let m=json(fs.readfile(kit+'/manifest.json'));
-require(m.format=='HG_OWNER_UPDATE_V1' && m.profile=='VM_ONLY' && m.production_apply==false &&
+let owner=m.profile=='OWNER_MANUAL' && m.production_apply==true,vm=m.profile=='VM_ONLY' && m.production_apply==false;
+require(m.format=='HG_OWNER_UPDATE_V1' && (owner || vm) &&
     m.baseline_commit==BASELINE && match(m.source_commit??'',/^[0-9a-f]{40}$/) && join(',',m.changed??[])==DELTA,'PACKAGE');
-// No owner escape hatch. This prototype cannot execute on the production CUDY.
-require(read('/etc/hg-disposable-vm',0600,64)=='HG_NETWORKLESS_OPENWRT_VM_V1\n' &&
-    trim(fs.readfile('/proc/1/comm')??'')=='procd' && command('test "$(uname -m)" = x86_64')==0,'VM_ONLY');
+require(trim(fs.readfile('/proc/1/comm')??'')=='procd' && match(fs.readfile('/etc/openwrt_release')??'',/DISTRIB_RELEASE='25\.12\.5'/),'OPENWRT_RUNTIME');
+require(command("busybox ash --help 2>&1 | grep -q 'BusyBox v1.37.0'")==0,'BUSYBOX_RUNTIME');
+if(vm) require(read('/etc/hg-disposable-vm',0600,64)=='HG_NETWORKLESS_OPENWRT_VM_V1\n' && command('test "$(uname -m)" = x86_64')==0,'VM_ONLY');
+else {
+    let p=fs.popen('ubus -S call system board','r');require(p!=null,'BOARD');let raw=p.read(8193);require(p.close()==0 && type(raw)=='string' && length(raw)<=8192,'BOARD');
+    let board=json(raw),mem=fs.readfile('/proc/meminfo')??'',total=match('\n'+mem,/\nMemTotal:[ \t]+([0-9]+) kB\n/),available=match('\n'+mem,/\nMemAvailable:[ \t]+([0-9]+) kB\n/);
+    require(match(board.model??'',/^Cudy TR3000( 256MB)? v1$/) && board.release?.target=='mediatek/filogic' && total!=null && +total[1]>=450000 && +total[1]<=524288,'OWNER_HARDWARE');
+    require(available!=null && +available[1]>=32768,'OWNER_MEMORY');
+}
 let expected=['baseline.sha256','candidate.sha256','update.sh','inspect.uc','owner.ps1',
     ...map(PATHS,p=>'baseline/'+p),...map(PATHS,p=>'candidate/'+p)];
+if(owner)push(expected,'acceptance.json');
 require(type(m.files)=='array' && length(m.files)==length(expected),'INVENTORY');
 let seen={},kit_hashes='';
 for(let f in m.files) {
@@ -59,7 +67,12 @@ for(let name in ['baseline','candidate']) {
     require(read(kit+'/'+name+'.sha256',0600,8192)==manifest,'MANIFEST_BYTES');
 }
 require(join(',',filter(PATHS,p=>m.inventories.baseline[p]!=m.inventories.candidate[p]))==DELTA,'DELTA');
-if(operation=='kit') { print('OWNER_UPDATE_KIT=VERIFIED SOURCE='+m.source_commit+' PROFILE=VM_ONLY\n');exit(0); }
+if(owner) {
+    let a=json(read(kit+'/acceptance.json',0600,262144)),r=a.report;
+    require(a.format=='HG_OWNER_UPDATE_ACCEPTANCE_V1' && a.commit==m.source_commit && a.ci_head==m.source_commit && a.review_head==m.source_commit && a.ci_conclusion=='success' && a.review_blockers==0 &&
+        match(a.ci_url??'',/^https:\/\/github\.com\/bsekinaev\/cudy-home-gateway\/actions\/runs\/[0-9]+$/) && r?.commit==m.source_commit && r.status=='PASS' && r.failed==0 && r.scenario=='owner-update' && r.total==length(keys(r.checks??{})) && r.total>0 && length(filter(keys(r.checks),k=>r.checks[k]!='PASS'))==0,'OWNER_ACCEPTANCE');
+}
+if(operation=='kit') { print('OWNER_UPDATE_KIT=VERIFIED SOURCE='+m.source_commit+' PROFILE='+m.profile+'\n');exit(0); }
 require(index(['baseline','candidate','mixed','journal','recovery','pending','workers'],operation)>=0,'OPERATION');
 require(read('/etc/home-gateway-migration/phase',0600,32)=='COMMITTED\n','MIGRATION_PHASE');
 require(type(m.controls)=='object' && length(keys(m.controls))==14,'CONTROL_INVENTORY');
