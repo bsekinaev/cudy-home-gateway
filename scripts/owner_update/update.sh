@@ -74,6 +74,14 @@ checks() {
        { [ "${HG_OWNER_VM_POST_DOCTOR:-0}" = 1 ] && [ "$(cat "$J/phase" 2>/dev/null)" = CHECKING ]; }; then timeout -k 2 90 /usr/bin/gateway doctor;
     else echo OWNER_UPDATE_DOCTOR=NOT_TESTED_VM; fi
 }
+retire_lease() {
+    # Rename the intact owned directory atomically. SIGKILL cannot strand an
+    # empty canonical lock between several unlinks and rmdir. Keep the RAM
+    # receipt intact; it disappears naturally at reboot, never affects admission.
+    retired=$(mktemp -d "$LOCK.released.XXXXXX")
+    /usr/bin/ucode -e 'import * as fs from "fs"; if(!fs.rename(ARGV[0],ARGV[1]))die("OWNER_LEASE_RENAME");' -- "$LOCK" "$retired"
+    sync
+}
 acquire() {
     # Serialize with the trusted receiver using its inode-checked serial flock.
     serial=/tmp/home-gateway-deploy.serial
@@ -96,11 +104,9 @@ acquire() {
             if ! absent "$LOCK/pid"; then
                 regular "$LOCK/pid" 600 && cmp -s "$LOCK/pid" "$LOCK/owner-pid" || fail UNKNOWN_RECEIVER_PID
                 [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-pid:owner-update:pid:' ] || fail UNKNOWN_LEASE_CONTENT
-                rm "$LOCK/pid"
             else [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-pid:owner-update:' ] || fail UNKNOWN_LEASE_CONTENT; fi
-            rm "$LOCK/owner-pid"
         else [ "$(ls -A "$LOCK")" = owner-update ] || fail UNKNOWN_LEASE_CONTENT; fi
-        rm "$LOCK/owner-update"; rmdir "$LOCK"
+        retire_lease
     fi
     mkdir -m 700 "$LOCK"
     printf '%s\n' "$$" > "$LOCK/pid"
@@ -116,7 +122,7 @@ release() {
     regular "$LOCK/owner-pid" 600 && cmp -s "$LOCK/pid" "$LOCK/owner-pid" &&
     [ "$(stat -c '%d:%i' "$LOCK")" = "$lease" ] || fail LEASE_IDENTITY
     regular "$LOCK/owner-update" 600 && [ "$(cat "$LOCK/owner-update")" = "$pin" ] || fail LEASE_MARKER
-    rm "$LOCK/pid" "$LOCK/owner-pid" "$LOCK/owner-update"; rmdir "$LOCK"; sync
+    retire_lease
 }
 replace_poller() {
     source=$1

@@ -44,7 +44,10 @@ function Remote([string]$Command) {
     $savedPreference=$ErrorActionPreference
     try { $ErrorActionPreference='Continue'; $lines=@(& ssh @sshOptions $Target $wire 2>&1); $code=$LASTEXITCODE }
     finally { $ErrorActionPreference=$savedPreference }
+    $transportEvidence=$SessionFile+'.transport.'+[guid]::NewGuid().ToString('N')+'.txt'
+    $lines | Set-Content -LiteralPath $transportEvidence -Encoding UTF8
     foreach ($line in $lines) { Write-Host $line }
+    Write-Host ('PRIVATE_OWNER_TRANSPORT_EVIDENCE='+$transportEvidence)
     return [pscustomobject]@{Lines=$lines;Code=$code}
 }
 function Success($Result) { if ($Result.Code -ne 0) { throw ('Remote stage failed: '+$Result.Code+'. Preserve evidence; no automatic recovery was attempted.') } }
