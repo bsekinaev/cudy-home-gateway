@@ -59,6 +59,19 @@ for(let name in ['baseline','candidate']) {
 }
 require(join(',',filter(PATHS,p=>m.inventories.baseline[p]!=m.inventories.candidate[p]))==DELTA,'DELTA');
 if(operation=='kit') { print('OWNER_UPDATE_KIT=VERIFIED SOURCE='+m.source_commit+' PROFILE=VM_ONLY\n');exit(0); }
+if(operation=='workers') {
+    let proc=fs.popen('ubus call service list '+quote('{"name":"home-gateway-telegram"}'),'r');require(proc!=null,'UBUS');
+    let raw=proc.read(65537);require(proc.close()==0 && type(raw)=='string' && length(raw)<=65536,'UBUS');
+    let instances=json(raw)?.['home-gateway-telegram']?.instances;
+    require(type(instances)=='object' && join(',',sort(keys(instances)))=='notifications,poller','WORKER_INSTANCES');
+    for(let name in ['poller','notifications']) {
+        let instance=instances[name],path='/usr/lib/home-gateway/'+(name=='poller'?'telegram-poller':'notifications')+'.uc';
+        require(instance.running==true && type(instance.pid)=='int' && instance.pid>1 &&
+            type(instance.command)=='array' && join('\u0000',instance.command)=='/usr/bin/ucode\u0000'+path+'\u0000/usr/bin/gateway\u0000loop','WORKER_STATE');
+        require(fs.readfile('/proc/'+instance.pid+'/cmdline')==join('\u0000',instance.command)+'\u0000','WORKER_PROCESS');
+    }
+    print('OWNER_UPDATE_WORKERS=PASS\n');exit(0);
+}
 require(index(['baseline','candidate','mixed','journal','pending'],operation)>=0,'OPERATION');
 require(read('/etc/home-gateway-migration/phase',0600,32)=='COMMITTED\n','MIGRATION_PHASE');
 require(type(m.controls)=='object' && length(keys(m.controls))==14,'CONTROL_INVENTORY');
@@ -120,5 +133,9 @@ for(let p in PATHS) {
     require(length(filter(allowed,n=>command('printf '+quote(m.inventories[n][p]+'  /'+p+'\n')+' | sha256sum -c -')==0))>0,'LIVE_DRIFT');
 }
 let library=fs.lsdir('/usr/lib/home-gateway');
+if(operation=='mixed' && fs.lstat('/'+DELTA+'.hg-owner-new')!=null) {
+    pending('/'+DELTA+'.hg-owner-new');
+    library=filter(library,n=>n!='telegram-poller.uc.hg-owner-new');
+}
 require(library!=null && length(library)==17 && length(filter(library,n=>index(PATHS,'usr/lib/home-gateway/'+n)>=0))==17,'UNKNOWN_RUNTIME');
 print('OWNER_UPDATE_RUNTIME=VERIFIED IDENTITY='+operation+'\n');

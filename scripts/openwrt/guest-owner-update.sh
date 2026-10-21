@@ -81,6 +81,7 @@ check foreign_lock_refused sh -c 'mkdir -m 700 /tmp/home-gateway-deploy.lock; sh
 check unknown_manifest_refused sh -c 'cp -p "$1/manifest.json" /tmp/manifest.save; printf " " >> "$1/manifest.json"; sh "$1/update.sh" preflight "$2"; rc=$?; cp -p /tmp/manifest.save "$1/manifest.json"; test "$rc" != 0' -- "$update" "$pin"
 check update_apply sh "$update/update.sh" apply "$pin"
 check update_verify sh "$update/update.sh" verify "$pin"
+check missing_poller_refused sh -c 'ubus call service delete '\''{"name":"home-gateway-telegram","instance":"poller"}'\''; sh "$1/update.sh" verify "$2"; rc=$?; /etc/init.d/home-gateway-telegram restart; sleep 3; test "$rc" != 0' -- "$update" "$pin"
 check unknown_transaction_file_refused sh -c 'tx=/etc/home-gateway-deploy/$(cat /etc/home-gateway-owner-update/new-id); touch "$tx/foreign"; sh "$1/update.sh" verify "$2"; rc=$?; rm "$tx/foreign"; test "$rc" != 0' -- "$update" "$pin"
 check repeated_update_refused refused sh "$update/update.sh" apply "$pin"
 check update_rollback sh "$update/update.sh" rollback "$pin"
@@ -122,6 +123,7 @@ rollback_crash_case() {
 }
 check crash_before_rollback rollback_crash_case before-rollback
 check crash_after_rollback rollback_crash_case after-rollback
+check crash_before_restore_boot rollback_crash_case before-restore-boot
 HG_OWNER_VM_KILL_AT=after-publication sh "$update/update.sh" apply "$pin" > "$LAB/reboot-kill.log" 2>&1
 check reboot_interrupted sh -c '[ "$(cat /etc/home-gateway-owner-update/phase)" = APPLYING ] && [ ! -e /etc/rc.d/S94home-gateway-deploy-recover ] && [ ! -e /etc/rc.d/S95home-gateway-telegram ]'
 cat /proc/sys/kernel/random/boot_id > "$LAB/boot-before"

@@ -21,7 +21,7 @@ regular() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%g:%a:%h' "$1")" = 
 admit() { /bin/sh /usr/libexec/home-gateway-deploy/migration-admission.sh "$@"; }
 service() { timeout -k 2 30 /etc/init.d/home-gateway-telegram "$1"; }
 running() { service running >/dev/null 2>&1; }
-wait_running() { n=0; while ! running; do n=$((n+1)); [ "$n" -lt 6 ] || return 1; sleep 1; done; sleep 2; running; }
+wait_running() { n=0; while ! running; do n=$((n+1)); [ "$n" -lt 6 ] || return 1; sleep 1; done; sleep 2; running; inspect workers; }
 write() { absent "$1.new" || fail PENDING_FILE; printf '%s\n' "$2" > "$1.new"; sync; mv "$1.new" "$1"; sync; }
 phase() { write "$J/phase" "$1"; }
 check_link() { [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]; }
@@ -98,6 +98,10 @@ preflight() {
     case "$old" in tx.m????????????????????????) ;; *) fail NOT_NATIVE_ANCHOR;; esac
     regular "$D/$old/commit" 600 && [ "$(cat "$D/$old/commit")" = 62592457237e7f026786c086d1ca6fdd4b6c095d ] || fail BASELINE_IDENTITY
     running || fail TELEGRAM_NOT_RUNNING
+    inspect workers
+    need=$(( $(du -sk "$KIT/baseline" | cut -f1) * 3 + 4096 ))
+    available=$(df -Pk /etc | awk 'END {print $4}')
+    [ "$available" -ge "$need" ] || fail PERSISTENT_SPACE
     checks
 }
 hook() {
@@ -151,10 +155,11 @@ restore() {
     rm "$D/active"; sync
     service start; wait_running
     checks
-    phase ROLLED_BACK
     release; trap - EXIT
     admit --telegram-start
+    hook before-restore-boot
     restore_boot
+    phase ROLLED_BACK
     echo OWNER_UPDATE_ROLLBACK=PASS IDENTITY=HGDEPLOY2_BASELINE
 }
 case "$operation" in
@@ -162,7 +167,7 @@ case "$operation" in
  verify)
     load_journal
     regular "$J/phase" 600 && [ "$(cat "$J/phase")" = COMMITTED ] || fail NOT_COMMITTED
-    inspect candidate; admit --telegram-start; boot_check; running; checks
+    inspect candidate; admit --telegram-start; boot_check; running; inspect workers; checks
     echo OWNER_UPDATE_VERIFY=PASS; exit 0;;
  rollback|recover)
     load_journal

@@ -14,6 +14,10 @@ head `701bcd44dd0210395cbba1e48581044e4abf6b26`, merge
 SUCCESS 12/12; Codex review этого HEAD завершён без findings.
 Этот runtime на CUDY не установлен.
 
+Baseline source сохранён durable tag `hgdeploy2-production-baseline-20261020.2`
+на исходном SHA. Это сохранение production source, не новый runtime release.
+Чистый checkout с полной историей и tags должен содержать этот объект.
+
 ## Целевой аудит
 
 В source baseline `scripts/deploy/engine.sh` и `transport.py` уже используют
@@ -56,6 +60,9 @@ Explicit rollback/recover возвращает исходный poller и origin
 это возврат к работавшему HGDEPLOY2. HGDEPLOY1 migration rollback не вызывается.
 Guest reboot не должен повторять apply или автоматически восстанавливать runtime.
 Отключённый Telegram до явного recovery допустим как fail-closed control-plane failure.
+Terminal rollback записывается после восстановления boot links. Проверка workers
+требует одновременно poller и notifications, их running state, PID и exact command
+в procd и `/proc`; общий service running не считается достаточным.
 
 VM-only selftest не доказывает CUDY doctor: кандидат явно печатает
 `OWNER_UPDATE_DOCTOR=NOT_TESTED_VM`. Owner profile обязан выполнять doctor до и после
