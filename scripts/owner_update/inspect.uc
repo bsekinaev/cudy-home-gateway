@@ -80,6 +80,15 @@ if(operation=='journal') {
     for(let p in ['migration.sha256','anchor.sha256']) {
         let raw=read(J+'/'+p,0600,131072),rows=split(raw,'\n');require(pop(rows)=='' && length(rows)>0 && length(rows)<512,'EVIDENCE');
         for(let row in rows)require(match(row,/^[0-9a-f]{64}  \/etc\/home-gateway-(migration|deploy)\/[A-Za-z0-9_./-]+$/) && !match(row,/(^|\/)\.\.($|\/)/),'EVIDENCE_PATH');
+        let actual=[];
+        function evidence_walk(path) {
+            let st=fs.lstat(path);require(st!=null && st.uid==0 && st.gid==0,'EVIDENCE_METADATA');
+            if(st.type=='file') {require(st.nlink==1,'EVIDENCE_LINK');push(actual,path);return;}
+            require(st.type=='directory','EVIDENCE_TYPE');let names=fs.lsdir(path);require(names!=null && length(names)<128,'EVIDENCE_DIRECTORY');
+            for(let n in names)evidence_walk(path+'/'+n);
+        }
+        evidence_walk(p=='migration.sha256'?'/etc/home-gateway-migration':D+'/'+old);
+        require(join('\n',sort(actual))==join('\n',sort(map(rows,r=>substr(r,66)))),'EVIDENCE_UNKNOWN_FILE');
         require(command('sha256sum -c '+quote(J+'/'+p))==0,'HISTORICAL_EVIDENCE_DRIFT');
     }
     let tx=D+'/'+id;checked(tx,'directory',0700,0);
@@ -87,6 +96,15 @@ if(operation=='journal') {
     require(read(tx+'/backup.sha256',0600,8192)==fs.readfile(kit+'/baseline.sha256') &&
         read(tx+'/new.sha256',0600,8192)==fs.readfile(kit+'/candidate.sha256'),'TX_MANIFEST');
     for(let p in PATHS)checked(tx+'/backup/'+p,'file',index(PATHS,p)<3?0755:0644,262144);
+    let required=['commit','inventory-version','was-running','backup.sha256','new.sha256','phase','preflight.log','postflight.log','service.log',...map(PATHS,p=>'backup/'+p)],actual=[];
+    function tx_walk(path,prefix) {
+        checked(path,'directory',0700,0);let names=fs.lsdir(path);require(names!=null && length(names)<=32,'TX_DIRECTORY');
+        for(let n in names) {let p=prefix?prefix+'/'+n:n;
+            require(index(required,p)>=0 || length(filter(required,r=>index(r,p+'/')==0))>0,'TX_UNKNOWN_FILE');
+            if(fs.lstat(path+'/'+n)?.type=='directory')tx_walk(path+'/'+n,p);else {checked(path+'/'+n,'file',index(p,'backup/')==0?(index(PATHS,substr(p,7))<3?0755:0644):0600,262144);push(actual,p);}
+        }
+    }
+    tx_walk(tx,'');require(length(actual)==length(required),'TX_INCOMPLETE');
     require(command('cd '+quote(tx+'/backup')+' && sha256sum -c ../backup.sha256')==0,'BACKUP_PIN');
     print('OWNER_UPDATE_JOURNAL=VERIFIED PHASE='+phase+'\n');exit(0);
 }

@@ -16,4 +16,4 @@ if ($manifest.format -ne 'HG_OWNER_UPDATE_V1' -or $manifest.profile -ne 'VM_ONLY
 Write-Output ('SOURCE='+$manifest.source_commit)
 Write-Output ('BASELINE='+$manifest.baseline_commit)
 Write-Output 'READY_FOR_OWNER_MANUAL_UPDATE=NO'
-Write-Output 'VM-only prototype: apply and recovery are blocked. Do not upload to CUDY.'
+Write-Output 'VM-only candidate: production execution is blocked. Do not upload to CUDY.'

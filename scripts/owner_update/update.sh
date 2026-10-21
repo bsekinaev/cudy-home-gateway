@@ -55,6 +55,7 @@ checks() {
 acquire() {
     # Serialize with the trusted receiver using its inode-checked serial flock.
     serial=/tmp/home-gateway-deploy.serial
+    if absent "$serial"; then (set -C; : > "$serial") 2>/dev/null || fail SERIAL_RACE; fi
     regular "$serial" 600 || fail SERIAL_METADATA
     before=$(stat -c '%d:%i' "$serial")
     exec 9< "$serial"

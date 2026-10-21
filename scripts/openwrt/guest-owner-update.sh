@@ -6,7 +6,6 @@ umask 077
 LAB=/etc/hg-vm-lab/owner-update
 mkdir -p "$LAB"
 chmod 700 "$LAB"
-: > "$LAB/checks"
 check() {
  name=$1;shift
  printf 'HGVM_START=%s\n' "$name"
@@ -16,6 +15,7 @@ check() {
 }
 refused() { "$@";[ "$?" -ne 0 ]; }
 if [ ! -e "$LAB/reboot-pending" ]; then
+: > "$LAB/checks"
 check procd_pid1 sh -c '[ "$(cat /proc/1/comm)" = procd ]'
 check prerequisites apk --repositories-file /opt/hg-vm-lab/packages/repositories --no-network add coreutils-base64=9.9-r2 coreutils-stat=9.9-r2 coreutils-timeout=9.9-r2
 sha256sum /etc/config/network /etc/config/firewall /etc/config/dhcp > "$LAB/network"
@@ -122,7 +122,7 @@ check reboot_no_replay sh -c '[ "$(cat /etc/home-gateway-owner-update/phase)" = 
 check reboot_explicit_recovery sh "$update/update.sh" recover "$pin"
 check reboot_recovered_admission sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start
 check reboot_baseline_runtime sh -c 'cd / && sha256sum -c "$1/baseline.sha256"' -- "$update"
-check historical_evidence sh /usr/bin/ucode "$update/inspect.uc" "$update" "$pin" journal
+check historical_evidence /usr/bin/ucode "$update/inspect.uc" "$update" "$pin" journal
 check network_config_unchanged sha256sum -c "$LAB/network"
 ip route show > "$LAB/routes.after"
 nft -s list ruleset > "$LAB/nft.after"
