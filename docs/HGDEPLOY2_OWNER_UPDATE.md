@@ -63,6 +63,12 @@ Explicit rollback/recover возвращает исходный poller и origin
 это возврат к работавшему HGDEPLOY2. HGDEPLOY1 migration rollback не вызывается.
 Guest reboot не должен повторять apply или автоматически восстанавливать runtime.
 Отключённый Telegram до явного recovery допустим как fail-closed control-plane failure.
+Новый pinned `/etc/init.d/home-gateway-owner-update` и S07 boot link восстанавливают
+только RAM fence незавершённого owner update. Они не запускают Apply/rollback/service.
+PID-less boot fence блокирует и старый CD receiver recover; снять собственный fence
+может только явный проверенный owner Recover. На завершённых COMMITTED/ROLLED_BACK
+с восстановленными boot links guard не предпринимает действий. Serial flock
+удерживается до terminal post-check, чтобы чужой receiver не менял owner lease.
 Terminal rollback записывается после восстановления boot links. Проверка workers
 требует одновременно poller и notifications, их running state, PID и exact command
 в procd и `/proc`; общий service running не считается достаточным.

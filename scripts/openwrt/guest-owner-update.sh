@@ -75,6 +75,7 @@ tar -xzpf /opt/hg-vm-lab/owner-update.tar.gz -C "$update"
 pin=$(sha256sum "$update/manifest.json" | cut -d ' ' -f1)
 printf '%s\n' "$pin" > "$LAB/update-pin"
 check update_preflight sh "$update/update.sh" preflight "$pin"
+check vm_doctor_failure_blocks_apply sh -c 'HG_OWNER_VM_REQUIRE_DOCTOR=1 sh "$1/update.sh" apply "$2"; rc=$?; test "$rc" != 0 && test ! -e /etc/home-gateway-owner-update' -- "$update" "$pin"
 check unknown_file_refused sh -c 'touch /usr/lib/home-gateway/foreign.uc; sh "$1/update.sh" preflight "$2"; rc=$?; rm /usr/lib/home-gateway/foreign.uc; test "$rc" != 0' -- "$update" "$pin"
 check drift_refused sh -c 'cp -p /usr/lib/home-gateway/telegram-poller.uc /tmp/poller.save; printf "// drift\n" >> /usr/lib/home-gateway/telegram-poller.uc; sh "$1/update.sh" preflight "$2"; rc=$?; cp -p /tmp/poller.save /usr/lib/home-gateway/telegram-poller.uc; test "$rc" != 0' -- "$update" "$pin"
 check foreign_lock_refused sh -c 'mkdir -m 700 /tmp/home-gateway-deploy.lock; sh "$1/update.sh" preflight "$2"; rc=$?; rmdir /tmp/home-gateway-deploy.lock; test "$rc" != 0' -- "$update" "$pin"
@@ -92,8 +93,18 @@ archive_update() {
  id=$(cat /etc/home-gateway-owner-update/new-id)
  mv /etc/home-gateway-owner-update "$LAB/receipt-$1"
  mv "/etc/home-gateway-deploy/$id" "$LAB/transaction-$1"
+ if [ -f /etc/init.d/home-gateway-owner-update ]; then mv /etc/init.d/home-gateway-owner-update "$LAB/guard-$1"; fi
+ if [ -L /etc/rc.d/S07home-gateway-owner-update ]; then mv /etc/rc.d/S07home-gateway-owner-update "$LAB/guard-link-$1"; fi
 }
 archive_update successful
+post_doctor_case() {
+ HG_OWNER_VM_POST_DOCTOR=1 sh "$update/update.sh" apply "$pin" > "$LAB/post-doctor.log" 2>&1
+ rc=$?; outcome=0
+ [ "$rc" != 0 ] && [ "$(cat /etc/home-gateway-owner-update/phase)" = CHECKING ] && sh "$update/update.sh" recover "$pin" > "$LAB/post-doctor-recover.log" 2>&1 && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || outcome=1
+ archive_update post-doctor
+ return "$outcome"
+}
+check vm_post_doctor_failure_recovery post_doctor_case
 crash_case() {
  point=$1
  HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" apply "$pin" > "$LAB/kill-$point.log" 2>&1
@@ -105,6 +116,8 @@ crash_case() {
  return "$outcome"
 }
 check crash_after_quarantine crash_case after-quarantine
+check crash_boot_staged crash_case boot-staged
+check crash_boot_published crash_case boot-published
 check crash_before_publication crash_case before-publication
 check crash_staged_poller crash_case staged-poller
 check crash_after_publication crash_case after-publication
@@ -125,12 +138,12 @@ check crash_before_rollback rollback_crash_case before-rollback
 check crash_after_rollback rollback_crash_case after-rollback
 check crash_before_restore_boot rollback_crash_case before-restore-boot
 torn_case() {
- name=$1; target=$2
- HG_OWNER_VM_TORN_RECORD=$target sh "$update/update.sh" apply "$pin" > "$LAB/torn-$name.log" 2>&1
+ torn_name=$1; target=$2
+ HG_OWNER_VM_TORN_RECORD=$target sh "$update/update.sh" apply "$pin" > "$LAB/torn-$torn_name.log" 2>&1
  rc=$?; outcome=0
- [ "$rc" = 137 ] && sh "$update/update.sh" recover "$pin" > "$LAB/recover-$name.log" 2>&1 && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || outcome=1
- cat "$LAB/recover-$name.log" 2>/dev/null
- archive_update "$name"
+ [ "$rc" = 137 ] && sh "$update/update.sh" recover "$pin" > "$LAB/recover-$torn_name.log" 2>&1 && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || outcome=1
+ cat "$LAB/recover-$torn_name.log" 2>/dev/null
+ archive_update "$torn_name"
  return "$outcome"
 }
 update_id=tx.u$(ucode -e 'import * as fs from "fs";print(substr(json(fs.readfile(ARGV[0])).source_commit,0,24));' -- "$update/manifest.json")
@@ -170,6 +183,7 @@ update=/etc/hg-vm-lab/update-kit
 pin=$(cat "$LAB/update-pin")
 check actual_reboot sh -c 'test "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat "$1/boot-before")"' -- "$LAB"
 check reboot_no_replay sh -c '[ "$(cat /etc/home-gateway-owner-update/phase)" = APPLYING ] && [ "$(cat /etc/home-gateway-deploy/$(cat /etc/home-gateway-deploy/active)/phase)" = APPLYING ] && ! /etc/init.d/home-gateway-telegram running'
+check boot_receiver_recovery_fenced refused sh /usr/libexec/home-gateway-deploy/engine.sh recover
 check reboot_explicit_recovery sh "$update/update.sh" recover "$pin"
 check reboot_recovered_admission sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start
 check reboot_baseline_runtime sh -c 'cd / && sha256sum -c "$1/baseline.sha256"' -- "$update"

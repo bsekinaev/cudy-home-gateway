@@ -38,7 +38,7 @@ else {
     require(match(board.model??'',/^Cudy TR3000( 256MB)? v1$/) && board.release?.target=='mediatek/filogic' && total!=null && +total[1]>=450000 && +total[1]<=524288,'OWNER_HARDWARE');
     require(available!=null && +available[1]>=32768,'OWNER_MEMORY');
 }
-let expected=['baseline.sha256','candidate.sha256','update.sh','inspect.uc','owner.ps1',
+let expected=['baseline.sha256','candidate.sha256','update.sh','inspect.uc','owner.ps1','boot.init',
     ...map(PATHS,p=>'baseline/'+p),...map(PATHS,p=>'candidate/'+p)];
 if(owner)push(expected,'acceptance.json');
 require(type(m.files)=='array' && length(m.files)==length(expected),'INVENTORY');
@@ -46,7 +46,7 @@ let seen={},kit_hashes='';
 for(let f in m.files) {
     require(index(expected,f.path)>=0 && !seen[f.path] && match(f.sha256??'',/^[0-9a-f]{64}$/) &&
         type(f.size)=='int' && f.size>=0 && f.size<=262144,'INVENTORY');seen[f.path]=true;
-    let rel=replace(f.path,/^(baseline|candidate)\//,''),perm=index(PATHS,rel)>=0?(index(PATHS,rel)<3?0755:0644):(f.path=='update.sh'?0700:0600);
+    let rel=replace(f.path,/^(baseline|candidate)\//,''),perm=index(PATHS,rel)>=0?(index(PATHS,rel)<3?0755:0644):(f.path=='boot.init'?0755:f.path=='update.sh'?0700:0600);
     require(f.mode==perm,'MODE');let s=checked(kit+'/'+f.path,'file',perm,262144);require(s.size==f.size,'SIZE');
     kit_hashes+=f.sha256+'  '+kit+'/'+f.path+'\n';
 }
@@ -83,6 +83,18 @@ for(let p,digest in m.controls) {
     control_hashes+=digest+'  /'+p+'\n';
 }
 require(command('printf %s '+quote(control_hashes)+' | sha256sum -c -')==0,'CONTROL_DRIFT');
+let boot='/etc/init.d/home-gateway-owner-update',boot_link='/etc/rc.d/S07home-gateway-owner-update';
+function pending_boot(path) {
+    let mode=fs.lstat(path)?.mode;require(mode==0600 || mode==0755,'PENDING_BOOT_MODE');
+    let raw=read(path,mode,262144);require(substr(fs.readfile(kit+'/boot.init'),0,length(raw))==raw,'UNKNOWN_PENDING_BOOT');
+}
+if(fs.lstat(boot+'.new')!=null) {require(operation=='recovery' || operation=='mixed','PENDING_BOOT_CONTROL');pending_boot(boot+'.new');}
+if(fs.lstat(boot)!=null) {
+    checked(boot,'file',0755,262144);
+    let digest=filter(m.files,f=>f.path=='boot.init')[0].sha256;
+    require(command('printf %s '+quote(digest+'  '+boot+'\n')+' | sha256sum -c -')==0,'BOOT_CONTROL_PIN');
+}
+if(fs.lstat(boot_link)!=null) {checked(boot_link,'link',0777,0);require(fs.readlink(boot_link)=='../init.d/home-gateway-owner-update','BOOT_CONTROL_LINK');}
 if(operation=='workers') {
     // Reuse the installed, baseline-pinned proof: both procd instances, exact
     // commands, root UID, respawn policy and stable non-zombie PID starttimes.
@@ -141,6 +153,7 @@ if(operation=='journal' || operation=='recovery') {
     let required=['commit','inventory-version','was-running','backup.sha256','new.sha256','phase','preflight.log','postflight.log','service.log',...map(PATHS,p=>'backup/'+p)],actual=[];
     if(fs.lstat(tx+'/interrupted-poller')!=null) {pending(tx+'/interrupted-poller');push(required,'interrupted-poller');}
     for(let name in fs.lsdir(tx)) {
+        if(match(name,/^interrupted-boot\.[1-8]$/)) {pending_boot(tx+'/'+name);push(required,name);}
         if(match(name,/^interrupted-poller\.[1-8]$/)) {pending(tx+'/'+name);push(required,name);}
         let saved=match(name,/^interrupted-record-(owner-phase|tx-phase|active|latest)\.[1-8]$/);
         if(saved) {record(tx+'/'+name,saved[1]);push(required,name);}
@@ -152,7 +165,7 @@ if(operation=='journal' || operation=='recovery') {
         checked(path,'directory',0700,0);let names=fs.lsdir(path);require(names!=null && length(names)<=32,'TX_DIRECTORY');
         for(let n in names) {let p=prefix?prefix+'/'+n:n;
             require(index(required,p)>=0 || length(filter(required,r=>index(r,p+'/')==0))>0,'TX_UNKNOWN_FILE');
-            if(fs.lstat(path+'/'+n)?.type=='directory')tx_walk(path+'/'+n,p);else {let mode=index(p,'interrupted-poller')==0?fs.lstat(path+'/'+n)?.mode:index(p,'backup/')==0?(index(PATHS,substr(p,7))<3?0755:0644):0600;checked(path+'/'+n,'file',mode,262144);push(actual,p);}
+            if(fs.lstat(path+'/'+n)?.type=='directory')tx_walk(path+'/'+n,p);else {let mode=index(p,'interrupted-poller')==0 || index(p,'interrupted-boot')==0?fs.lstat(path+'/'+n)?.mode:index(p,'backup/')==0?(index(PATHS,substr(p,7))<3?0755:0644):0600;checked(path+'/'+n,'file',mode,262144);push(actual,p);}
         }
     }
     tx_walk(tx,'');require(length(actual)==length(required),'TX_INCOMPLETE');

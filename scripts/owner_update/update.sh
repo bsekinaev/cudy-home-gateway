@@ -16,7 +16,7 @@ DELTA=usr/lib/home-gateway/telegram-poller.uc
 inspect() { /usr/bin/ucode "$KIT/inspect.uc" "$KIT" "$pin" "$1"; }
 inspect kit
 PROFILE=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).profile);' -- "$KIT/manifest.json")
-if [ "$PROFILE" = OWNER_MANUAL ]; then unset HG_OWNER_VM_KILL_AT HG_OWNER_VM_TORN_RECORD HG_OWNER_VM_PARTIAL_POLLER; fi
+if [ "$PROFILE" = OWNER_MANUAL ]; then unset HG_OWNER_VM_KILL_AT HG_OWNER_VM_TORN_RECORD HG_OWNER_VM_PARTIAL_POLLER HG_OWNER_VM_REQUIRE_DOCTOR HG_OWNER_VM_POST_DOCTOR; fi
 fail() { echo "OWNER_UPDATE_ERROR=$1" >&2; exit 1; }
 absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
 regular() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%g:%a:%h' "$1")" = "0:0:$2:1" ]; }
@@ -57,7 +57,8 @@ restore_boot() {
 }
 checks() {
     timeout -k 2 90 /usr/bin/gateway selftest
-    if [ "$PROFILE" = OWNER_MANUAL ]; then timeout -k 2 90 /usr/bin/gateway doctor;
+    if [ "$PROFILE" = OWNER_MANUAL ] || [ "${HG_OWNER_VM_REQUIRE_DOCTOR:-0}" = 1 ] ||
+       { [ "${HG_OWNER_VM_POST_DOCTOR:-0}" = 1 ] && [ "$(cat "$J/phase" 2>/dev/null)" = CHECKING ]; }; then timeout -k 2 90 /usr/bin/gateway doctor;
     else echo OWNER_UPDATE_DOCTOR=NOT_TESTED_VM; fi
 }
 acquire() {
@@ -71,20 +72,26 @@ acquire() {
     if ! absent "$LOCK"; then
         [ "$operation" = recover ] || fail FOREIGN_OR_STALE_LOCK
         [ -d "$LOCK" ] && [ ! -L "$LOCK" ] && [ "$(stat -c '%u:%g:%a' "$LOCK")" = '0:0:700' ] || fail FOREIGN_LOCK_METADATA
-        regular "$LOCK/owner-update" 600 && regular "$LOCK/pid" 600 &&
+        regular "$LOCK/owner-update" 600 &&
         [ "$(cat "$LOCK/owner-update")" = "$pin" ] || fail FOREIGN_OR_STALE_LOCK
-        stale_pid=$(cat "$LOCK/pid")
-        printf '%s' "$stale_pid" | grep -Eq '^[1-9][0-9]{0,9}$' &&
-        [ "$(stat -c %s "$LOCK/pid")" = "$((${#stale_pid}+1))" ] || fail UNKNOWN_LEASE_PID
-        ! kill -0 "$(cat "$LOCK/pid")" 2>/dev/null || fail LIVE_WRITER
-        [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-update:pid:' ] || fail UNKNOWN_LEASE_CONTENT
-        rm "$LOCK/pid" "$LOCK/owner-update"; rmdir "$LOCK"
+        if ! absent "$LOCK/pid"; then
+            regular "$LOCK/pid" 600 || fail UNKNOWN_LEASE_PID
+            stale_pid=$(cat "$LOCK/pid")
+            printf '%s' "$stale_pid" | grep -Eq '^[1-9][0-9]{0,9}$' &&
+            [ "$(stat -c %s "$LOCK/pid")" = "$((${#stale_pid}+1))" ] || fail UNKNOWN_LEASE_PID
+            ! kill -0 "$stale_pid" 2>/dev/null || fail LIVE_WRITER
+            [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-update:pid:' ] || fail UNKNOWN_LEASE_CONTENT
+            rm "$LOCK/pid"
+        else [ "$(ls -A "$LOCK")" = owner-update ] || fail UNKNOWN_LEASE_CONTENT; fi
+        rm "$LOCK/owner-update"; rmdir "$LOCK"
     fi
     mkdir -m 700 "$LOCK"
     printf '%s\n' "$$" > "$LOCK/pid"
     printf '%s\n' "$pin" > "$LOCK/owner-update"
     lease=$(stat -c '%d:%i' "$LOCK")
-    exec 9<&-
+    # Hold serial exclusion through terminal checks. procd starts workers via
+    # ubus, without inheriting this shell's descriptors. No foreign receiver
+    # may consume even a stale owner lease while this operation is alive.
 }
 release() {
     regular "$LOCK/pid" 600 && [ "$(cat "$LOCK/pid")" = "$$" ] &&
@@ -106,6 +113,7 @@ replace_poller() {
 }
 preflight() {
     absent "$J" || fail EXISTING_UPDATE
+    absent /etc/init.d/home-gateway-owner-update && absent /etc/rc.d/S07home-gateway-owner-update || fail EXISTING_OWNER_GUARD
     absent "$D/active" && absent "$D/active.new" && absent "$D/latest.new" && absent "$LOCK" || fail ACTIVE_OR_FOREIGN
     inspect baseline
     admit --telegram-start
@@ -156,6 +164,7 @@ archive_pending() {
         case "$label" in owner-phase) record_path=$J/phase.new;; tx-phase) record_path=$TX/phase.new;; *) record_path=$D/$label.new;; esac
         if ! absent "$record_path"; then archive_slot "$record_path" interrupted-record-$label; fi
     done
+    if ! absent /etc/init.d/home-gateway-owner-update.new; then archive_slot /etc/init.d/home-gateway-owner-update.new interrupted-boot; fi
     if absent "$TX/phase"; then write "$TX/phase" PREPARED; fi
 }
 restore() {
@@ -243,6 +252,14 @@ find "$D/$old" -type f -exec sha256sum '{}' ';' | sort > "$J/anchor.sha256"
 write "$TX/phase" PREPARED
 phase PREPARED
 inspect journal
+cp -p "$KIT/boot.init" /etc/init.d/home-gateway-owner-update.new
+sync
+hook boot-staged
+mv /etc/init.d/home-gateway-owner-update.new /etc/init.d/home-gateway-owner-update
+sync
+hook boot-published
+ln -s ../init.d/home-gateway-owner-update /etc/rc.d/S07home-gateway-owner-update
+sync
 quarantine
 hook after-quarantine
 write "$D/active" "$id"
