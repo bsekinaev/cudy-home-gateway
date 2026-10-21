@@ -103,7 +103,7 @@ boot_fence_case() {
  printf 'PREPARING\n' > /etc/home-gateway-owner-update/phase
  case "$kind" in
   missing) ;;
-  partial) printf 'a' > /etc/home-gateway-owner-update/kit-pin;;
+  partial) printf '%.1s' "$pin" > /etc/home-gateway-owner-update/kit-pin;;
   complete) printf '%s\n' "$pin" > /etc/home-gateway-owner-update/kit-pin;;
  esac
  sh -c '. "$1/boot.init"; start' -- "$update" || return 1
