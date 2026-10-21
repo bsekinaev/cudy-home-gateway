@@ -96,7 +96,9 @@ acquire() {
     before=$(stat -c '%d:%i' "$serial")
     exec 9< "$serial"
     [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" = "$before" ] && busybox flock -n 9 || fail SERIAL_BUSY
+    existing_lease=0
     if ! absent "$LOCK"; then
+        existing_lease=1
         [ "$operation" = recover ] || fail FOREIGN_OR_STALE_LOCK
         [ -d "$LOCK" ] && [ ! -L "$LOCK" ] && [ "$(stat -c '%u:%g:%a' "$LOCK")" = '0:0:700' ] || fail FOREIGN_LOCK_METADATA
         regular "$LOCK/owner-update" 600 &&
@@ -108,16 +110,32 @@ acquire() {
             [ "$(stat -c %s "$LOCK/owner-pid")" = "$((${#stale_pid}+1))" ] || fail UNKNOWN_LEASE_PID
             ! kill -0 "$stale_pid" 2>/dev/null || fail LIVE_WRITER
             if ! absent "$LOCK/pid"; then
-                regular "$LOCK/pid" 600 && cmp -s "$LOCK/pid" "$LOCK/owner-pid" || fail UNKNOWN_RECEIVER_PID
+                regular "$LOCK/pid" 600 || fail UNKNOWN_RECEIVER_PID
+                receiver_pid=$(cat "$LOCK/pid")
+                printf '%s' "$receiver_pid" | grep -Eq '^[1-9][0-9]{0,9}$' &&
+                [ "$(stat -c %s "$LOCK/pid")" = "$((${#receiver_pid}+1))" ] &&
+                ! kill -0 "$receiver_pid" 2>/dev/null || fail UNKNOWN_RECEIVER_PID
                 [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-pid:owner-update:pid:' ] || fail UNKNOWN_LEASE_CONTENT
             else [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-pid:owner-update:' ] || fail UNKNOWN_LEASE_CONTENT; fi
         else [ "$(ls -A "$LOCK")" = owner-update ] || fail UNKNOWN_LEASE_CONTENT; fi
-        retire_lease
     fi
-    mkdir -m 700 "$LOCK"
-    printf '%s\n' "$$" > "$LOCK/pid"
-    printf '%s\n' "$$" > "$LOCK/owner-pid"
-    printf '%s\n' "$pin" > "$LOCK/owner-update"
+    staged_lease=$(mktemp -d /tmp/home-gateway-owner-lease.XXXXXX)
+    printf '%s\n' "$$" > "$staged_lease/pid"
+    printf '%s\n' "$$" > "$staged_lease/owner-pid"
+    printf '%s\n' "$pin" > "$staged_lease/owner-update"
+    sync
+    hook lease-staged
+    if [ "$existing_lease" = 1 ]; then
+        # Keep the authenticated fence continuously present. Each PID record
+        # is published atomically; after SIGKILL either old or new PID is dead
+        # and can be validated independently on the next explicit recovery.
+        mv "$staged_lease/owner-pid" "$LOCK/owner-pid"; sync
+        hook lease-owner-published
+        mv "$staged_lease/pid" "$LOCK/pid"; sync
+    else
+        /usr/bin/ucode -e 'import * as fs from "fs"; if(fs.lstat(ARGV[1])!=null || !fs.rename(ARGV[0],ARGV[1]))die("OWNER_LEASE_PUBLISH");' -- "$staged_lease" "$LOCK"
+        sync
+    fi
     lease=$(stat -c '%d:%i' "$LOCK")
     # Hold serial exclusion through terminal checks. procd starts workers via
     # ubus, without inheriting this shell's descriptors. No foreign receiver

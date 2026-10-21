@@ -118,6 +118,13 @@ boot_fence_case() {
 check boot_missing_pin_recoverable boot_fence_case missing
 check boot_partial_pin_recoverable boot_fence_case partial
 check boot_complete_fence_recoverable boot_fence_case complete
+staged_lease_case() {
+ HG_OWNER_VM_KILL_AT=lease-staged sh "$update/update.sh" apply "$pin" > "$LAB/staged-lease.log" 2>&1
+ [ "$?" = 137 ] && [ ! -e /tmp/home-gateway-deploy.lock ] &&
+ [ ! -e /etc/home-gateway-owner-update ] && sh "$update/update.sh" recover "$pin" &&
+ sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start
+}
+check staged_lease_not_published staged_lease_case
 preparation_case() {
  point=$1
  HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" apply "$pin" > "$LAB/prepare-$point.log" 2>&1
@@ -203,6 +210,15 @@ repeated_recovery_case() {
  archive_update repeated-recovery
 }
 check repeated_recovery_after_sigkill repeated_recovery_case
+lease_takeover_case() {
+ HG_OWNER_VM_KILL_AT=after-publication sh "$update/update.sh" apply "$pin" > "$LAB/takeover-apply.log" 2>&1
+ [ "$?" = 137 ] || return 1
+ HG_OWNER_VM_KILL_AT=lease-owner-published sh "$update/update.sh" recover "$pin" > "$LAB/takeover-kill.log" 2>&1
+ [ "$?" = 137 ] && [ -f /tmp/home-gateway-deploy.lock/owner-update ] || return 1
+ sh "$update/update.sh" recover "$pin" && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || return 1
+ archive_update lease-takeover
+}
+check interrupted_lease_takeover_recoverable lease_takeover_case
 HG_OWNER_VM_KILL_AT=after-publication sh "$update/update.sh" apply "$pin" > "$LAB/reboot-kill.log" 2>&1
 check reboot_interrupted sh -c '[ "$(cat /etc/home-gateway-owner-update/phase)" = APPLYING ] && [ ! -e /etc/rc.d/S94home-gateway-deploy-recover ] && [ ! -e /etc/rc.d/S95home-gateway-telegram ]'
 cat /proc/sys/kernel/random/boot_id > "$LAB/boot-before"
