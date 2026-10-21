@@ -97,6 +97,18 @@ archive_update() {
  if [ -L /etc/rc.d/S07home-gateway-owner-update ]; then mv /etc/rc.d/S07home-gateway-owner-update "$LAB/guard-link-$1"; fi
 }
 archive_update successful
+preparation_case() {
+ point=$1
+ HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" apply "$pin" > "$LAB/prepare-$point.log" 2>&1
+ rc=$?
+ [ "$rc" = 137 ] && refused sh /usr/libexec/home-gateway-deploy/engine.sh recover &&
+ sh "$update/update.sh" recover "$pin" > "$LAB/prepare-recover-$point.log" 2>&1 &&
+ [ ! -e /etc/home-gateway-owner-update ] && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start
+}
+check crash_lease_only preparation_case lease-only
+check crash_preparation_empty preparation_case preparation-empty
+check crash_preparation_partial_backup preparation_case preparation-backup
+check crash_preparation_complete preparation_case preparation-complete
 post_doctor_case() {
  HG_OWNER_VM_POST_DOCTOR=1 sh "$update/update.sh" apply "$pin" > "$LAB/post-doctor.log" 2>&1
  rc=$?; outcome=0

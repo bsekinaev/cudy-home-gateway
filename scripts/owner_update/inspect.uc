@@ -73,7 +73,7 @@ if(owner) {
         match(a.ci_url??'',/^https:\/\/github\.com\/bsekinaev\/cudy-home-gateway\/actions\/runs\/[0-9]+$/) && r?.commit==m.source_commit && r.status=='PASS' && r.failed==0 && r.scenario=='owner-update' && r.total==length(keys(r.checks??{})) && r.total>0 && length(filter(keys(r.checks),k=>r.checks[k]!='PASS'))==0,'OWNER_ACCEPTANCE');
 }
 if(operation=='kit') { print('OWNER_UPDATE_KIT=VERIFIED SOURCE='+m.source_commit+' PROFILE='+m.profile+'\n');exit(0); }
-require(index(['baseline','candidate','mixed','journal','recovery','pending','workers'],operation)>=0,'OPERATION');
+require(index(['baseline','candidate','mixed','journal','recovery','preparation','pending','workers'],operation)>=0,'OPERATION');
 require(read('/etc/home-gateway-migration/phase',0600,32)=='COMMITTED\n','MIGRATION_PHASE');
 require(type(m.controls)=='object' && length(keys(m.controls))==14,'CONTROL_INVENTORY');
 let control_hashes='';
@@ -108,6 +108,49 @@ function pending(path) {
     require(length(filter(['baseline','candidate'],n=>substr(fs.readfile(kit+'/'+n+'/'+DELTA),0,length(raw))==raw))>0,'UNKNOWN_PENDING_RUNTIME');
 }
 if(operation=='pending') {pending('/'+DELTA+'.hg-owner-new');exit(0);}
+if(operation=='preparation') {
+    const J='/etc/home-gateway-owner-update',D='/etc/home-gateway-deploy';
+    checked(J,'directory',0700,0);
+    require(fs.lstat(D+'/active')==null && fs.lstat(D+'/active.new')==null && fs.lstat(D+'/latest.new')==null &&
+        fs.lstat(boot)==null && fs.lstat(boot+'.new')==null && fs.lstat(boot_link)==null,'PREPARATION_ALREADY_PUBLISHED');
+    let old=trim(read(D+'/latest',0600,40)),id='tx.u'+substr(m.source_commit,0,24);
+    require(match(old,/^tx\.m[0-9a-f]{24}$/) && read(D+'/'+old+'/commit',0600,41)==BASELINE+'\n','PREPARATION_BASELINE');
+    function prefix(path,values,modes) {
+        let s=fs.lstat(path);require(s!=null && index(modes,s.mode)>=0,'PREPARATION_MODE');let raw=read(path,s.mode,262144);
+        require(length(filter(values,v=>substr(v,0,length(raw))==raw))>0,'PREPARATION_UNKNOWN_BYTES');
+    }
+    function hashes(base) {
+        let p=fs.popen('find '+quote(base)+' -type f -exec sha256sum '+quote('{}')+' '+quote(';')+' | sort','r');require(p!=null,'PREPARATION_EVIDENCE');
+        let raw=p.read(131073);require(p.close()==0 && type(raw)=='string' && length(raw)<=131072,'PREPARATION_EVIDENCE');return raw;
+    }
+    let fields={'kit-pin':[pin+'\n'],'old-latest':[old+'\n'],'new-id':[id+'\n'],phase:['PREPARING\n'],
+        'phase.new':['PREPARING\n','PREPARED\n'],'migration.sha256':[hashes('/etc/home-gateway-migration')],'anchor.sha256':[hashes(D+'/'+old)]};
+    let tx=D+'/'+id,inside=fs.lstat(J+'/transaction')!=null;
+    require(!inside || fs.lstat(tx)==null,'PREPARATION_DUPLICATE');if(inside)tx=J+'/transaction';
+    for(let name in fs.lsdir(J)) {
+        if(name=='transaction')continue;
+        if(name=='lease') {let raw=read(J+'/'+name,0600,128);require(match(raw,/^[0-9a-f:\n-]*$/),'PREPARATION_LEASE');continue;}
+        require(fields[name]!=null,'PREPARATION_UNKNOWN_FILE');prefix(J+'/'+name,fields[name],[0600]);
+    }
+    if(fs.lstat(tx)!=null) {
+        let allowed={'commit':[m.source_commit+'\n'],'inventory-version':['HGDEPLOY2\n'],'was-running':['1\n'],
+            'backup.sha256':[fs.readfile(kit+'/baseline.sha256')],'new.sha256':[fs.readfile(kit+'/candidate.sha256')],
+            phase:['PREPARED\n'],'phase.new':['PREPARED\n'],'preflight.log':[''],'postflight.log':[''],'service.log':['']};
+        let names=[...keys(allowed),...map(PATHS,p=>'backup/'+p)];
+        function walk_preparation(path,rel) {
+            checked(path,'directory',0700,0);let entries=fs.lsdir(path);require(entries!=null && length(entries)<=32,'PREPARATION_DIRECTORY');
+            for(let n in entries) {
+                let p=rel?rel+'/'+n:n,full=path+'/'+n;
+                require(index(names,p)>=0 || length(filter(names,w=>index(w,p+'/')==0))>0,'PREPARATION_UNKNOWN_FILE');
+                if(fs.lstat(full)?.type=='directory')walk_preparation(full,p);
+                else if(index(p,'backup/')==0) {let r=substr(p,7);prefix(full,[fs.readfile(kit+'/baseline/'+r)],[0600,index(PATHS,r)<3?0755:0644]);}
+                else prefix(full,allowed[p],[0600]);
+            }
+        }
+        walk_preparation(tx,'');
+    }
+    print('OWNER_UPDATE_PREPARATION=VERIFIED\n');exit(0);
+}
 if(operation=='journal' || operation=='recovery') {
     const J='/etc/home-gateway-owner-update',D='/etc/home-gateway-deploy';
     checked(J,'directory',0700,0);

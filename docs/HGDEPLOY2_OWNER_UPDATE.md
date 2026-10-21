@@ -61,6 +61,11 @@ Runtime меняется через staging + sync + rename. Telegram остан
 
 Explicit rollback/recover возвращает исходный poller и original latest anchor;
 это возврат к работавшему HGDEPLOY2. HGDEPLOY1 migration rollback не вызывается.
+Если Apply прерван до PREPARED, Recover проверяет каждый существующий partial file
+как собственный prefix и полный действующий baseline, затем сохраняет skeleton
+и partial backup в отдельный `.aborted.*` receipt. Runtime не меняется; повторный
+Apply возможен только новой явной командой. Неизвестные bytes/paths не архивируются
+автоматически и не принимаются как backup. Windows evidence сохраняет stdout и stderr.
 Guest reboot не должен повторять apply или автоматически восстанавливать runtime.
 Отключённый Telegram до явного recovery допустим как fail-closed control-plane failure.
 Новый pinned `/etc/init.d/home-gateway-owner-update` и S07 boot link восстанавливают

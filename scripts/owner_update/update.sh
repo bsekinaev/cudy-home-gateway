@@ -228,6 +228,50 @@ restore() {
     phase ROLLED_BACK
     echo OWNER_UPDATE_ROLLBACK=PASS IDENTITY=HGDEPLOY2_BASELINE
 }
+abort_preparation() {
+    # No published runtime/boot state exists in PREPARING. Verify every partial
+    # byte against this kit and the still-working baseline, then preserve the
+    # entire skeleton by rename; never execute or adopt a partial backup.
+    inspect baseline; inspect preparation
+    acquire; trap 'release' EXIT
+    inspect baseline; inspect preparation; admit --telegram-start; inspect workers
+    source=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$KIT/manifest.json")
+    id=tx.u$(printf '%s' "$source" | cut -c1-24)
+    if ! absent "$D/$id"; then absent "$J/transaction" || fail PREPARATION_DUPLICATE; mv "$D/$id" "$J/transaction"; sync; fi
+    slot=1
+    while [ "$slot" -le 8 ]; do
+        receipt=$J.aborted.$id.$slot
+        if absent "$receipt"; then break; fi
+        slot=$((slot+1))
+    done
+    [ "$slot" -le 8 ] || fail PREPARATION_EVIDENCE_LIMIT
+    release; trap - EXIT
+    mv "$J" "$receipt"; sync
+    echo OWNER_UPDATE_PREPARATION=ABORTED IDENTITY=HGDEPLOY2_BASELINE RECEIPT="$receipt"
+}
+if [ "$operation" = recover ] && [ -d "$J" ] && [ ! -L "$J" ]; then
+    preparation_phase=$(cat "$J/phase" 2>/dev/null || true)
+    if [ -z "$preparation_phase" ] || [ "$preparation_phase" = PREPARING ]; then abort_preparation; exit 0; fi
+fi
+if [ "$operation" = recover ] && absent "$J"; then
+    # Interrupted lease acquisition precedes every persistent/runtime change.
+    # Only the exact native baseline plus this package's known lease qualifies.
+    inspect baseline
+    absent "$D/active" && absent "$D/active.new" && absent "$D/latest.new" &&
+    absent /etc/init.d/home-gateway-owner-update && absent /etc/init.d/home-gateway-owner-update.new &&
+    absent /etc/rc.d/S07home-gateway-owner-update || fail UNKNOWN_UNJOURNALED_STATE
+    source=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$KIT/manifest.json")
+    absent "$D/tx.u$(printf '%s' "$source" | cut -c1-24)" || fail UNJOURNALED_TRANSACTION
+    regular "$D/latest" 600 || fail LATEST_METADATA
+    old=$(cat "$D/latest")
+    printf '%s' "$old" | grep -Eq '^tx\.m[0-9a-f]{24}$' || fail NOT_NATIVE_ANCHOR
+    regular "$D/$old/commit" 600 && [ "$(cat "$D/$old/commit")" = 62592457237e7f026786c086d1ca6fdd4b6c095d ] || fail BASELINE_IDENTITY
+    acquire; trap 'release' EXIT
+    admit --telegram-start; inspect workers
+    release; trap - EXIT
+    echo OWNER_UPDATE_RECOVERY=NO_RUNTIME_MUTATION IDENTITY=HGDEPLOY2_BASELINE
+    exit 0
+fi
 case "$operation" in
  preflight) preflight; echo OWNER_UPDATE_PREFLIGHT=PASS; exit 0;;
  verify)
@@ -245,9 +289,12 @@ esac
 preflight
 acquire
 trap 'release' EXIT
+hook lease-only
 # Repeat under receiver exclusion; admission permits this receiver-owned lease.
 inspect baseline; admit --receiver-recover; boot_check; running
 mkdir -m 700 "$J"
+hook preparation-empty
+phase PREPARING
 printf '%s\n' "$pin" > "$J/kit-pin"
 printf '%s\n' "$old" > "$J/old-latest"
 source=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$KIT/manifest.json")
@@ -265,11 +312,13 @@ cp "$KIT/candidate.sha256" "$TX/new.sha256"
 while read -r digest rel; do
     mkdir -p "$TX/backup/${rel%/*}"
     cp -p "/$rel" "$TX/backup/$rel"
+    hook preparation-backup
 done < "$KIT/baseline.sha256"
 : > "$TX/preflight.log"; : > "$TX/postflight.log"; : > "$TX/service.log"
 find /etc/home-gateway-migration -type f -exec sha256sum '{}' ';' | sort > "$J/migration.sha256"
 find "$D/$old" -type f -exec sha256sum '{}' ';' | sort > "$J/anchor.sha256"
 write "$TX/phase" PREPARED
+hook preparation-complete
 phase PREPARED
 inspect journal
 install_guard

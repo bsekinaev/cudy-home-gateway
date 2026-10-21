@@ -13,7 +13,8 @@ exact-head `701bcd44dd0210395cbba1e48581044e4abf6b26` имеет
 [CI SUCCESS 12/12](https://github.com/bsekinaev/cudy-home-gateway/actions/runs/39518047357)
 и review без findings. Telegram update на CUDY ещё НЕ установлен.
 
-Owner updater: VM-only candidate, production rollout BLOCKED. Его rollback/crash
+Owner updater: default VM-only package; owner profile требует отдельного exact-source
+VM/CI/review acceptance report. LIVE update ещё не принят. Его rollback/crash
 acceptance учитывается отдельно от принятой RC-B migration и её production rollback.
 Reboot persistence, длительный soak, независимый E2E traffic и фактический sysupgrade
 restore остаются NOT_TESTED в рамках нового production baseline. v1.0.0 acceptance нет.

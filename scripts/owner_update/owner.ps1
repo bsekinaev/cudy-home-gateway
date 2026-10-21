@@ -41,8 +41,9 @@ $sshOptions=@('-T','-p',[string]$Port)+$common
 function Remote([string]$Command) {
     $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Command.Replace("`r`n","`n")))
     $wire='printf %s '+$encoded+' | base64 -d | sh'
-    $lines=@(& ssh @sshOptions $Target $wire)
-    $code=$LASTEXITCODE
+    $savedPreference=$ErrorActionPreference
+    try { $ErrorActionPreference='Continue'; $lines=@(& ssh @sshOptions $Target $wire 2>&1); $code=$LASTEXITCODE }
+    finally { $ErrorActionPreference=$savedPreference }
     foreach ($line in $lines) { Write-Host $line }
     return [pscustomobject]@{Lines=$lines;Code=$code}
 }
