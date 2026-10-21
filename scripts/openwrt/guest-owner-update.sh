@@ -97,6 +97,27 @@ archive_update() {
  if [ -L /etc/rc.d/S07home-gateway-owner-update ]; then mv /etc/rc.d/S07home-gateway-owner-update "$LAB/guard-link-$1"; fi
 }
 archive_update successful
+boot_fence_case() {
+ kind=$1
+ mkdir -m 700 /etc/home-gateway-owner-update || return 1
+ printf 'PREPARING\n' > /etc/home-gateway-owner-update/phase
+ case "$kind" in
+  missing) ;;
+  partial) printf 'a' > /etc/home-gateway-owner-update/kit-pin;;
+  complete) printf '%s\n' "$pin" > /etc/home-gateway-owner-update/kit-pin;;
+ esac
+ sh -c '. "$1/boot.init"; start' -- "$update" || return 1
+ if [ "$kind" = complete ]; then
+  [ "$(cat /tmp/home-gateway-deploy.lock/owner-update)" = "$pin" ] &&
+  [ "$(ls -A /tmp/home-gateway-deploy.lock)" = owner-update ] || return 1
+ else [ ! -e /tmp/home-gateway-deploy.lock ] || return 1; fi
+ sh "$update/update.sh" recover "$pin" &&
+ [ ! -e /etc/home-gateway-owner-update ] && [ ! -e /tmp/home-gateway-deploy.lock ] &&
+ sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start
+}
+check boot_missing_pin_recoverable boot_fence_case missing
+check boot_partial_pin_recoverable boot_fence_case partial
+check boot_complete_fence_recoverable boot_fence_case complete
 preparation_case() {
  point=$1
  HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" apply "$pin" > "$LAB/prepare-$point.log" 2>&1
