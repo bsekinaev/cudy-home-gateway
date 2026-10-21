@@ -124,6 +124,39 @@ rollback_crash_case() {
 check crash_before_rollback rollback_crash_case before-rollback
 check crash_after_rollback rollback_crash_case after-rollback
 check crash_before_restore_boot rollback_crash_case before-restore-boot
+torn_case() {
+ name=$1; target=$2
+ HG_OWNER_VM_TORN_RECORD=$target sh "$update/update.sh" apply "$pin" > "$LAB/torn-$name.log" 2>&1
+ rc=$?; outcome=0
+ [ "$rc" = 137 ] && sh "$update/update.sh" recover "$pin" > "$LAB/recover-$name.log" 2>&1 && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || outcome=1
+ cat "$LAB/recover-$name.log" 2>/dev/null
+ archive_update "$name"
+ return "$outcome"
+}
+update_id=tx.u$(ucode -e 'import * as fs from "fs";print(substr(json(fs.readfile(ARGV[0])).source_commit,0,24));' -- "$update/manifest.json")
+check torn_owner_phase torn_case owner-phase /etc/home-gateway-owner-update/phase:APPLYING
+check torn_transaction_phase torn_case tx-phase /etc/home-gateway-deploy/$update_id/phase:CHECKING
+check torn_active_pointer torn_case active /etc/home-gateway-deploy/active:$update_id
+check torn_latest_pointer torn_case latest /etc/home-gateway-deploy/latest:$update_id
+partial_poller_case() {
+ HG_OWNER_VM_PARTIAL_POLLER=1 sh "$update/update.sh" apply "$pin" > "$LAB/partial-poller.log" 2>&1
+ rc=$?; outcome=0
+ [ "$rc" = 137 ] && sh "$update/update.sh" recover "$pin" > "$LAB/partial-poller-recover.log" 2>&1 && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || outcome=1
+ cat "$LAB/partial-poller-recover.log"
+ archive_update partial-poller
+ return "$outcome"
+}
+check partial_poller_recovery partial_poller_case
+repeated_recovery_case() {
+ HG_OWNER_VM_KILL_AT=after-publication sh "$update/update.sh" apply "$pin" > "$LAB/repeated-apply.log" 2>&1
+ [ "$?" = 137 ] || return 1
+ HG_OWNER_VM_KILL_AT=before-rollback sh "$update/update.sh" recover "$pin" > "$LAB/repeated-first.log" 2>&1
+ [ "$?" = 137 ] || return 1
+ sh "$update/update.sh" recover "$pin" > "$LAB/repeated-final.log" 2>&1 || return 1
+ sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || return 1
+ archive_update repeated-recovery
+}
+check repeated_recovery_after_sigkill repeated_recovery_case
 HG_OWNER_VM_KILL_AT=after-publication sh "$update/update.sh" apply "$pin" > "$LAB/reboot-kill.log" 2>&1
 check reboot_interrupted sh -c '[ "$(cat /etc/home-gateway-owner-update/phase)" = APPLYING ] && [ ! -e /etc/rc.d/S94home-gateway-deploy-recover ] && [ ! -e /etc/rc.d/S95home-gateway-telegram ]'
 cat /proc/sys/kernel/random/boot_id > "$LAB/boot-before"

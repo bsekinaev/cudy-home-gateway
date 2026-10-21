@@ -34,14 +34,15 @@ require(read('/etc/hg-disposable-vm',0600,64)=='HG_NETWORKLESS_OPENWRT_VM_V1\n' 
 let expected=['baseline.sha256','candidate.sha256','update.sh','inspect.uc','owner.ps1',
     ...map(PATHS,p=>'baseline/'+p),...map(PATHS,p=>'candidate/'+p)];
 require(type(m.files)=='array' && length(m.files)==length(expected),'INVENTORY');
-let seen={};
+let seen={},kit_hashes='';
 for(let f in m.files) {
     require(index(expected,f.path)>=0 && !seen[f.path] && match(f.sha256??'',/^[0-9a-f]{64}$/) &&
         type(f.size)=='int' && f.size>=0 && f.size<=262144,'INVENTORY');seen[f.path]=true;
     let rel=replace(f.path,/^(baseline|candidate)\//,''),perm=index(PATHS,rel)>=0?(index(PATHS,rel)<3?0755:0644):(f.path=='update.sh'?0700:0600);
     require(f.mode==perm,'MODE');let s=checked(kit+'/'+f.path,'file',perm,262144);require(s.size==f.size,'SIZE');
-    require(command('printf '+quote(f.sha256+'  '+kit+'/'+f.path+'\n')+' | sha256sum -c -')==0,'FILE_PIN');
+    kit_hashes+=f.sha256+'  '+kit+'/'+f.path+'\n';
 }
+require(command('printf %s '+quote(kit_hashes)+' | sha256sum -c -')==0,'FILE_PIN');
 function walk(path,prefix) {
     checked(path,'directory',0700,0);let names=fs.lsdir(path);require(names!=null && length(names)<=32,'DIRECTORY');
     for(let n in names) {let p=prefix?prefix+'/'+n:n;
@@ -59,14 +60,16 @@ for(let name in ['baseline','candidate']) {
 }
 require(join(',',filter(PATHS,p=>m.inventories.baseline[p]!=m.inventories.candidate[p]))==DELTA,'DELTA');
 if(operation=='kit') { print('OWNER_UPDATE_KIT=VERIFIED SOURCE='+m.source_commit+' PROFILE=VM_ONLY\n');exit(0); }
-require(index(['baseline','candidate','mixed','journal','pending','workers'],operation)>=0,'OPERATION');
+require(index(['baseline','candidate','mixed','journal','recovery','pending','workers'],operation)>=0,'OPERATION');
 require(read('/etc/home-gateway-migration/phase',0600,32)=='COMMITTED\n','MIGRATION_PHASE');
 require(type(m.controls)=='object' && length(keys(m.controls))==14,'CONTROL_INVENTORY');
+let control_hashes='';
 for(let p,digest in m.controls) {
     require(match(p,/^(usr\/libexec\/home-gateway-deploy\/[a-z-]+\.(sh|uc)|etc\/init.d\/home-gateway-[a-z-]+)$/) && match(digest,/^[0-9a-f]{64}$/),'CONTROL_PATH');
     checked('/'+p,'file',index(p,'etc/init.d/')==0?0755:(match(p,/\.uc$/)?0600:0700),262144);
-    require(command('printf '+quote(digest+'  /'+p+'\n')+' | sha256sum -c -')==0,'CONTROL_DRIFT');
+    control_hashes+=digest+'  /'+p+'\n';
 }
+require(command('printf %s '+quote(control_hashes)+' | sha256sum -c -')==0,'CONTROL_DRIFT');
 if(operation=='workers') {
     // Reuse the installed, baseline-pinned proof: both procd instances, exact
     // commands, root UID, respawn policy and stable non-zombie PID starttimes.
@@ -75,19 +78,32 @@ if(operation=='workers') {
     print('OWNER_UPDATE_WORKERS=PASS\n');exit(0);
 }
 function pending(path) {
-    let raw=read(path,0644,262144);
+    let mode=fs.lstat(path)?.mode;require(mode==0600 || mode==0644,'PENDING_MODE');
+    let raw=read(path,mode,262144);
     require(length(filter(['baseline','candidate'],n=>substr(fs.readfile(kit+'/'+n+'/'+DELTA),0,length(raw))==raw))>0,'UNKNOWN_PENDING_RUNTIME');
 }
 if(operation=='pending') {pending('/'+DELTA+'.hg-owner-new');exit(0);}
-if(operation=='journal') {
+if(operation=='journal' || operation=='recovery') {
     const J='/etc/home-gateway-owner-update',D='/etc/home-gateway-deploy';
     checked(J,'directory',0700,0);
     require(read(J+'/kit-pin',0600,65)==pin+'\n','JOURNAL_PACKAGE');
     let old=trim(read(J+'/old-latest',0600,40)),id=trim(read(J+'/new-id',0600,40));
     require(match(old,/^tx\.m[a-f0-9]{24}$/) && id=='tx.u'+substr(m.source_commit,0,24),'JOURNAL_IDENTITY');
-    let phase=trim(read(J+'/phase',0600,32));
+    let phases=['PREPARED','QUARANTINING','QUARANTINED','APPLYING','CHECKING','COMMITTED','RESTORING','ROLLED_BACK'];
+    function record(path,label) {
+        let values=label=='active'?[id+'\n']:label=='latest'?[id+'\n',old+'\n']:map(phases,p=>p+'\n');
+        let raw=read(path,0600,64);
+        require(length(filter(values,v=>substr(v,0,length(raw))==raw))>0,'UNKNOWN_PENDING_RECORD');
+    }
+    require(match(read(J+'/lease',0600,128),/^[1-9][0-9]{0,9}:[0-9]+:[0-9]+:[0-9a-f-]{36}\n$/),'LEASE_EVIDENCE');
+    let phase_raw=operation=='recovery' && fs.lstat(J+'/phase')==null?'PREPARED\n':read(J+'/phase',0600,32),phase=trim(phase_raw);
+    require(phase_raw==phase+'\n','PHASE_BYTES');
     require(index(['PREPARED','QUARANTINING','QUARANTINED','APPLYING','CHECKING','COMMITTED','RESTORING','ROLLED_BACK'],phase)>=0,'JOURNAL_PHASE');
     let expected=['kit-pin','old-latest','new-id','phase','migration.sha256','anchor.sha256','lease'];
+    if(operation=='recovery' && fs.lstat(J+'/phase')==null) {
+        require(fs.lstat(J+'/phase.new')!=null,'MISSING_PHASE');expected=filter(expected,p=>p!='phase');
+    }
+    if(fs.lstat(J+'/phase.new')!=null) {require(operation=='recovery','PENDING_PHASE');record(J+'/phase.new','owner-phase');push(expected,'phase.new');}
     require(length(fs.lsdir(J))==length(expected) && length(filter(fs.lsdir(J),p=>index(expected,p)>=0))==length(expected),'JOURNAL_UNKNOWN');
     for(let p in ['migration.sha256','anchor.sha256']) {
         let raw=read(J+'/'+p,0600,131072),rows=split(raw,'\n');require(pop(rows)=='' && length(rows)>0 && length(rows)<512,'EVIDENCE');
@@ -104,28 +120,40 @@ if(operation=='journal') {
         require(command('sha256sum -c '+quote(J+'/'+p))==0,'HISTORICAL_EVIDENCE_DRIFT');
     }
     let tx=D+'/'+id;checked(tx,'directory',0700,0);
+    for(let name in ['active','latest'])if(fs.lstat(D+'/'+name+'.new')!=null) {require(operation=='recovery','PENDING_POINTER');record(D+'/'+name+'.new',name);}
     require(read(tx+'/commit',0600,41)==m.source_commit+'\n' && read(tx+'/inventory-version',0600,16)=='HGDEPLOY2\n' && read(tx+'/was-running',0600,2)=='1\n','TX_IDENTITY');
     require(read(tx+'/backup.sha256',0600,8192)==fs.readfile(kit+'/baseline.sha256') &&
         read(tx+'/new.sha256',0600,8192)==fs.readfile(kit+'/candidate.sha256'),'TX_MANIFEST');
     for(let p in PATHS)checked(tx+'/backup/'+p,'file',index(PATHS,p)<3?0755:0644,262144);
     let required=['commit','inventory-version','was-running','backup.sha256','new.sha256','phase','preflight.log','postflight.log','service.log',...map(PATHS,p=>'backup/'+p)],actual=[];
     if(fs.lstat(tx+'/interrupted-poller')!=null) {pending(tx+'/interrupted-poller');push(required,'interrupted-poller');}
+    for(let name in fs.lsdir(tx)) {
+        if(match(name,/^interrupted-poller\.[1-8]$/)) {pending(tx+'/'+name);push(required,name);}
+        let saved=match(name,/^interrupted-record-(owner-phase|tx-phase|active|latest)\.[1-8]$/);
+        if(saved) {record(tx+'/'+name,saved[1]);push(required,name);}
+    }
+    if(fs.lstat(tx+'/phase')==null) {require(operation=='recovery' && fs.lstat(tx+'/phase.new')!=null,'MISSING_TX_PHASE');required=filter(required,p=>p!='phase');}
+    else {let raw=read(tx+'/phase',0600,32),p=trim(raw);require(raw==p+'\n' && index(phases,p)>=0,'TX_PHASE');}
+    if(fs.lstat(tx+'/phase.new')!=null) {require(operation=='recovery','PENDING_TX_PHASE');record(tx+'/phase.new','tx-phase');push(required,'phase.new');}
     function tx_walk(path,prefix) {
         checked(path,'directory',0700,0);let names=fs.lsdir(path);require(names!=null && length(names)<=32,'TX_DIRECTORY');
         for(let n in names) {let p=prefix?prefix+'/'+n:n;
             require(index(required,p)>=0 || length(filter(required,r=>index(r,p+'/')==0))>0,'TX_UNKNOWN_FILE');
-            if(fs.lstat(path+'/'+n)?.type=='directory')tx_walk(path+'/'+n,p);else {checked(path+'/'+n,'file',p=='interrupted-poller'?0644:index(p,'backup/')==0?(index(PATHS,substr(p,7))<3?0755:0644):0600,262144);push(actual,p);}
+            if(fs.lstat(path+'/'+n)?.type=='directory')tx_walk(path+'/'+n,p);else {let mode=index(p,'interrupted-poller')==0?fs.lstat(path+'/'+n)?.mode:index(p,'backup/')==0?(index(PATHS,substr(p,7))<3?0755:0644):0600;checked(path+'/'+n,'file',mode,262144);push(actual,p);}
         }
     }
     tx_walk(tx,'');require(length(actual)==length(required),'TX_INCOMPLETE');
     require(command('cd '+quote(tx+'/backup')+' && sha256sum -c ../backup.sha256')==0,'BACKUP_PIN');
     print('OWNER_UPDATE_JOURNAL=VERIFIED PHASE='+phase+'\n');exit(0);
 }
+let live_hashes='';
 for(let p in PATHS) {
     checked('/'+p,'file',index(PATHS,p)<3?0755:0644,262144);
-    let allowed=operation=='mixed' && p==DELTA?['baseline','candidate']:[operation=='mixed'?'baseline':operation];
-    require(length(filter(allowed,n=>command('printf '+quote(m.inventories[n][p]+'  /'+p+'\n')+' | sha256sum -c -')==0))>0,'LIVE_DRIFT');
+    if(operation=='mixed' && p==DELTA) {
+        require(length(filter(['baseline','candidate'],n=>command('printf %s '+quote(m.inventories[n][p]+'  /'+p+'\n')+' | sha256sum -c -')==0))>0,'LIVE_DRIFT');
+    } else live_hashes+=m.inventories[operation=='mixed'?'baseline':operation][p]+'  /'+p+'\n';
 }
+require(command('printf %s '+quote(live_hashes)+' | sha256sum -c -')==0,'LIVE_DRIFT');
 let library=fs.lsdir('/usr/lib/home-gateway');
 if(operation=='mixed' && fs.lstat('/'+DELTA+'.hg-owner-new')!=null) {
     pending('/'+DELTA+'.hg-owner-new');

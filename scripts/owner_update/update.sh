@@ -22,7 +22,13 @@ admit() { /bin/sh /usr/libexec/home-gateway-deploy/migration-admission.sh "$@"; 
 service() { timeout -k 2 30 /etc/init.d/home-gateway-telegram "$1"; }
 running() { service running >/dev/null 2>&1; }
 wait_running() { n=0; while ! running; do n=$((n+1)); [ "$n" -lt 6 ] || return 1; sleep 1; done; sleep 2; running; inspect workers; }
-write() { absent "$1.new" || fail PENDING_FILE; printf '%s\n' "$2" > "$1.new"; sync; mv "$1.new" "$1"; sync; }
+write() {
+    absent "$1.new" || fail PENDING_FILE
+    if [ "${HG_OWNER_VM_TORN_RECORD:-}" = "$1:$2" ]; then
+        printf '%s' "$2" | cut -c1 | tr -d '\n' > "$1.new"; sync; kill -KILL "$$"
+    fi
+    printf '%s\n' "$2" > "$1.new"; sync; mv "$1.new" "$1"; sync
+}
 phase() { write "$J/phase" "$1"; }
 check_link() { [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]; }
 boot_check() {
@@ -62,27 +68,36 @@ acquire() {
     [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" = "$before" ] && busybox flock -n 9 || fail SERIAL_BUSY
     if ! absent "$LOCK"; then
         [ "$operation" = recover ] || fail FOREIGN_OR_STALE_LOCK
-        regular "$J/lease" 600 && regular "$LOCK/pid" 600 || fail FOREIGN_OR_STALE_LOCK
-        saved=$(cat "$J/lease")
-        [ "$saved" = "$(cat "$LOCK/pid"):$(stat -c '%d:%i' "$LOCK"):$(cat /proc/sys/kernel/random/boot_id)" ] || fail FOREIGN_OR_STALE_LOCK
+        [ -d "$LOCK" ] && [ ! -L "$LOCK" ] && [ "$(stat -c '%u:%g:%a' "$LOCK")" = '0:0:700' ] || fail FOREIGN_LOCK_METADATA
+        regular "$LOCK/owner-update" 600 && regular "$LOCK/pid" 600 &&
+        [ "$(cat "$LOCK/owner-update")" = "$pin" ] || fail FOREIGN_OR_STALE_LOCK
+        stale_pid=$(cat "$LOCK/pid")
+        printf '%s' "$stale_pid" | grep -Eq '^[1-9][0-9]{0,9}$' &&
+        [ "$(stat -c %s "$LOCK/pid")" = "$((${#stale_pid}+1))" ] || fail UNKNOWN_LEASE_PID
         ! kill -0 "$(cat "$LOCK/pid")" 2>/dev/null || fail LIVE_WRITER
-        [ "$(ls -A "$LOCK")" = pid ] || fail UNKNOWN_LEASE_CONTENT
-        rm "$LOCK/pid"; rmdir "$LOCK"
+        [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-update:pid:' ] || fail UNKNOWN_LEASE_CONTENT
+        rm "$LOCK/pid" "$LOCK/owner-update"; rmdir "$LOCK"
     fi
     mkdir -m 700 "$LOCK"
     printf '%s\n' "$$" > "$LOCK/pid"
+    printf '%s\n' "$pin" > "$LOCK/owner-update"
     lease=$(stat -c '%d:%i' "$LOCK")
     exec 9<&-
 }
 release() {
     regular "$LOCK/pid" 600 && [ "$(cat "$LOCK/pid")" = "$$" ] &&
     [ "$(stat -c '%d:%i' "$LOCK")" = "$lease" ] || fail LEASE_IDENTITY
-    rm "$LOCK/pid"; rmdir "$LOCK"; sync
+    regular "$LOCK/owner-update" 600 && [ "$(cat "$LOCK/owner-update")" = "$pin" ] || fail LEASE_MARKER
+    rm "$LOCK/pid" "$LOCK/owner-update"; rmdir "$LOCK"; sync
 }
 replace_poller() {
     source=$1
     target=/$DELTA
     absent "$target.hg-owner-new" || fail PENDING_RUNTIME
+    if [ "${HG_OWNER_VM_PARTIAL_POLLER:-0}" = 1 ]; then
+        amount=$(( $(wc -c < "$source") / 2 ))
+        head -c "$amount" "$source" > "$target.hg-owner-new"; sync; kill -KILL "$$"
+    fi
     cp -p "$source" "$target.hg-owner-new"; sync
     hook staged-poller
     mv "$target.hg-owner-new" "$target"; sync
@@ -115,22 +130,43 @@ validate_pointers() {
             value=$(cat "$D/$pointer")
             [ "$value" = "$id" ] || { [ "$pointer" = latest ] && [ "$value" = "$old" ]; } || fail FOREIGN_POINTER
         fi
-        absent "$D/$pointer.new" || fail PARTIAL_POINTER
+        if [ "$operation" != recover ]; then absent "$D/$pointer.new" || fail PARTIAL_POINTER; fi
     done
 }
 load_journal() {
-    inspect journal
+    if [ "$operation" = recover ]; then inspect recovery; else inspect journal; fi
     old=$(cat "$J/old-latest"); id=$(cat "$J/new-id"); TX=$D/$id
     validate_pointers
+}
+archive_slot() {
+    source_path=$1; label=$2; count=1
+    while [ "$count" -le 8 ]; do
+        save="$TX/$label.$count"
+        if absent "$save"; then mv "$source_path" "$save"; sync; return 0; fi
+        count=$((count+1))
+    done
+    fail RECOVERY_EVIDENCE_LIMIT
+}
+archive_pending() {
+    # The native recovery inspector certified every pending byte as a bounded
+    # prefix of this transaction's own record before any preservation rename.
+    for label in owner-phase tx-phase active latest; do
+        case "$label" in owner-phase) record_path=$J/phase.new;; tx-phase) record_path=$TX/phase.new;; *) record_path=$D/$label.new;; esac
+        if ! absent "$record_path"; then archive_slot "$record_path" interrupted-record-$label; fi
+    done
+    if absent "$TX/phase"; then write "$TX/phase" PREPARED; fi
 }
 restore() {
     load_journal
     inspect mixed
     acquire
     trap 'release' EXIT
-    write "$J/lease" "$$:$lease:$(cat /proc/sys/kernel/random/boot_id)"
+    # Lease ownership is the exact package marker in the receiver exclusion;
+    # immutable initial lease evidence is never rewritten during recovery.
     # Recovery rechecks everything after acquiring receiver exclusion.
-    inspect journal; inspect mixed; validate_pointers
+    if [ "$operation" = recover ]; then inspect recovery; else inspect journal; fi
+    inspect mixed; validate_pointers
+    archive_pending
     for entry in S94home-gateway-deploy-recover S95home-gateway-telegram; do
         path=/etc/rc.d/$entry
         if ! absent "$path"; then
@@ -142,8 +178,7 @@ restore() {
     service stop; ! running || fail TELEGRAM_STILL_RUNNING
     if ! absent "/$DELTA.hg-owner-new"; then
         inspect pending
-        absent "$TX/interrupted-poller" || fail REPEATED_PENDING_RUNTIME
-        mv "/$DELTA.hg-owner-new" "$TX/interrupted-poller"; sync
+        archive_slot "/$DELTA.hg-owner-new" interrupted-poller
     fi
     write "$D/active" "$id"
     hook before-rollback
@@ -171,7 +206,7 @@ case "$operation" in
     echo OWNER_UPDATE_VERIFY=PASS; exit 0;;
  rollback|recover)
     load_journal
-    current=$(cat "$J/phase")
+    current=$(cat "$J/phase" 2>/dev/null || printf PREPARED)
     if [ "$operation" = rollback ]; then [ "$current" = COMMITTED ] || fail NOT_COMMITTED;
     else [ "$current" != ROLLED_BACK ] || fail TERMINAL_USE_VERIFY_OR_ROLLBACK; fi
     restore; exit 0;;

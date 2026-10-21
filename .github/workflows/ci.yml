@@ -209,7 +209,7 @@ jobs:
     name: Native crash recovery (${{ matrix.scenario }})
     runs-on: ubuntu-24.04
     # Retirement scenario exercises two full transactions plus SIGKILL/reboot.
-    timeout-minutes: ${{ matrix.scenario == 'retirement-reboot' && 20 || 12 }}
+    timeout-minutes: ${{ matrix.scenario == 'owner-update' && 35 || matrix.scenario == 'retirement-reboot' && 20 || 12 }}
     strategy:
       fail-fast: false
       matrix:

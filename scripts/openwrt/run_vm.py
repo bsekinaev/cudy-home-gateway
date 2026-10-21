@@ -269,7 +269,7 @@ def run(args):
         if args.bios: command += ['-bios', str(args.bios)]
         # The control scenario snapshots runtime plus its dependency closure.
         # TCG-only hosts need a separate bounded budget; assertions are unchanged.
-        console = bytearray(); deadline = time.monotonic() + (900 if args.scenario=='retirement-reboot' else 600 if args.scenario in ('owner-update','rc-b-crash-apply','rc-b-crash-restore') else 300 if args.scenario in ('rc-b-root-cycle','control-cycle','service-cycle') else 180)
+        console = bytearray(); deadline = time.monotonic() + (1800 if args.scenario=='owner-update' else 900 if args.scenario=='retirement-reboot' else 600 if args.scenario in ('rc-b-crash-apply','rc-b-crash-restore') else 300 if args.scenario in ('rc-b-root-cycle','control-cycle','service-cycle') else 180)
         try:
             for boot in range(2 if args.scenario in ('owner-update', 'rc-b-crash-apply', 'rc-b-crash-restore', 'retirement-reboot', 'overlay-identity','runtime-crash-apply','runtime-crash-restore', 'runtime-crash-phase') else 1):
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
