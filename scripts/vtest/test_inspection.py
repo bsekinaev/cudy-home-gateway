@@ -45,6 +45,15 @@ if args[0] == 'vtest':
     result = subprocess.run([os.environ['HG_VTEST_TEST_BUSYBOX'], 'ash', os.environ['HG_VTEST_REAL_GATEWAY'], *args], capture_output=True)
     sys.stdout.buffer.write(result.stdout)
     sys.exit(result.returncode)
+if args[:2] == ['actions', 'cancel'] and (base / 'fail-cancel').exists(): sys.exit(73)
+if args[:2] == ['telegram', 'edit-message'] and (base / 'unchanged').exists():
+    print(json.dumps({'ok': False, 'error_code': 400, 'description': 'Bad Request: message is not modified: same content'})); sys.exit(22)
+if args[:2] == ['telegram', 'edit-message'] and (base / 'fail-edit').exists():
+    print(json.dumps({'ok': False, 'error_code': 400, 'description': 'Bad Request: message to edit not found'})); sys.exit(22)
+if args[:2] == ['telegram', 'edit-message'] and (base / 'ambiguous-edit').exists():
+    print(json.dumps({'ok': False, 'error_code': 400, 'description': 'Bad Request: message to edit not found'})); sys.exit(28)
+if args[:2] == ['telegram', 'edit-message'] and (base / 'other-edit-error').exists():
+    print(json.dumps({'ok': False, 'error_code': 400, 'description': 'Bad Request: invalid markup'})); sys.exit(22)
 if args[:2] == ['telegram', 'get-updates']:
     print(json.dumps({'ok': True, 'result': json.loads((base / 'updates').read_text())}))
 else:
@@ -182,7 +191,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         self.assertIn('заблокирован', sent[3])
         self.assertNotIn('PRIVATE_', sent[3])
         buttons = json.loads(sent[4])['inline_keyboard'][0]
-        self.assertTrue(any(b['callback_data'].startswith('vtest:') for b in buttons))
+        self.assertTrue(any(b['callback_data'] == 'nav:vtest' for b in buttons))
 
     def test_wrong_identity_or_stale_message_does_not_inspect(self):
         for update in (self.message(user=999), self.message(chat=999), self.message(at=1)):
@@ -191,8 +200,9 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
 
     def test_vtest_callback_validates_nonce_and_message_identity(self):
         calls = self.poll(self.message())
-        markup = json.loads(next(c for c in calls if c[:2] == ['telegram', 'send-message'])[4])
-        button = next(b for b in markup['inline_keyboard'][0] if b['callback_data'].startswith('vtest:'))
+        # Old deployed menus still require their original nonce/message/TTL.
+        issued, nonce, message = (self.base / 'runtime/telegram.callback').read_text().strip().split(':')
+        button = {'callback_data': f'vtest:{issued}:{nonce}'}
         callback = {'id': 'cb', 'from': {'id': 111}, 'message': {'chat': {'id': 222}, 'message_id': 900},
                     'data': button['callback_data']}
         count = calls.count(['vtest', '--json'])
@@ -214,6 +224,104 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         calls = self.poll({'update_id': 2, 'callback_query': callback})
         self.assertEqual(calls.count(['vtest', '--json']), 1)
 
+
+    def nav(self, view, message=900, user=111, chat=222):
+        return self.poll({'update_id': 10, 'callback_query': {
+            'id': 'nav-cb', 'from': {'id': user},
+            'message': {'chat': {'id': chat}, 'message_id': message}, 'data': 'nav:' + view}})
+
+    def test_navigation_reopens_old_message_without_expiring_privileged_tokens(self):
+        self.poll(self.message())
+        (self.base / 'runtime/telegram.callback').write_text('1:oldnonce:999\n')
+        calls = self.nav('vtest', message=800)
+        self.assertEqual(calls.count(['vtest', '--json']), 2)
+        self.assertTrue(any(c[:4] == ['telegram', 'edit-message', '222', '800'] for c in calls))
+        self.assertFalse(any(c[:2] in (['actions', 'prepare'], ['actions', 'confirm']) for c in calls))
+
+    def test_refresh_vtest_stays_in_results_and_home_returns_status(self):
+        calls = self.poll(self.message())
+        sent = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
+        buttons = [b for row in json.loads(sent[4])['inline_keyboard'] for b in row]
+        refresh = next(b for b in buttons if b['text'] == '🔄 Обновить результаты')
+        calls = self.nav(refresh['callback_data'].split(':')[1])
+        edit = [c for c in calls if c[:2] == ['telegram', 'edit-message']][-1]
+        self.assertIn('Результаты vtest', edit[4])
+        self.assertNotIn(['status', '--json'], calls)
+        calls = self.nav('status')
+        self.assertIn(['status', '--json'], calls)
+        self.assertIn('CUDY Home Gateway', [c for c in calls if c[:2] == ['telegram', 'edit-message']][-1][4])
+
+    def test_start_and_status_always_open_home_even_after_results(self):
+        self.poll(self.message())
+        for command in ('/start', '/status'):
+            update = self.message(); update['message']['text'] = command
+            before = [json.loads(line) for line in (self.base / 'calls').read_text().splitlines()].count(['vtest', '--json'])
+            calls = self.poll(update)
+            sent = [c for c in calls if c[:2] == ['telegram', 'send-message']][-1]
+            self.assertIn('CUDY Home Gateway', sent[3])
+            self.assertEqual(calls.count(['vtest', '--json']), before)
+
+    def test_all_pages_have_home_results_actions_help_and_small_callback_data(self):
+        for page in ('status', 'vtest', 'actions', 'help'):
+            calls = self.nav(page)
+            edit = [c for c in calls if c[:2] == ['telegram', 'edit-message']][-1]
+            buttons = [b for row in json.loads(edit[5])['inline_keyboard'] for b in row]
+            self.assertEqual({b['callback_data'] for b in buttons}, {'nav:status', 'nav:vtest', 'nav:actions', 'nav:help'})
+            self.assertTrue(all(len(b['callback_data'].encode()) <= 64 for b in buttons))
+
+    def test_navigation_authorization_and_unknown_routes_cannot_execute_actions(self):
+        for view, user, chat in [('vtest', 999, 222), ('status', 111, 999), ('prepare-tailscale', 111, 222), ('confirm', 111, 222), ('status:extra', 111, 222)]:
+            calls = self.nav(view, user=user, chat=chat)
+            self.assertFalse(any(c[0] in ('status', 'vtest', 'actions') for c in calls))
+            self.assertFalse(any(c[:2] == ['telegram', 'edit-message'] for c in calls))
+
+    def test_explicit_results_label_no_question_mark_wall_or_run_button(self):
+        calls = self.nav('vtest')
+        edit = [c for c in calls if c[:2] == ['telegram', 'edit-message']][-1]
+        self.assertIn('Нет проверенных результатов', edit[4])
+        self.assertNotIn('?', edit[4])
+        self.assertIn('только просмотр', edit[4])
+        self.assertNotIn('prepare-', edit[5])
+
+    def test_identical_refresh_does_not_spam_or_rotate_capability_state(self):
+        self.nav('vtest')
+        original = (self.base / 'runtime/telegram.callback').read_bytes()
+        (self.base / 'unchanged').touch()
+        calls = self.nav('vtest')
+        self.assertFalse(any(c[:2] == ['telegram', 'send-message'] for c in calls))
+        self.assertEqual((self.base / 'runtime/telegram.callback').read_bytes(), original)
+
+    def test_cancel_failure_is_visible_without_blocking_read_only_navigation(self):
+        (self.base / 'fail-cancel').touch()
+        calls = self.nav('vtest')
+        self.assertIn(['vtest', '--json'], calls)
+        warning = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
+        self.assertIn('Отмена действия не подтверждена', warning[3])
+        self.assertFalse(any(c[:2] in (['actions','prepare'], ['actions','confirm']) for c in calls))
+
+    def test_ambiguous_edit_transport_failure_does_not_create_duplicate(self):
+        self.nav('vtest')
+        original = (self.base / 'runtime/telegram.callback').read_bytes()
+        (self.base / 'ambiguous-edit').touch()
+        calls = self.nav('vtest')
+        self.assertFalse(any(c[:2] == ['telegram', 'send-message'] for c in calls))
+        self.assertEqual((self.base / 'runtime/telegram.callback').read_bytes(), original)
+
+    def test_other_api_errors_do_not_trigger_fresh_dashboard(self):
+        (self.base / 'other-edit-error').touch()
+        calls = self.nav('help')
+        self.assertFalse(any(c[:2] == ['telegram', 'send-message'] for c in calls))
+        self.assertFalse((self.base / 'runtime/telegram.callback').exists())
+
+    def test_deleted_or_uneditable_dashboard_sends_fresh_view(self):
+        (self.base / 'fail-edit').touch()
+        calls = self.nav('help')
+        sent = [c for c in calls if c[:2] == ['telegram', 'send-message']][-1]
+        self.assertIn('Управление Gateway', sent[3])
+        self.assertEqual((self.base / 'runtime/telegram.callback').read_text().strip().split(':')[-1], '900')
+        ack = next(i for i,c in enumerate(calls) if c[:2] == ['telegram', 'answer-callback'])
+        edit = next(i for i,c in enumerate(calls) if c[:2] == ['telegram', 'edit-message'])
+        self.assertLess(ack, edit)
 
     RAW_HEADER = 'run_id\tstage\tnode_id\tname\tround\tprovider\tstatus\tcurl_rc\thttp_code\tlatency_ms\tttfb_ms\tspeed_mbps\ttotal_sec\tbytes\terror\n'
     RAW_OK = '20261010-220000\tquick\tprivate-id\tPRIVATE_NODE\t1\tCF\tOK\t0\t200\t20\t30\t12.3\t2.1\t100\tPRIVATE_ERROR\n'

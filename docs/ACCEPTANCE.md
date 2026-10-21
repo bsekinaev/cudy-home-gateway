@@ -76,3 +76,28 @@ fence; interrupted APPLYING/RESTORING остаётся fenced. Newer deployment/
 
 Temporary validation включена в conditional-unfence для pre-mutation refusal;
 COMMITTED repeat также revalidates после acquisition. 28 migration tests PASS.
+
+## Owner LIVE HGDEPLOY2 RC-B 20261020.2 — 21 October 2026 MSK
+
+Owner-executed migration on Cudy TR3000 v1 / OpenWrt 25.12.5:
+source `62592457237e7f026786c086d1ca6fdd4b6c095d`, transaction
+`786dbec9-f1b6-4732-9ea4-23df99d372ed`.
+
+- RetireCheck, retirement of previous restored transaction, Preflight, Prepare: PASS.
+- Apply: PASS; terminal phase COMMITTED; embedded Verify: PASS.
+- Separate Owner Verify: PASS, COMMITTED.
+- Installed selftest: 62 PASS / 0 FAIL; doctor: 11 OK / 0 WARN / 0 FAIL.
+- Owner screenshot confirms Telegram status and vtest read-only responses after install.
+  Status reports WAN/MAIN/Torrent/Redmi/ASATA/Tailscale/DNS OK. This is a status
+  observation, not separate end-to-end traffic, soak, or reboot acceptance.
+- Owner reports navigation/button usability problems; addressed separately in
+  `docs/TELEGRAM.md`. New navigation patch is not yet owner-installed or LIVE accepted.
+
+RC-B bundle SHA256:
+`599ebe1d46e644bea3465b336ee74b61f5fb802569dd2c17d9bb82cf0603ef42`.
+Preserve the `.2` Windows session/package and all old retired snapshots/owner labs.
+Do not repeat Apply or retire the current COMMITTED transaction. Production rollback
+was proven in earlier owner attempts; no additional destructive test is requested.
+Work performed no production router operations. Private backup inclusion/integrity
+remain confirmed; actual backup restore remains NOT_TESTED. This is migration
+installation evidence, not v1.0 stable release acceptance.
