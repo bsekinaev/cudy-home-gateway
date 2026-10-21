@@ -47,6 +47,19 @@ quarantine() {
     sync
     phase QUARANTINED
 }
+install_guard() {
+    if absent /etc/init.d/home-gateway-owner-update; then
+        absent /etc/init.d/home-gateway-owner-update.new || fail PENDING_BOOT_CONTROL
+        cp -p "$KIT/boot.init" /etc/init.d/home-gateway-owner-update.new
+        sync; hook boot-staged
+        mv /etc/init.d/home-gateway-owner-update.new /etc/init.d/home-gateway-owner-update
+        sync; hook boot-published
+    fi
+    if absent /etc/rc.d/S07home-gateway-owner-update; then
+        ln -s ../init.d/home-gateway-owner-update /etc/rc.d/S07home-gateway-owner-update
+        sync
+    fi
+}
 restore_boot() {
     for item in home-gateway-deploy-recover home-gateway-telegram; do
         case "$item" in home-gateway-deploy-recover) start=94;; *) start=95;; esac
@@ -74,19 +87,24 @@ acquire() {
         [ -d "$LOCK" ] && [ ! -L "$LOCK" ] && [ "$(stat -c '%u:%g:%a' "$LOCK")" = '0:0:700' ] || fail FOREIGN_LOCK_METADATA
         regular "$LOCK/owner-update" 600 &&
         [ "$(cat "$LOCK/owner-update")" = "$pin" ] || fail FOREIGN_OR_STALE_LOCK
-        if ! absent "$LOCK/pid"; then
-            regular "$LOCK/pid" 600 || fail UNKNOWN_LEASE_PID
-            stale_pid=$(cat "$LOCK/pid")
+        if ! absent "$LOCK/owner-pid"; then
+            regular "$LOCK/owner-pid" 600 || fail UNKNOWN_LEASE_PID
+            stale_pid=$(cat "$LOCK/owner-pid")
             printf '%s' "$stale_pid" | grep -Eq '^[1-9][0-9]{0,9}$' &&
-            [ "$(stat -c %s "$LOCK/pid")" = "$((${#stale_pid}+1))" ] || fail UNKNOWN_LEASE_PID
+            [ "$(stat -c %s "$LOCK/owner-pid")" = "$((${#stale_pid}+1))" ] || fail UNKNOWN_LEASE_PID
             ! kill -0 "$stale_pid" 2>/dev/null || fail LIVE_WRITER
-            [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-update:pid:' ] || fail UNKNOWN_LEASE_CONTENT
-            rm "$LOCK/pid"
+            if ! absent "$LOCK/pid"; then
+                regular "$LOCK/pid" 600 && cmp -s "$LOCK/pid" "$LOCK/owner-pid" || fail UNKNOWN_RECEIVER_PID
+                [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-pid:owner-update:pid:' ] || fail UNKNOWN_LEASE_CONTENT
+                rm "$LOCK/pid"
+            else [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-pid:owner-update:' ] || fail UNKNOWN_LEASE_CONTENT; fi
+            rm "$LOCK/owner-pid"
         else [ "$(ls -A "$LOCK")" = owner-update ] || fail UNKNOWN_LEASE_CONTENT; fi
         rm "$LOCK/owner-update"; rmdir "$LOCK"
     fi
     mkdir -m 700 "$LOCK"
     printf '%s\n' "$$" > "$LOCK/pid"
+    printf '%s\n' "$$" > "$LOCK/owner-pid"
     printf '%s\n' "$pin" > "$LOCK/owner-update"
     lease=$(stat -c '%d:%i' "$LOCK")
     # Hold serial exclusion through terminal checks. procd starts workers via
@@ -95,9 +113,10 @@ acquire() {
 }
 release() {
     regular "$LOCK/pid" 600 && [ "$(cat "$LOCK/pid")" = "$$" ] &&
+    regular "$LOCK/owner-pid" 600 && cmp -s "$LOCK/pid" "$LOCK/owner-pid" &&
     [ "$(stat -c '%d:%i' "$LOCK")" = "$lease" ] || fail LEASE_IDENTITY
     regular "$LOCK/owner-update" 600 && [ "$(cat "$LOCK/owner-update")" = "$pin" ] || fail LEASE_MARKER
-    rm "$LOCK/pid" "$LOCK/owner-update"; rmdir "$LOCK"; sync
+    rm "$LOCK/pid" "$LOCK/owner-pid" "$LOCK/owner-update"; rmdir "$LOCK"; sync
 }
 replace_poller() {
     source=$1
@@ -178,6 +197,7 @@ restore() {
     if [ "$operation" = recover ]; then inspect recovery; else inspect journal; fi
     inspect mixed; validate_pointers
     archive_pending
+    install_guard
     for entry in S94home-gateway-deploy-recover S95home-gateway-telegram; do
         path=/etc/rc.d/$entry
         if ! absent "$path"; then
@@ -252,14 +272,7 @@ find "$D/$old" -type f -exec sha256sum '{}' ';' | sort > "$J/anchor.sha256"
 write "$TX/phase" PREPARED
 phase PREPARED
 inspect journal
-cp -p "$KIT/boot.init" /etc/init.d/home-gateway-owner-update.new
-sync
-hook boot-staged
-mv /etc/init.d/home-gateway-owner-update.new /etc/init.d/home-gateway-owner-update
-sync
-hook boot-published
-ln -s ../init.d/home-gateway-owner-update /etc/rc.d/S07home-gateway-owner-update
-sync
+install_guard
 quarantine
 hook after-quarantine
 write "$D/active" "$id"

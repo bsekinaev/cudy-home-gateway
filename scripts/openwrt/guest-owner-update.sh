@@ -110,7 +110,7 @@ crash_case() {
  HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" apply "$pin" > "$LAB/kill-$point.log" 2>&1
  rc=$?
  outcome=0
- [ "$rc" = 137 ] && sh "$update/update.sh" recover "$pin" > "$LAB/recover-$point.log" 2>&1 && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || outcome=1
+ [ "$rc" = 137 ] && refused sh /usr/libexec/home-gateway-deploy/engine.sh recover && sh "$update/update.sh" recover "$pin" > "$LAB/recover-$point.log" 2>&1 && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || outcome=1
  cat "$LAB/recover-$point.log" 2>/dev/null
  archive_update "$point"
  return "$outcome"

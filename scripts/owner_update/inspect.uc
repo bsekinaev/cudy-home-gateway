@@ -94,7 +94,7 @@ if(fs.lstat(boot)!=null) {
     let digest=filter(m.files,f=>f.path=='boot.init')[0].sha256;
     require(command('printf %s '+quote(digest+'  '+boot+'\n')+' | sha256sum -c -')==0,'BOOT_CONTROL_PIN');
 }
-if(fs.lstat(boot_link)!=null) {checked(boot_link,'link',0777,0);require(fs.readlink(boot_link)=='../init.d/home-gateway-owner-update','BOOT_CONTROL_LINK');}
+if(fs.lstat(boot_link)!=null) {checked(boot_link,'link',0777,0);require(fs.lstat(boot)!=null && fs.readlink(boot_link)=='../init.d/home-gateway-owner-update','BOOT_CONTROL_LINK');}
 if(operation=='workers') {
     // Reuse the installed, baseline-pinned proof: both procd instances, exact
     // commands, root UID, respawn policy and stable non-zombie PID starttimes.
@@ -123,6 +123,7 @@ if(operation=='journal' || operation=='recovery') {
     require(match(read(J+'/lease',0600,128),/^[1-9][0-9]{0,9}:[0-9]+:[0-9]+:[0-9a-f-]{36}\n$/),'LEASE_EVIDENCE');
     let phase_raw=operation=='recovery' && fs.lstat(J+'/phase')==null?'PREPARED\n':read(J+'/phase',0600,32),phase=trim(phase_raw);
     require(phase_raw==phase+'\n','PHASE_BYTES');
+    if(phase!='PREPARED')require(fs.lstat(boot)!=null && fs.lstat(boot_link)!=null,'MISSING_BOOT_CONTROL');
     require(index(['PREPARED','QUARANTINING','QUARANTINED','APPLYING','CHECKING','COMMITTED','RESTORING','ROLLED_BACK'],phase)>=0,'JOURNAL_PHASE');
     let expected=['kit-pin','old-latest','new-id','phase','migration.sha256','anchor.sha256','lease'];
     if(operation=='recovery' && fs.lstat(J+'/phase')==null) {
