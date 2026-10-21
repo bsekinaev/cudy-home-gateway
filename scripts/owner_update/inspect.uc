@@ -59,26 +59,20 @@ for(let name in ['baseline','candidate']) {
 }
 require(join(',',filter(PATHS,p=>m.inventories.baseline[p]!=m.inventories.candidate[p]))==DELTA,'DELTA');
 if(operation=='kit') { print('OWNER_UPDATE_KIT=VERIFIED SOURCE='+m.source_commit+' PROFILE=VM_ONLY\n');exit(0); }
-if(operation=='workers') {
-    let proc=fs.popen('ubus call service list '+quote('{"name":"home-gateway-telegram"}'),'r');require(proc!=null,'UBUS');
-    let raw=proc.read(65537);require(proc.close()==0 && type(raw)=='string' && length(raw)<=65536,'UBUS');
-    let instances=json(raw)?.['home-gateway-telegram']?.instances;
-    require(type(instances)=='object' && join(',',sort(keys(instances)))=='notifications,poller','WORKER_INSTANCES');
-    for(let name in ['poller','notifications']) {
-        let instance=instances[name],path='/usr/lib/home-gateway/'+(name=='poller'?'telegram-poller':'notifications')+'.uc';
-        require(instance.running==true && type(instance.pid)=='int' && instance.pid>1 &&
-            type(instance.command)=='array' && join('\u0000',instance.command)=='/usr/bin/ucode\u0000'+path+'\u0000/usr/bin/gateway\u0000loop','WORKER_STATE');
-        require(fs.readfile('/proc/'+instance.pid+'/cmdline')==join('\u0000',instance.command)+'\u0000','WORKER_PROCESS');
-    }
-    print('OWNER_UPDATE_WORKERS=PASS\n');exit(0);
-}
-require(index(['baseline','candidate','mixed','journal','pending'],operation)>=0,'OPERATION');
+require(index(['baseline','candidate','mixed','journal','pending','workers'],operation)>=0,'OPERATION');
 require(read('/etc/home-gateway-migration/phase',0600,32)=='COMMITTED\n','MIGRATION_PHASE');
 require(type(m.controls)=='object' && length(keys(m.controls))==14,'CONTROL_INVENTORY');
 for(let p,digest in m.controls) {
     require(match(p,/^(usr\/libexec\/home-gateway-deploy\/[a-z-]+\.(sh|uc)|etc\/init.d\/home-gateway-[a-z-]+)$/) && match(digest,/^[0-9a-f]{64}$/),'CONTROL_PATH');
     checked('/'+p,'file',index(p,'etc/init.d/')==0?0755:(match(p,/\.uc$/)?0600:0700),262144);
     require(command('printf '+quote(digest+'  /'+p+'\n')+' | sha256sum -c -')==0,'CONTROL_DRIFT');
+}
+if(operation=='workers') {
+    // Reuse the installed, baseline-pinned proof: both procd instances, exact
+    // commands, root UID, respawn policy and stable non-zombie PID starttimes.
+    let code='import { inspect_telegram } from "/usr/libexec/home-gateway-deploy/migration-service.uc"; inspect_telegram("",{assert_root:function(r){if(r!="")die("ROOT");}},"candidate");';
+    require(command('/usr/bin/ucode -e '+quote(code))==0,'WORKERS');
+    print('OWNER_UPDATE_WORKERS=PASS\n');exit(0);
 }
 function pending(path) {
     let raw=read(path,0644,262144);
