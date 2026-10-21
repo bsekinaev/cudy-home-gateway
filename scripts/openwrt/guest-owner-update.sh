@@ -148,6 +148,7 @@ check vm_post_doctor_failure_recovery post_doctor_case
 normal_failure_fence_case() {
  HG_OWNER_VM_POST_DOCTOR=1 sh "$update/update.sh" apply "$pin" > "$LAB/failure-fence.log" 2>&1
  [ "$?" != 0 ] && [ "$(cat /etc/home-gateway-owner-update/phase)" = CHECKING ] &&
+ [ "$(cat /etc/home-gateway-deploy/$(cat /etc/home-gateway-owner-update/new-id)/phase)" = APPLYING ] &&
  [ -f /tmp/home-gateway-deploy.lock/owner-update ] || return 1
  refused /etc/init.d/home-gateway-telegram start &&
  ! /etc/init.d/home-gateway-telegram running &&

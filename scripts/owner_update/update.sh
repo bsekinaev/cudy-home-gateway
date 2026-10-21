@@ -361,9 +361,12 @@ hook before-publication
 replace_poller "$KIT/candidate/$DELTA"
 hook after-publication
 inspect candidate
-phase CHECKING; write "$TX/phase" CHECKING
+phase CHECKING
 hook after-checking
 checks > "$TX/postflight.log" 2>&1
+# Candidate startup admission opens only after postflight succeeds, including
+# while this writer is alive. A failed postflight stays in blocked APPLYING.
+write "$TX/phase" CHECKING
 service start >> "$TX/service.log" 2>&1; wait_running
 write "$TX/phase" COMMITTED
 write "$D/latest" "$id"
