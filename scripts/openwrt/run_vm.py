@@ -212,7 +212,7 @@ def inject(image, workspace, commit, packages, scenario):
         archive = next((workspace / 'rc-package').glob('*.tar.gz'))
         put('/opt/hg-vm-lab/rc-a.tar.gz', archive.read_bytes(), 0o600)
     if scenario=='owner-update':
-        subprocess.run(['python3',str(ROOT/'scripts/owner_update/build.py'),'--ref',commit,'--output',str(workspace/'owner-update')],check=True,stdout=subprocess.DEVNULL)
+        subprocess.run(['python3',str(ROOT/'scripts/owner_update/build_kit.py'),'--ref',commit,'--output',str(workspace/'owner-update')],check=True,stdout=subprocess.DEVNULL)
         put('/opt/hg-vm-lab/owner-update.tar.gz',next((workspace/'owner-update').glob('*.tar.gz')).read_bytes(),0o600)
     guest={'owner-update':'guest-owner-update.sh','retirement-reboot':'guest-retirement.sh','rc-b-crash-apply':'guest-rc-b-crash-apply.sh','rc-b-crash-restore':'guest-rc-b-crash-restore.sh','rc-b-root-cycle':'guest-rc-b.sh', 'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh', 'rc-a-package':'guest-rc-a.sh', 'control-cycle':'guest-controls.sh', 'service-cycle':'guest-service-cycle.sh'}[scenario]
     smoke = git('show', commit + ':scripts/openwrt/' + guest)

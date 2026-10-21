@@ -20,7 +20,7 @@ const PATHS=['etc/init.d/home-gateway-telegram','usr/bin/gateway','usr/bin/home-
     'notifications.uc','redmi.sh','selftest.sh','status.sh','tailscale.sh','telegram-poller.uc','telegram.sh','torrent.sh','vpn.sh'],n=>'usr/lib/home-gateway/'+n)];
 const BASELINE='62592457237e7f026786c086d1ca6fdd4b6c095d';
 const DELTA='usr/lib/home-gateway/telegram-poller.uc';
-let [kit,pin,operation]=ARGV;
+let kit=ARGV[0],pin=ARGV[1],operation=ARGV[2];
 require(length(ARGV)==3 && match(kit??'',/^\/[A-Za-z0-9_./-]+$/) && !match(kit,/(^|\/)\.\.?($|\/)/) && match(pin??'',/^[0-9a-f]{64}$/),'ARGUMENTS');
 checked(kit,'directory',0700,0);
 read(kit+'/manifest.json',0600,65536);
