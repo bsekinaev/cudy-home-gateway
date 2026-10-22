@@ -16,7 +16,8 @@ DELTA=usr/lib/home-gateway/telegram-poller.uc
 inspect() { /usr/bin/ucode "$KIT/inspect.uc" "$KIT" "$pin" "$1"; }
 inspect kit
 PROFILE=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).profile);' -- "$KIT/manifest.json")
-if [ "$PROFILE" = OWNER_MANUAL ]; then unset HG_OWNER_VM_KILL_AT HG_OWNER_VM_TORN_RECORD HG_OWNER_VM_PARTIAL_POLLER HG_OWNER_VM_REQUIRE_DOCTOR HG_OWNER_VM_POST_DOCTOR; fi
+if [ "$PROFILE" = OWNER_MANUAL ]; then unset HG_OWNER_VM_KILL_AT HG_OWNER_VM_TORN_RECORD HG_OWNER_VM_PARTIAL_POLLER HG_OWNER_VM_REQUIRE_DOCTOR HG_OWNER_VM_POST_DOCTOR HG_OWNER_VM_START_PARTIAL; fi
+started_for_update=0
 fail() { echo "OWNER_UPDATE_ERROR=$1" >&2; exit 1; }
 absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
 regular() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%g:%a:%h' "$1")" = "0:0:$2:1" ]; }
@@ -33,10 +34,30 @@ running() { service running >/dev/null 2>&1; }
 quiesce() {
     # Use the same pinned PID/starttime proof as the accepted migration. A
     # successful procd stop alone does not prove that the old workers exited.
-    /usr/bin/ucode -e 'import { quiesce_telegram } from "/usr/libexec/home-gateway-deploy/migration-service.uc"; quiesce_telegram("",{assert_root:function(r){if(r!="")die("ROOT");}});'
-    ! running || fail TELEGRAM_STILL_RUNNING
+    /usr/bin/ucode -e 'import { quiesce_telegram } from "/usr/libexec/home-gateway-deploy/migration-service.uc"; quiesce_telegram("",{assert_root:function(r){if(r!="")die("ROOT");}});' || return 1
+    ! running
 }
-wait_running() { n=0; while ! running; do n=$((n+1)); [ "$n" -lt 6 ] || return 1; sleep 1; done; sleep 2; running; inspect workers; }
+wait_running() { n=0; while ! running; do n=$((n+1)); [ "$n" -lt 6 ] || return 1; sleep 1; done; sleep 2; running && inspect workers; }
+on_exit() {
+    exit_code=$?
+    if [ "$exit_code" -ne 0 ] && [ "$started_for_update" = 1 ]; then
+        if quiesce; then echo OWNER_UPDATE_FAILED_START_QUIESCED=PASS >&2;
+        else echo OWNER_UPDATE_FAILED_START_QUIESCE_REFUSED=OWNER_RECOVERY_REQUIRED >&2; fi
+    fi
+    if ! absent "$LOCK"; then echo OWNER_UPDATE_LEASE_RETAINED >&2; fi
+    return "$exit_code"
+}
+start_checked() {
+    started_for_update=1
+    service start || fail TELEGRAM_START_FAILED
+    if [ "${HG_OWNER_VM_START_PARTIAL:-0}" = 1 ]; then
+        wait_running || fail VM_INITIAL_START_FAILED
+        partial_service=$(ubus -S call service list '{"name":"home-gateway-telegram"}')
+        /usr/bin/ucode -e 'let p=json(ARGV[0])["home-gateway-telegram"].instances.poller.pid; if(type(p)!="int" || p<=0)die("VM_POLLER_PID"); print("HG_VM_PARTIAL_POLLER_PID="+p+"\n");' -- "$partial_service"
+        ubus call service delete '{"name":"home-gateway-telegram","instance":"notifications"}'
+    fi
+    wait_running || fail TELEGRAM_STARTUP_VERIFICATION_FAILED
+}
 write() {
     absent "$1.new" || fail PENDING_FILE
     if [ "${HG_OWNER_VM_TORN_RECORD:-}" = "$1:$2" ]; then
@@ -239,7 +260,7 @@ restore() {
     load_journal
     inspect mixed
     acquire
-    trap 'echo OWNER_UPDATE_LEASE_RETAINED >&2' EXIT
+    trap on_exit EXIT
     # Lease ownership is the exact package marker in the receiver exclusion;
     # immutable initial lease evidence is never rewritten during recovery.
     # Recovery rechecks everything after acquiring receiver exclusion.
@@ -268,7 +289,7 @@ restore() {
     # The original native anchor and all its historical evidence stay intact.
     write "$D/latest" "$old"
     rm "$D/active"; sync
-    service start; wait_running
+    start_checked
     checks
     admit --telegram-start
     hook before-restore-boot
@@ -283,7 +304,7 @@ abort_preparation() {
     # byte against this kit and the still-working baseline, then preserve the
     # entire skeleton by rename; never execute or adopt a partial backup.
     inspect baseline; inspect preparation
-    acquire; trap 'echo OWNER_UPDATE_LEASE_RETAINED >&2' EXIT
+    acquire; trap on_exit EXIT
     inspect baseline; inspect preparation; admit --telegram-start; inspect workers
     source=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$KIT/manifest.json")
     id=tx.u$(printf '%s' "$source" | cut -c1-24)
@@ -316,7 +337,7 @@ if [ "$operation" = recover ] && absent "$J"; then
     old=$(cat "$D/latest")
     printf '%s' "$old" | grep -Eq '^tx\.m[0-9a-f]{24}$' || fail NOT_NATIVE_ANCHOR
     regular "$D/$old/commit" 600 && [ "$(cat "$D/$old/commit")" = 62592457237e7f026786c086d1ca6fdd4b6c095d ] || fail BASELINE_IDENTITY
-    acquire; trap 'echo OWNER_UPDATE_LEASE_RETAINED >&2' EXIT
+    acquire; trap on_exit EXIT
     admit --telegram-start; inspect workers
     release; trap - EXIT
     echo OWNER_UPDATE_RECOVERY=NO_RUNTIME_MUTATION IDENTITY=HGDEPLOY2_BASELINE
@@ -336,7 +357,7 @@ case "$operation" in
         # Terminal publication may precede retirement of the RAM fence. This
         # path authenticates the completed baseline and cleans only our lease;
         # it never republishes runtime, replays rollback, or starts services.
-        acquire; trap 'echo OWNER_UPDATE_LEASE_RETAINED >&2' EXIT
+        acquire; trap on_exit EXIT
         inspect journal; inspect baseline; validate_pointers
         absent "$D/active" && absent "$D/active.new" && absent "$D/latest.new" &&
         [ "$(cat "$D/latest")" = "$old" ] || fail TERMINAL_BASELINE_POINTER
@@ -351,7 +372,7 @@ case "$operation" in
 esac
 preflight
 acquire
-trap 'echo OWNER_UPDATE_LEASE_RETAINED >&2' EXIT
+trap on_exit EXIT
 hook lease-only
 # Repeat under receiver exclusion; admission permits this receiver-owned lease.
 inspect baseline; admit --receiver-recover; boot_check; running
@@ -400,14 +421,15 @@ checks > "$TX/postflight.log" 2>&1
 # Candidate startup admission opens only after postflight succeeds, including
 # while this writer is alive. A failed postflight stays in blocked APPLYING.
 write "$TX/phase" CHECKING
-service start >> "$TX/service.log" 2>&1; wait_running
+start_checked >> "$TX/service.log" 2>&1
 write "$TX/phase" COMMITTED
 write "$D/latest" "$id"
 hook after-latest
+admit --telegram-start
+restore_boot
+inspect journal
 rm "$D/active"; sync
 phase COMMITTED
 release; trap - EXIT
 admit --telegram-start
-restore_boot
-inspect journal
 echo OWNER_UPDATE_RESULT=PASS SOURCE="$source" PROFILE="$PROFILE"

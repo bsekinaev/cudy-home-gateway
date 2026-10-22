@@ -169,6 +169,20 @@ normal_failure_fence_case() {
  archive_update normal-failure-fence
 }
 check normal_failure_keeps_fence normal_failure_fence_case
+partial_start_failure_case() {
+ HG_OWNER_VM_START_PARTIAL=1 sh "$update/update.sh" apply "$pin" > "$LAB/partial-start.log" 2>&1
+ rc=$?
+ tx=/etc/home-gateway-deploy/$(cat /etc/home-gateway-owner-update/new-id)
+ partial_pid=$(sed -n 's/^HG_VM_PARTIAL_POLLER_PID=//p' "$tx/service.log")
+ [ "$rc" != 0 ] && printf '%s' "$partial_pid" | grep -Eq '^[1-9][0-9]*$' || return 1
+ ! kill -0 "$partial_pid" 2>/dev/null && ! /etc/init.d/home-gateway-telegram running &&
+ [ -f /tmp/home-gateway-deploy.lock/owner-update ] &&
+ grep -q OWNER_UPDATE_FAILED_START_QUIESCED=PASS "$LAB/partial-start.log" &&
+ sh "$update/update.sh" recover "$pin" &&
+ sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || return 1
+ archive_update partial-start
+}
+check partial_start_failure_quiesces_candidate partial_start_failure_case
 crash_case() {
  point=$1
  HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" apply "$pin" > "$LAB/kill-$point.log" 2>&1
