@@ -9,7 +9,7 @@ function regular(path,limit) {
     for(let attempt=0;attempt<4;attempt++) {
         let s=fs.lstat(path);require(s?.type=='file' && s.uid==0 && s.gid==0 && s.mode==0600 && s.nlink==1 && s.size<=limit,'METADATA');
         let f=fs.open(path,'re');require(f!=null,'OPEN');let held=fs.stat('/proc/self/fd/'+f.fileno());
-        if(held?.inode!=s.inode || held.dev.major!=s.dev.major || held.dev.minor!=s.dev.minor) {f.close();continue;}
+        if(held?.inode!=s.inode || held.dev.major!=s.dev.major || held.dev.minor!=s.dev.minor || held.nlink==0) {f.close();continue;}
         require(held.type=='file' && held.uid==0 && held.gid==0 && held.mode==0600 && held.nlink==1 && held.size<=limit,'HELD_METADATA');
         let raw=f.read(limit+1),closed=f.close();require(closed!=null && type(raw)=='string' && length(raw)==held.size,'READ');return raw;
     }
