@@ -1,0 +1,460 @@
+#!/bin/sh
+# VM-only prototype. Never use the migration installer to update COMMITTED HG2.
+set -eu
+umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset ENV BASH_ENV HG_LIBDIR HG_MIGRATION_SERVICE_HANDOFF
+[ "$#" -eq 2 ] || exit 64
+operation=$1; pin=$2
+case "$operation" in preflight|apply|verify|rollback|recover) ;; *) exit 64;; esac
+KIT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+J=/etc/home-gateway-owner-update
+D=/etc/home-gateway-deploy
+LOCK=/tmp/home-gateway-deploy.lock
+DELTA=usr/lib/home-gateway/telegram-poller.uc
+inspect() { /usr/bin/ucode "$KIT/inspect.uc" "$KIT" "$pin" "$1"; }
+inspect kit
+PROFILE=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).profile);' -- "$KIT/manifest.json")
+if [ "$PROFILE" = OWNER_MANUAL ]; then unset HG_OWNER_VM_KILL_AT HG_OWNER_VM_TORN_RECORD HG_OWNER_VM_PARTIAL_POLLER HG_OWNER_VM_REQUIRE_DOCTOR HG_OWNER_VM_POST_DOCTOR HG_OWNER_VM_START_PARTIAL HG_OWNER_VM_GUARD_DELAY; fi
+started_for_update=0
+fail() { echo "OWNER_UPDATE_ERROR=$1" >&2; exit 1; }
+absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
+regular() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%g:%a:%h' "$1")" = "0:0:$2:1" ]; }
+serial_valid() { regular "$1" 600 && [ "$(stat -c %s "$1")" = 0 ]; }
+current_process_record() {
+    /usr/bin/ucode -e 'import * as fs from "fs"; let raw=fs.readfile("/proc/"+ARGV[0]+"/stat"),boot=trim(fs.readfile("/proc/sys/kernel/random/boot_id")??""),end=rindex(raw??"",") "),f=split(trim(substr(raw??"",end+2)),/\s+/); if(end<0 || !match(boot,/^[0-9a-f-]{36}$/) || !match(f[19]??"",/^[0-9]+$/))die("OWNER_PROCESS_IDENTITY"); print("HG_OWNER_PROCESS_V1 "+boot+" "+ARGV[0]+" "+f[19]+"\n");' -- "${1:-$$}"
+}
+stale_process_record() {
+    /usr/bin/ucode -e 'import * as fs from "fs"; let raw=fs.readfile(ARGV[0]),m=match(raw??"",/^HG_OWNER_PROCESS_V1 ([0-9a-f-]{36}) ([1-9][0-9]{0,9}) ([0-9]{1,20})\n$/); if(!m || m[0]!=raw)die("OWNER_PROCESS_FORMAT"); if(m[1]!=trim(fs.readfile("/proc/sys/kernel/random/boot_id")??""))exit(0); raw=fs.readfile("/proc/"+m[2]+"/stat"); if(raw==null)exit(0); let end=rindex(raw,") "),f=split(trim(substr(raw,end+2)),/\s+/); if(end<0 || !match(f[19]??"",/^[0-9]+$/))die("OWNER_PROCESS_STAT"); if(f[19]==m[3] && f[0]!="Z")exit(1);' -- "$LOCK/owner-process"
+}
+admit() { /bin/sh /usr/libexec/home-gateway-deploy/migration-admission.sh "$@"; }
+service() { timeout -k 2 30 /etc/init.d/home-gateway-telegram "$1"; }
+running() { service running >/dev/null 2>&1; }
+quiesce() {
+    # Use the same pinned PID/starttime proof as the accepted migration. A
+    # successful procd stop alone does not prove that the old workers exited.
+    /usr/bin/ucode -e 'import { quiesce_telegram } from "/usr/libexec/home-gateway-deploy/migration-service.uc"; quiesce_telegram("",{assert_root:function(r){if(r!="")die("ROOT");}});' || return 1
+    ! running
+}
+wait_running() { n=0; while ! running; do n=$((n+1)); [ "$n" -lt 6 ] || return 1; sleep 1; done; sleep 2; running && inspect workers; }
+on_exit() {
+    exit_code=$?
+    if [ "$exit_code" -ne 0 ] && [ "$started_for_update" = 1 ]; then
+        if quiesce; then echo OWNER_UPDATE_FAILED_START_QUIESCED=PASS >&2;
+        else echo OWNER_UPDATE_FAILED_START_QUIESCE_REFUSED=OWNER_RECOVERY_REQUIRED >&2; fi
+    fi
+    if ! absent "$LOCK"; then echo OWNER_UPDATE_LEASE_RETAINED >&2; fi
+    return "$exit_code"
+}
+start_checked() {
+    started_for_update=1
+    guard_start
+    service start || fail TELEGRAM_START_FAILED
+    hook during-startup
+    if [ "${HG_OWNER_VM_START_PARTIAL:-0}" = 1 ]; then
+        wait_running || fail VM_INITIAL_START_FAILED
+        partial_service=$(ubus -S call service list '{"name":"home-gateway-telegram"}')
+        /usr/bin/ucode -e 'let p=json(ARGV[0])["home-gateway-telegram"].instances.poller.pid; if(type(p)!="int" || p<=0)die("VM_POLLER_PID"); print("HG_VM_PARTIAL_POLLER_PID="+p+"\n");' -- "$partial_service"
+        ubus call service delete '{"name":"home-gateway-telegram","instance":"notifications"}'
+    fi
+    wait_running || fail TELEGRAM_STARTUP_VERIFICATION_FAILED
+    guard_alive || fail STARTUP_GUARD_DIED
+}
+guard_alive() {
+    regular "$guard_dir/ready" 600 &&
+    [ "$(cat "$guard_dir/ready")" = "$(current_process_record "$guard_pid")" ]
+}
+guard_start() {
+    guard_dir=$(mktemp -d /tmp/home-gateway-owner-guard.XXXXXX)
+    (trap '' HUP; exec /usr/bin/ucode "$KIT/watch.uc" "$KIT" "$pin" "$process_record_value" "$guard_dir") </dev/null >> "$TX/service.log" 2>&1 9<&- &
+    guard_pid=$!
+    tries=0
+    until regular "$guard_dir/ready" 600; do
+        kill -0 "$guard_pid" 2>/dev/null || fail STARTUP_GUARD_FAILED
+        tries=$((tries+1)); [ "$tries" -le 30 ] || fail STARTUP_GUARD_NOT_READY
+        sleep 1
+    done
+    guard_alive || fail STARTUP_GUARD_IDENTITY
+}
+write() {
+    absent "$1.new" || fail PENDING_FILE
+    if [ "${HG_OWNER_VM_TORN_RECORD:-}" = "$1:$2" ]; then
+        printf '%s' "$2" | cut -c1 | tr -d '\n' > "$1.new"; sync; kill -KILL "$$"
+    fi
+    printf '%s\n' "$2" > "$1.new"; sync; mv "$1.new" "$1"; sync
+}
+phase() { write "$J/phase" "$1"; }
+check_link() { [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]; }
+boot_check() {
+    check_link /etc/rc.d/S94home-gateway-deploy-recover ../init.d/home-gateway-deploy-recover &&
+    check_link /etc/rc.d/S95home-gateway-telegram ../init.d/home-gateway-telegram
+}
+quarantine() {
+    # Persist intent first; after either unlink, both possible boot paths remain
+    # recoverable by an explicit owner command. Runtime is still baseline here.
+    phase QUARANTINING
+    rm /etc/rc.d/S94home-gateway-deploy-recover
+    sync
+    rm /etc/rc.d/S95home-gateway-telegram
+    sync
+    phase QUARANTINED
+}
+install_guard() {
+    if absent /etc/init.d/home-gateway-owner-update; then
+        absent /etc/init.d/home-gateway-owner-update.new || fail PENDING_BOOT_CONTROL
+        cp -p "$KIT/boot.init" /etc/init.d/home-gateway-owner-update.new
+        sync; hook boot-staged
+        mv /etc/init.d/home-gateway-owner-update.new /etc/init.d/home-gateway-owner-update
+        sync; hook boot-published
+    fi
+    if absent /etc/rc.d/S07home-gateway-owner-update; then
+        ln -s ../init.d/home-gateway-owner-update /etc/rc.d/S07home-gateway-owner-update
+        sync
+    fi
+}
+restore_boot() {
+    for item in home-gateway-deploy-recover home-gateway-telegram; do
+        case "$item" in home-gateway-deploy-recover) start=94;; *) start=95;; esac
+        path=/etc/rc.d/S$start$item
+        if absent "$path"; then ln -s ../init.d/$item "$path"; sync;
+        else check_link "$path" ../init.d/$item || fail FOREIGN_BOOT_LINK; fi
+    done
+}
+checks() {
+    timeout -k 2 90 /usr/bin/gateway selftest
+    if [ "$PROFILE" = OWNER_MANUAL ] || [ "${HG_OWNER_VM_REQUIRE_DOCTOR:-0}" = 1 ] ||
+       { [ "${HG_OWNER_VM_POST_DOCTOR:-0}" = 1 ] && [ "$(cat "$J/phase" 2>/dev/null)" = CHECKING ]; }; then timeout -k 2 90 /usr/bin/gateway doctor;
+    else echo OWNER_UPDATE_DOCTOR=NOT_TESTED_VM; fi
+}
+retire_lease() {
+    # Rename the intact owned directory atomically. SIGKILL cannot strand an
+    # empty canonical lock between several unlinks and rmdir. Keep the RAM
+    # receipt intact; it disappears naturally at reboot, never affects admission.
+    retired=$(mktemp -d "$LOCK.released.XXXXXX")
+    /usr/bin/ucode -e 'import * as fs from "fs"; if(!fs.rename(ARGV[0],ARGV[1]))die("OWNER_LEASE_RENAME");' -- "$LOCK" "$retired"
+    sync
+}
+acquire() {
+    # Serialize with the trusted receiver using its inode-checked serial flock.
+    serial=/tmp/home-gateway-deploy.serial
+    if absent "$serial"; then (set -C; : > "$serial") 2>/dev/null || fail SERIAL_RACE; fi
+    serial_valid "$serial" || fail SERIAL_METADATA
+    before=$(stat -c '%d:%i' "$serial")
+    exec 9< "$serial"
+    [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" = "$before" ] || fail SERIAL_IDENTITY
+    serial_tries=0
+    while ! busybox flock -n 9; do
+        [ "$operation" = recover ] && [ "$serial_tries" -lt 30 ] || fail SERIAL_BUSY
+        serial_tries=$((serial_tries+1)); sleep 1
+    done
+    serial_valid "$serial" && [ "$(stat -c '%d:%i' "$serial")" = "$before" ] &&
+    [ "$(stat -Lc %s /proc/self/fd/9)" = 0 ] || fail SERIAL_METADATA
+    existing_lease=0
+    if ! absent "$LOCK"; then
+        existing_lease=1
+        [ "$operation" = recover ] || fail FOREIGN_OR_STALE_LOCK
+        [ -d "$LOCK" ] && [ ! -L "$LOCK" ] && [ "$(stat -c '%u:%g:%a' "$LOCK")" = '0:0:700' ] || fail FOREIGN_LOCK_METADATA
+        regular "$LOCK/owner-update" 600 && [ "$(stat -c %s "$LOCK/owner-update")" = 65 ] &&
+        [ "$(cat "$LOCK/owner-update")" = "$pin" ] || fail FOREIGN_OR_STALE_LOCK
+        names=$(ls -A "$LOCK" | sort | tr '\n' ':')
+        case "$names" in owner-update:) ;;
+          owner-process:owner-update:|owner-pid:owner-process:owner-update:|owner-pid:owner-process:owner-update:pid:)
+            regular "$LOCK/owner-process" 600 && [ "$(stat -c %s "$LOCK/owner-process")" -le 128 ] || fail UNKNOWN_PROCESS_RECORD
+            stale_process_record || fail LIVE_OR_UNKNOWN_WRITER;;
+          *) fail UNKNOWN_LEASE_CONTENT;; esac
+        if ! absent "$LOCK/owner-pid"; then
+            regular "$LOCK/owner-pid" 600 || fail UNKNOWN_LEASE_PID
+            stale_pid=$(cat "$LOCK/owner-pid")
+            printf '%s' "$stale_pid" | grep -Eq '^[1-9][0-9]{0,9}$' &&
+            [ "$(stat -c %s "$LOCK/owner-pid")" = "$((${#stale_pid}+1))" ] || fail UNKNOWN_LEASE_PID
+            if ! absent "$LOCK/pid"; then
+                regular "$LOCK/pid" 600 || fail UNKNOWN_RECEIVER_PID
+                receiver_pid=$(cat "$LOCK/pid")
+                printf '%s' "$receiver_pid" | grep -Eq '^[1-9][0-9]{0,9}$' &&
+                [ "$(stat -c %s "$LOCK/pid")" = "$((${#receiver_pid}+1))" ] || fail UNKNOWN_RECEIVER_PID
+            fi
+        fi
+    fi
+    staged_lease=$(mktemp -d /tmp/home-gateway-owner-lease.XXXXXX)
+    printf '%s\n' "$$" > "$staged_lease/pid"
+    printf '%s\n' "$$" > "$staged_lease/owner-pid"
+    printf '%s\n' "$pin" > "$staged_lease/owner-update"
+    process_record_value=$(current_process_record)
+    printf '%s\n' "$process_record_value" > "$staged_lease/owner-process"
+    sync
+    hook lease-staged
+    if [ "$existing_lease" = 1 ]; then
+        # Publish boot/PID/starttime identity first. Legacy numeric PID files
+        # may briefly describe the previous owner; they never prove liveness.
+        mv "$staged_lease/owner-process" "$LOCK/owner-process"; sync
+        hook lease-process-published
+        mv "$staged_lease/owner-pid" "$LOCK/owner-pid"; sync
+        hook lease-owner-published
+        mv "$staged_lease/pid" "$LOCK/pid"; sync
+    else
+        /usr/bin/ucode -e 'import * as fs from "fs"; if(fs.lstat(ARGV[1])!=null || !fs.rename(ARGV[0],ARGV[1]))die("OWNER_LEASE_PUBLISH");' -- "$staged_lease" "$LOCK"
+        sync
+    fi
+    lease=$(stat -c '%d:%i' "$LOCK")
+    # Hold serial exclusion through terminal checks. procd starts workers via
+    # ubus, without inheriting this shell's descriptors. No foreign receiver
+    # may consume even a stale owner lease while this operation is alive.
+}
+release() {
+    regular "$LOCK/pid" 600 && [ "$(cat "$LOCK/pid")" = "$$" ] &&
+    regular "$LOCK/owner-pid" 600 && cmp -s "$LOCK/pid" "$LOCK/owner-pid" &&
+    [ "$(stat -c '%d:%i' "$LOCK")" = "$lease" ] || fail LEASE_IDENTITY
+    regular "$LOCK/owner-update" 600 && [ "$(cat "$LOCK/owner-update")" = "$pin" ] || fail LEASE_MARKER
+    regular "$LOCK/owner-process" 600 && [ "$(cat "$LOCK/owner-process")" = "$process_record_value" ] &&
+    [ "$(stat -c %s "$LOCK/owner-process")" = "$((${#process_record_value}+1))" ] &&
+    [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-pid:owner-process:owner-update:pid:' ] || fail LEASE_PROCESS_IDENTITY
+    retire_lease
+}
+replace_poller() {
+    source=$1
+    target=/$DELTA
+    absent "$target.hg-owner-new" || fail PENDING_RUNTIME
+    if [ "${HG_OWNER_VM_PARTIAL_POLLER:-0}" = 1 ]; then
+        amount=$(( $(wc -c < "$source") / 2 ))
+        head -c "$amount" "$source" > "$target.hg-owner-new"; sync; kill -KILL "$$"
+    fi
+    cp -p "$source" "$target.hg-owner-new"; sync
+    hook staged-poller
+    mv "$target.hg-owner-new" "$target"; sync
+}
+preflight() {
+    if ! absent /tmp/home-gateway-deploy.serial; then serial_valid /tmp/home-gateway-deploy.serial || fail SERIAL_METADATA; fi
+    absent "$J" || fail EXISTING_UPDATE
+    absent /etc/init.d/home-gateway-owner-update && absent /etc/rc.d/S07home-gateway-owner-update || fail EXISTING_OWNER_GUARD
+    absent "$D/active" && absent "$D/active.new" && absent "$D/latest.new" && absent "$LOCK" || fail ACTIVE_OR_FOREIGN
+    inspect baseline
+    admit --telegram-start
+    boot_check || fail BOOT_LINKS
+    regular "$D/latest" 600 || fail LATEST_METADATA
+    old=$(cat "$D/latest")
+    case "$old" in tx.m????????????????????????) ;; *) fail NOT_NATIVE_ANCHOR;; esac
+    regular "$D/$old/commit" 600 && [ "$(cat "$D/$old/commit")" = 62592457237e7f026786c086d1ca6fdd4b6c095d ] || fail BASELINE_IDENTITY
+    running || fail TELEGRAM_NOT_RUNNING
+    inspect workers
+    need=$(( $(du -sk "$KIT/baseline" | cut -f1) * 3 + 4096 ))
+    available=$(df -Pk /etc | awk 'END {print $4}')
+    [ "$available" -ge "$need" ] || fail PERSISTENT_SPACE
+    checks
+}
+hook() {
+    # Package-level VM-only gate was verified before this test-only hook.
+    if [ "${HG_OWNER_VM_KILL_AT:-}" = "$1" ]; then sync; kill -KILL "$$"; fi
+}
+validate_pointers() {
+    for pointer in active latest; do
+        if ! absent "$D/$pointer"; then
+            regular "$D/$pointer" 600 || fail POINTER_METADATA
+            value=$(cat "$D/$pointer")
+            [ "$value" = "$id" ] || { [ "$pointer" = latest ] && [ "$value" = "$old" ]; } || fail FOREIGN_POINTER
+        fi
+        if [ "$operation" != recover ]; then absent "$D/$pointer.new" || fail PARTIAL_POINTER; fi
+    done
+}
+load_journal() {
+    if [ "$operation" = recover ]; then inspect recovery; else inspect journal; fi
+    old=$(cat "$J/old-latest"); id=$(cat "$J/new-id"); TX=$D/$id
+    validate_pointers
+}
+archive_slot() {
+    source_path=$1; label=$2; count=1
+    while [ "$count" -le 8 ]; do
+        save="$TX/$label.$count"
+        if absent "$save"; then mv "$source_path" "$save"; sync; return 0; fi
+        count=$((count+1))
+    done
+    fail RECOVERY_EVIDENCE_LIMIT
+}
+archive_pending() {
+    # The native recovery inspector certified every pending byte as a bounded
+    # prefix of this transaction's own record before any preservation rename.
+    for label in owner-phase tx-phase active latest; do
+        case "$label" in owner-phase) record_path=$J/phase.new;; tx-phase) record_path=$TX/phase.new;; *) record_path=$D/$label.new;; esac
+        if ! absent "$record_path"; then archive_slot "$record_path" interrupted-record-$label; fi
+    done
+    if ! absent /etc/init.d/home-gateway-owner-update.new; then archive_slot /etc/init.d/home-gateway-owner-update.new interrupted-boot; fi
+    if absent "$TX/phase"; then write "$TX/phase" PREPARED; fi
+}
+restore() {
+    load_journal
+    inspect mixed
+    acquire
+    trap on_exit EXIT
+    hook recovery-acquired
+    # Lease ownership is the exact package marker in the receiver exclusion;
+    # immutable initial lease evidence is never rewritten during recovery.
+    # Recovery rechecks everything after acquiring receiver exclusion.
+    if [ "$operation" = recover ]; then inspect recovery; else inspect journal; fi
+    inspect mixed; validate_pointers
+    archive_pending
+    install_guard
+    for entry in S94home-gateway-deploy-recover S95home-gateway-telegram; do
+        path=/etc/rc.d/$entry
+        if ! absent "$path"; then
+            check_link "$path" ../init.d/$(printf '%s' "$entry" | cut -c4-) || fail FOREIGN_BOOT_LINK
+            rm "$path"; sync
+        fi
+    done
+    phase RESTORING
+    quiesce
+    if ! absent "/$DELTA.hg-owner-new"; then
+        inspect pending
+        archive_slot "/$DELTA.hg-owner-new" interrupted-poller
+    fi
+    write "$D/active" "$id"
+    hook before-rollback
+    replace_poller "$TX/backup/$DELTA"
+    hook after-rollback
+    inspect baseline
+    # The original native anchor and all its historical evidence stay intact.
+    write "$D/latest" "$old"
+    rm "$D/active"; sync
+    start_checked
+    checks
+    admit --telegram-start
+    hook before-restore-boot
+    restore_boot
+    phase ROLLED_BACK
+    hook after-rollback-terminal
+    release; trap - EXIT
+    echo OWNER_UPDATE_ROLLBACK=PASS IDENTITY=HGDEPLOY2_BASELINE
+}
+abort_preparation() {
+    # No published runtime/boot state exists in PREPARING. Verify every partial
+    # byte against this kit and the still-working baseline, then preserve the
+    # entire skeleton by rename; never execute or adopt a partial backup.
+    inspect baseline; inspect preparation
+    acquire; trap on_exit EXIT
+    inspect baseline; inspect preparation; admit --telegram-start; inspect workers
+    source=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$KIT/manifest.json")
+    id=tx.u$(printf '%s' "$source" | cut -c1-24)
+    if ! absent "$D/$id"; then absent "$J/transaction" || fail PREPARATION_DUPLICATE; mv "$D/$id" "$J/transaction"; sync; fi
+    slot=1
+    while [ "$slot" -le 8 ]; do
+        receipt=$J.aborted.$id.$slot
+        if absent "$receipt"; then break; fi
+        slot=$((slot+1))
+    done
+    [ "$slot" -le 8 ] || fail PREPARATION_EVIDENCE_LIMIT
+    release; trap - EXIT
+    mv "$J" "$receipt"; sync
+    echo OWNER_UPDATE_PREPARATION=ABORTED IDENTITY=HGDEPLOY2_BASELINE RECEIPT="$receipt"
+}
+if [ "$operation" = recover ] && [ -d "$J" ] && [ ! -L "$J" ]; then
+    preparation_phase=$(cat "$J/phase" 2>/dev/null || true)
+    if [ -z "$preparation_phase" ] || [ "$preparation_phase" = PREPARING ]; then abort_preparation; exit 0; fi
+fi
+if [ "$operation" = recover ] && absent "$J"; then
+    # Interrupted lease acquisition precedes every persistent/runtime change.
+    # Only the exact native baseline plus this package's known lease qualifies.
+    inspect baseline
+    absent "$D/active" && absent "$D/active.new" && absent "$D/latest.new" &&
+    absent /etc/init.d/home-gateway-owner-update && absent /etc/init.d/home-gateway-owner-update.new &&
+    absent /etc/rc.d/S07home-gateway-owner-update || fail UNKNOWN_UNJOURNALED_STATE
+    source=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$KIT/manifest.json")
+    absent "$D/tx.u$(printf '%s' "$source" | cut -c1-24)" || fail UNJOURNALED_TRANSACTION
+    regular "$D/latest" 600 || fail LATEST_METADATA
+    old=$(cat "$D/latest")
+    printf '%s' "$old" | grep -Eq '^tx\.m[0-9a-f]{24}$' || fail NOT_NATIVE_ANCHOR
+    regular "$D/$old/commit" 600 && [ "$(cat "$D/$old/commit")" = 62592457237e7f026786c086d1ca6fdd4b6c095d ] || fail BASELINE_IDENTITY
+    acquire; trap on_exit EXIT
+    admit --telegram-start; inspect workers
+    release; trap - EXIT
+    echo OWNER_UPDATE_RECOVERY=NO_RUNTIME_MUTATION IDENTITY=HGDEPLOY2_BASELINE
+    exit 0
+fi
+case "$operation" in
+ preflight) preflight; echo OWNER_UPDATE_PREFLIGHT=PASS; exit 0;;
+ verify)
+    load_journal
+    regular "$J/phase" 600 && [ "$(cat "$J/phase")" = COMMITTED ] || fail NOT_COMMITTED
+    inspect candidate; admit --telegram-start; boot_check; running; inspect workers; checks
+    echo OWNER_UPDATE_VERIFY=PASS; exit 0;;
+ rollback|recover)
+    load_journal
+    current=$(cat "$J/phase" 2>/dev/null || printf PREPARED)
+    if [ "$operation" = recover ] && [ "$current" = ROLLED_BACK ]; then
+        # Terminal publication may precede retirement of the RAM fence. This
+        # path authenticates the completed baseline and cleans only our lease;
+        # it never republishes runtime, replays rollback, or starts services.
+        acquire; trap on_exit EXIT
+        inspect journal; inspect baseline; validate_pointers
+        absent "$D/active" && absent "$D/active.new" && absent "$D/latest.new" &&
+        [ "$(cat "$D/latest")" = "$old" ] || fail TERMINAL_BASELINE_POINTER
+        boot_check; running; inspect workers; checks; admit --telegram-start
+        release; trap - EXIT
+        echo OWNER_UPDATE_RECOVERY=TERMINAL_BASELINE_VERIFIED
+        exit 0
+    fi
+    if [ "$operation" = rollback ]; then [ "$current" = COMMITTED ] || fail NOT_COMMITTED;
+    else [ "$current" != ROLLED_BACK ] || fail TERMINAL_USE_VERIFY_OR_ROLLBACK; fi
+    restore; exit 0;;
+esac
+preflight
+acquire
+trap on_exit EXIT
+hook lease-only
+# Repeat under receiver exclusion; admission permits this receiver-owned lease.
+inspect baseline; admit --receiver-recover; boot_check; running
+mkdir -m 700 "$J"
+hook preparation-empty
+phase PREPARING
+printf '%s\n' "$pin" > "$J/kit-pin"
+printf '%s\n' "$old" > "$J/old-latest"
+source=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$KIT/manifest.json")
+id=tx.u$(printf '%s' "$source" | cut -c1-24)
+printf '%s\n' "$id" > "$J/new-id"
+printf '%s\n' "$$:$lease:$(cat /proc/sys/kernel/random/boot_id)" > "$J/lease"
+TX=$D/$id
+absent "$TX" || fail EXISTING_TRANSACTION
+mkdir -m 700 "$TX"
+printf '%s\n' "$source" > "$TX/commit"
+printf 'HGDEPLOY2\n' > "$TX/inventory-version"
+printf '1\n' > "$TX/was-running"
+cp "$KIT/baseline.sha256" "$TX/backup.sha256"
+cp "$KIT/candidate.sha256" "$TX/new.sha256"
+while read -r digest rel; do
+    mkdir -p "$TX/backup/${rel%/*}"
+    cp -p "/$rel" "$TX/backup/$rel"
+    hook preparation-backup
+done < "$KIT/baseline.sha256"
+: > "$TX/preflight.log"; : > "$TX/postflight.log"; : > "$TX/service.log"
+find /etc/home-gateway-migration -type f -exec sha256sum '{}' ';' | sort > "$J/migration.sha256"
+find "$D/$old" -type f -exec sha256sum '{}' ';' | sort > "$J/anchor.sha256"
+write "$TX/phase" PREPARED
+hook preparation-complete
+phase PREPARED
+inspect journal
+install_guard
+quarantine
+hook after-quarantine
+write "$D/active" "$id"
+phase APPLYING; write "$TX/phase" APPLYING
+quiesce
+hook before-publication
+replace_poller "$KIT/candidate/$DELTA"
+hook after-publication
+inspect candidate
+phase CHECKING
+hook after-checking
+checks > "$TX/postflight.log" 2>&1
+# Candidate startup admission opens only after postflight succeeds, including
+# while this writer is alive. A failed postflight stays in blocked APPLYING.
+write "$TX/phase" CHECKING
+start_checked >> "$TX/service.log" 2>&1
+write "$TX/phase" COMMITTED
+write "$D/latest" "$id"
+hook after-latest
+admit --telegram-start
+restore_boot
+inspect journal
+rm "$D/active"; sync
+phase COMMITTED
+release; trap - EXIT
+admit --telegram-start
+echo OWNER_UPDATE_RESULT=PASS SOURCE="$source" PROFILE="$PROFILE"

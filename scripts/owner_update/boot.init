@@ -1,0 +1,34 @@
+#!/bin/sh /etc/rc.common
+# Reconstruct exclusion only. Never replay, restore code or start a service.
+START=07
+STOP=07
+start() {
+    local journal=/etc/home-gateway-owner-update lock=/tmp/home-gateway-deploy.lock phase pin staged
+    [ -e "$journal" ] || [ -L "$journal" ] || return 0
+    [ -d "$journal" ] && [ ! -L "$journal" ] &&
+        [ "$(stat -c '%u:%g:%a' "$journal")" = '0:0:700' ] || return 0
+    phase=$(cat "$journal/phase" 2>/dev/null)
+    case "$phase" in COMMITTED|ROLLED_BACK)
+        [ -L /etc/rc.d/S94home-gateway-deploy-recover ] &&
+        [ "$(readlink /etc/rc.d/S94home-gateway-deploy-recover)" = ../init.d/home-gateway-deploy-recover ] &&
+        [ -L /etc/rc.d/S95home-gateway-telegram ] &&
+        [ "$(readlink /etc/rc.d/S95home-gateway-telegram)" = ../init.d/home-gateway-telegram ] && return 0;;
+    esac
+    # Existing foreign state is preserved. A PID-less lease also blocks the
+    # old receiver's explicit recover before it can alter owner evidence.
+    [ ! -e "$lock" ] && [ ! -L "$lock" ] || return 0
+    # A pre-pin preparation has not published runtime or boot changes. Never
+    # turn it into an empty, unclaimable canonical fence. Stage a complete
+    # authenticated fence privately, then publish the directory by rename.
+    [ -f "$journal/kit-pin" ] && [ ! -L "$journal/kit-pin" ] &&
+        [ "$(stat -c '%u:%g:%a:%h:%s' "$journal/kit-pin")" = '0:0:600:1:65' ] || return 0
+    pin=$(cat "$journal/kit-pin")
+    printf '%s' "$pin" | grep -Eq '^[0-9a-f]{64}$' || return 0
+    umask 077
+    staged=$(mktemp -d /tmp/home-gateway-owner-boot.XXXXXX) || return 0
+    printf '%s\n' "$pin" > "$staged/owner-update" || return 0
+    sync
+    /usr/bin/ucode -e 'import * as fs from "fs"; if(fs.lstat(ARGV[1])!=null || !fs.rename(ARGV[0],ARGV[1]))exit(1);' -- "$staged" "$lock" || return 0
+    sync
+    return 0
+}
