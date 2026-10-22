@@ -38,7 +38,7 @@ else {
     require(match(board.model??'',/^Cudy TR3000( 256MB)? v1$/) && board.release?.target=='mediatek/filogic' && total!=null && +total[1]>=450000 && +total[1]<=524288,'OWNER_HARDWARE');
     require(available!=null && +available[1]>=32768,'OWNER_MEMORY');
 }
-let expected=['baseline.sha256','candidate.sha256','update.sh','inspect.uc','owner.ps1','boot.init',
+let expected=['baseline.sha256','candidate.sha256','update.sh','inspect.uc','owner.ps1','boot.init','watch.uc',
     ...map(PATHS,p=>'baseline/'+p),...map(PATHS,p=>'candidate/'+p)];
 if(owner)push(expected,'acceptance.json');
 require(type(m.files)=='array' && length(m.files)==length(expected),'INVENTORY');

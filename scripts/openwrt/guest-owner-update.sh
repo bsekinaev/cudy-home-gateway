@@ -183,6 +183,26 @@ partial_start_failure_case() {
  archive_update partial-start
 }
 check partial_start_failure_quiesces_candidate partial_start_failure_case
+startup_sigkill_case() {
+ mode=${1:-plain}; delay=0; [ "$mode" != handoff ] || delay=30
+ HG_OWNER_VM_GUARD_DELAY=$delay HG_OWNER_VM_KILL_AT=during-startup sh "$update/update.sh" apply "$pin" > "$LAB/startup-kill.log" 2>&1
+ [ "$?" = 137 ] || return 1
+ if [ "$mode" = handoff ]; then
+  HG_OWNER_VM_KILL_AT=recovery-acquired sh "$update/update.sh" recover "$pin" > "$LAB/startup-handoff-kill.log" 2>&1
+  [ "$?" = 137 ] || return 1
+ fi
+ tx=/etc/home-gateway-deploy/$(cat /etc/home-gateway-owner-update/new-id)
+ tries=0
+ until grep -q OWNER_UPDATE_GUARD_QUIESCED=PASS "$tx/service.log"; do
+  tries=$((tries+1)); [ "$tries" -le 70 ] || return 1; sleep 1
+ done
+ ! /etc/init.d/home-gateway-telegram running && [ -f /tmp/home-gateway-deploy.lock/owner-update ] &&
+ sh "$update/update.sh" recover "$pin" &&
+ sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || return 1
+ archive_update "startup-$mode"
+}
+check startup_sigkill_guard_quiesces_candidate startup_sigkill_case
+check startup_guard_survives_recovery_handoff startup_sigkill_case handoff
 crash_case() {
  point=$1
  HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" apply "$pin" > "$LAB/kill-$point.log" 2>&1

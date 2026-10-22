@@ -16,14 +16,14 @@ DELTA=usr/lib/home-gateway/telegram-poller.uc
 inspect() { /usr/bin/ucode "$KIT/inspect.uc" "$KIT" "$pin" "$1"; }
 inspect kit
 PROFILE=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).profile);' -- "$KIT/manifest.json")
-if [ "$PROFILE" = OWNER_MANUAL ]; then unset HG_OWNER_VM_KILL_AT HG_OWNER_VM_TORN_RECORD HG_OWNER_VM_PARTIAL_POLLER HG_OWNER_VM_REQUIRE_DOCTOR HG_OWNER_VM_POST_DOCTOR HG_OWNER_VM_START_PARTIAL; fi
+if [ "$PROFILE" = OWNER_MANUAL ]; then unset HG_OWNER_VM_KILL_AT HG_OWNER_VM_TORN_RECORD HG_OWNER_VM_PARTIAL_POLLER HG_OWNER_VM_REQUIRE_DOCTOR HG_OWNER_VM_POST_DOCTOR HG_OWNER_VM_START_PARTIAL HG_OWNER_VM_GUARD_DELAY; fi
 started_for_update=0
 fail() { echo "OWNER_UPDATE_ERROR=$1" >&2; exit 1; }
 absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
 regular() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%g:%a:%h' "$1")" = "0:0:$2:1" ]; }
 serial_valid() { regular "$1" 600 && [ "$(stat -c %s "$1")" = 0 ]; }
 current_process_record() {
-    /usr/bin/ucode -e 'import * as fs from "fs"; let raw=fs.readfile("/proc/"+ARGV[0]+"/stat"),boot=trim(fs.readfile("/proc/sys/kernel/random/boot_id")??""),end=rindex(raw??"",") "),f=split(trim(substr(raw??"",end+2)),/\s+/); if(end<0 || !match(boot,/^[0-9a-f-]{36}$/) || !match(f[19]??"",/^[0-9]+$/))die("OWNER_PROCESS_IDENTITY"); print("HG_OWNER_PROCESS_V1 "+boot+" "+ARGV[0]+" "+f[19]+"\n");' -- "$$"
+    /usr/bin/ucode -e 'import * as fs from "fs"; let raw=fs.readfile("/proc/"+ARGV[0]+"/stat"),boot=trim(fs.readfile("/proc/sys/kernel/random/boot_id")??""),end=rindex(raw??"",") "),f=split(trim(substr(raw??"",end+2)),/\s+/); if(end<0 || !match(boot,/^[0-9a-f-]{36}$/) || !match(f[19]??"",/^[0-9]+$/))die("OWNER_PROCESS_IDENTITY"); print("HG_OWNER_PROCESS_V1 "+boot+" "+ARGV[0]+" "+f[19]+"\n");' -- "${1:-$$}"
 }
 stale_process_record() {
     /usr/bin/ucode -e 'import * as fs from "fs"; let raw=fs.readfile(ARGV[0]),m=match(raw??"",/^HG_OWNER_PROCESS_V1 ([0-9a-f-]{36}) ([1-9][0-9]{0,9}) ([0-9]{1,20})\n$/); if(!m || m[0]!=raw)die("OWNER_PROCESS_FORMAT"); if(m[1]!=trim(fs.readfile("/proc/sys/kernel/random/boot_id")??""))exit(0); raw=fs.readfile("/proc/"+m[2]+"/stat"); if(raw==null)exit(0); let end=rindex(raw,") "),f=split(trim(substr(raw,end+2)),/\s+/); if(end<0 || !match(f[19]??"",/^[0-9]+$/))die("OWNER_PROCESS_STAT"); if(f[19]==m[3] && f[0]!="Z")exit(1);' -- "$LOCK/owner-process"
@@ -49,7 +49,9 @@ on_exit() {
 }
 start_checked() {
     started_for_update=1
+    guard_start
     service start || fail TELEGRAM_START_FAILED
+    hook during-startup
     if [ "${HG_OWNER_VM_START_PARTIAL:-0}" = 1 ]; then
         wait_running || fail VM_INITIAL_START_FAILED
         partial_service=$(ubus -S call service list '{"name":"home-gateway-telegram"}')
@@ -57,6 +59,23 @@ start_checked() {
         ubus call service delete '{"name":"home-gateway-telegram","instance":"notifications"}'
     fi
     wait_running || fail TELEGRAM_STARTUP_VERIFICATION_FAILED
+    guard_alive || fail STARTUP_GUARD_DIED
+}
+guard_alive() {
+    regular "$guard_dir/ready" 600 &&
+    [ "$(cat "$guard_dir/ready")" = "$(current_process_record "$guard_pid")" ]
+}
+guard_start() {
+    guard_dir=$(mktemp -d /tmp/home-gateway-owner-guard.XXXXXX)
+    (trap '' HUP; exec /usr/bin/ucode "$KIT/watch.uc" "$KIT" "$pin" "$process_record_value" "$guard_dir") </dev/null >> "$TX/service.log" 2>&1 9<&- &
+    guard_pid=$!
+    tries=0
+    until regular "$guard_dir/ready" 600; do
+        kill -0 "$guard_pid" 2>/dev/null || fail STARTUP_GUARD_FAILED
+        tries=$((tries+1)); [ "$tries" -le 30 ] || fail STARTUP_GUARD_NOT_READY
+        sleep 1
+    done
+    guard_alive || fail STARTUP_GUARD_IDENTITY
 }
 write() {
     absent "$1.new" || fail PENDING_FILE
@@ -123,7 +142,12 @@ acquire() {
     serial_valid "$serial" || fail SERIAL_METADATA
     before=$(stat -c '%d:%i' "$serial")
     exec 9< "$serial"
-    [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" = "$before" ] && busybox flock -n 9 || fail SERIAL_BUSY
+    [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" = "$before" ] || fail SERIAL_IDENTITY
+    serial_tries=0
+    while ! busybox flock -n 9; do
+        [ "$operation" = recover ] && [ "$serial_tries" -lt 30 ] || fail SERIAL_BUSY
+        serial_tries=$((serial_tries+1)); sleep 1
+    done
     serial_valid "$serial" && [ "$(stat -c '%d:%i' "$serial")" = "$before" ] &&
     [ "$(stat -Lc %s /proc/self/fd/9)" = 0 ] || fail SERIAL_METADATA
     existing_lease=0
@@ -261,6 +285,7 @@ restore() {
     inspect mixed
     acquire
     trap on_exit EXIT
+    hook recovery-acquired
     # Lease ownership is the exact package marker in the receiver exclusion;
     # immutable initial lease evidence is never rewritten during recovery.
     # Recovery rechecks everything after acquiring receiver exclusion.

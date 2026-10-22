@@ -61,6 +61,12 @@ Runtime меняется через staging + sync + rename. Telegram остан
 
 Explicit rollback/recover возвращает исходный poller и original latest anchor;
 это возврат к работавшему HGDEPLOY2. HGDEPLOY1 migration rollback не вызывается.
+Перед стартом Telegram отдельный OOM-protected guardian подтверждает готовность.
+При гибели updater он берёт общий serial lock и останавливает только процессы,
+проверенные исходным migration-service proof. Он не публикует и не восстанавливает
+runtime, не повторяет Apply и не запускает сервисы. Guardian следует за
+аутентифицированной передачей lease в Recover до terminal state; восстановление
+кода остаётся отдельным явным действием владельца.
 Если Apply прерван до PREPARED, Recover проверяет каждый существующий partial file
 как собственный prefix и полный действующий baseline, затем сохраняет skeleton
 и partial backup в отдельный `.aborted.*` receipt. Runtime не меняется; повторный

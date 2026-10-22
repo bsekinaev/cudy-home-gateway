@@ -70,7 +70,7 @@ def content(repo, ref, profile='vm', acceptance=None):
     changed = [p for p in PATHS if inventories['baseline'][p] != inventories['candidate'][p]]
     if changed != [DELTA]:
         raise ValueError('TELEGRAM_ONLY_DELTA_REQUIRED')
-    for name in ('update.sh', 'inspect.uc', 'owner.ps1', 'boot.init'):
+    for name in ('update.sh', 'inspect.uc', 'owner.ps1', 'boot.init', 'watch.uc'):
         files[name] = (0o755 if name == 'boot.init' else 0o700 if name.endswith('.sh') else 0o600,
                        git(repo, 'show', commit + ':scripts/owner_update/' + name))
     if profile == 'owner':
