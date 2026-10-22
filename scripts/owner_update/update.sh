@@ -21,6 +21,12 @@ fail() { echo "OWNER_UPDATE_ERROR=$1" >&2; exit 1; }
 absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
 regular() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%g:%a:%h' "$1")" = "0:0:$2:1" ]; }
 serial_valid() { regular "$1" 600 && [ "$(stat -c %s "$1")" = 0 ]; }
+current_process_record() {
+    /usr/bin/ucode -e 'import * as fs from "fs"; let raw=fs.readfile("/proc/"+ARGV[0]+"/stat"),boot=trim(fs.readfile("/proc/sys/kernel/random/boot_id")??""),end=rindex(raw??"",") "),f=split(trim(substr(raw??"",end+2)),/\s+/); if(end<0 || !match(boot,/^[0-9a-f-]{36}$/) || !match(f[19]??"",/^[0-9]+$/))die("OWNER_PROCESS_IDENTITY"); print("HG_OWNER_PROCESS_V1 "+boot+" "+ARGV[0]+" "+f[19]+"\n");' -- "$$"
+}
+stale_process_record() {
+    /usr/bin/ucode -e 'import * as fs from "fs"; let raw=fs.readfile(ARGV[0]),m=match(raw??"",/^HG_OWNER_PROCESS_V1 ([0-9a-f-]{36}) ([1-9][0-9]{0,9}) ([0-9]{1,20})\n$/); if(!m || m[0]!=raw)die("OWNER_PROCESS_FORMAT"); if(m[1]!=trim(fs.readfile("/proc/sys/kernel/random/boot_id")??""))exit(0); raw=fs.readfile("/proc/"+m[2]+"/stat"); if(raw==null)exit(0); let end=rindex(raw,") "),f=split(trim(substr(raw,end+2)),/\s+/); if(end<0 || !match(f[19]??"",/^[0-9]+$/))die("OWNER_PROCESS_STAT"); if(f[19]==m[3] && f[0]!="Z")exit(1);' -- "$LOCK/owner-process"
+}
 admit() { /bin/sh /usr/libexec/home-gateway-deploy/migration-admission.sh "$@"; }
 service() { timeout -k 2 30 /etc/init.d/home-gateway-telegram "$1"; }
 running() { service running >/dev/null 2>&1; }
@@ -104,34 +110,40 @@ acquire() {
         existing_lease=1
         [ "$operation" = recover ] || fail FOREIGN_OR_STALE_LOCK
         [ -d "$LOCK" ] && [ ! -L "$LOCK" ] && [ "$(stat -c '%u:%g:%a' "$LOCK")" = '0:0:700' ] || fail FOREIGN_LOCK_METADATA
-        regular "$LOCK/owner-update" 600 &&
+        regular "$LOCK/owner-update" 600 && [ "$(stat -c %s "$LOCK/owner-update")" = 65 ] &&
         [ "$(cat "$LOCK/owner-update")" = "$pin" ] || fail FOREIGN_OR_STALE_LOCK
+        names=$(ls -A "$LOCK" | sort | tr '\n' ':')
+        case "$names" in owner-update:) ;;
+          owner-process:owner-update:|owner-pid:owner-process:owner-update:|owner-pid:owner-process:owner-update:pid:)
+            regular "$LOCK/owner-process" 600 && [ "$(stat -c %s "$LOCK/owner-process")" -le 128 ] || fail UNKNOWN_PROCESS_RECORD
+            stale_process_record || fail LIVE_OR_UNKNOWN_WRITER;;
+          *) fail UNKNOWN_LEASE_CONTENT;; esac
         if ! absent "$LOCK/owner-pid"; then
             regular "$LOCK/owner-pid" 600 || fail UNKNOWN_LEASE_PID
             stale_pid=$(cat "$LOCK/owner-pid")
             printf '%s' "$stale_pid" | grep -Eq '^[1-9][0-9]{0,9}$' &&
             [ "$(stat -c %s "$LOCK/owner-pid")" = "$((${#stale_pid}+1))" ] || fail UNKNOWN_LEASE_PID
-            ! kill -0 "$stale_pid" 2>/dev/null || fail LIVE_WRITER
             if ! absent "$LOCK/pid"; then
                 regular "$LOCK/pid" 600 || fail UNKNOWN_RECEIVER_PID
                 receiver_pid=$(cat "$LOCK/pid")
                 printf '%s' "$receiver_pid" | grep -Eq '^[1-9][0-9]{0,9}$' &&
-                [ "$(stat -c %s "$LOCK/pid")" = "$((${#receiver_pid}+1))" ] &&
-                ! kill -0 "$receiver_pid" 2>/dev/null || fail UNKNOWN_RECEIVER_PID
-                [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-pid:owner-update:pid:' ] || fail UNKNOWN_LEASE_CONTENT
-            else [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-pid:owner-update:' ] || fail UNKNOWN_LEASE_CONTENT; fi
-        else [ "$(ls -A "$LOCK")" = owner-update ] || fail UNKNOWN_LEASE_CONTENT; fi
+                [ "$(stat -c %s "$LOCK/pid")" = "$((${#receiver_pid}+1))" ] || fail UNKNOWN_RECEIVER_PID
+            fi
+        fi
     fi
     staged_lease=$(mktemp -d /tmp/home-gateway-owner-lease.XXXXXX)
     printf '%s\n' "$$" > "$staged_lease/pid"
     printf '%s\n' "$$" > "$staged_lease/owner-pid"
     printf '%s\n' "$pin" > "$staged_lease/owner-update"
+    process_record_value=$(current_process_record)
+    printf '%s\n' "$process_record_value" > "$staged_lease/owner-process"
     sync
     hook lease-staged
     if [ "$existing_lease" = 1 ]; then
-        # Keep the authenticated fence continuously present. Each PID record
-        # is published atomically; after SIGKILL either old or new PID is dead
-        # and can be validated independently on the next explicit recovery.
+        # Publish boot/PID/starttime identity first. Legacy numeric PID files
+        # may briefly describe the previous owner; they never prove liveness.
+        mv "$staged_lease/owner-process" "$LOCK/owner-process"; sync
+        hook lease-process-published
         mv "$staged_lease/owner-pid" "$LOCK/owner-pid"; sync
         hook lease-owner-published
         mv "$staged_lease/pid" "$LOCK/pid"; sync
@@ -149,6 +161,9 @@ release() {
     regular "$LOCK/owner-pid" 600 && cmp -s "$LOCK/pid" "$LOCK/owner-pid" &&
     [ "$(stat -c '%d:%i' "$LOCK")" = "$lease" ] || fail LEASE_IDENTITY
     regular "$LOCK/owner-update" 600 && [ "$(cat "$LOCK/owner-update")" = "$pin" ] || fail LEASE_MARKER
+    regular "$LOCK/owner-process" 600 && [ "$(cat "$LOCK/owner-process")" = "$process_record_value" ] &&
+    [ "$(stat -c %s "$LOCK/owner-process")" = "$((${#process_record_value}+1))" ] &&
+    [ "$(ls -A "$LOCK" | sort | tr '\n' ':')" = 'owner-pid:owner-process:owner-update:pid:' ] || fail LEASE_PROCESS_IDENTITY
     retire_lease
 }
 replace_poller() {

@@ -236,14 +236,36 @@ repeated_recovery_case() {
 }
 check repeated_recovery_after_sigkill repeated_recovery_case
 lease_takeover_case() {
+ point=${1:-lease-owner-published}
  HG_OWNER_VM_KILL_AT=after-publication sh "$update/update.sh" apply "$pin" > "$LAB/takeover-apply.log" 2>&1
  [ "$?" = 137 ] || return 1
- HG_OWNER_VM_KILL_AT=lease-owner-published sh "$update/update.sh" recover "$pin" > "$LAB/takeover-kill.log" 2>&1
+ HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" recover "$pin" > "$LAB/takeover-kill.log" 2>&1
  [ "$?" = 137 ] && [ -f /tmp/home-gateway-deploy.lock/owner-update ] || return 1
  sh "$update/update.sh" recover "$pin" && sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || return 1
- archive_update lease-takeover
+ archive_update "$point"
 }
 check interrupted_lease_takeover_recoverable lease_takeover_case
+check interrupted_process_identity_takeover lease_takeover_case lease-process-published
+reused_process_case() {
+ mode=$1
+ HG_OWNER_VM_KILL_AT=after-publication sh "$update/update.sh" apply "$pin" > "$LAB/reused-$mode.log" 2>&1
+ [ "$?" = 137 ] || return 1
+ sleep 120 & unrelated=$!
+ start=$(awk '{print $22}' /proc/$unrelated/stat)
+ boot=$(cat /proc/sys/kernel/random/boot_id)
+ printf '%s\n' "$unrelated" > /tmp/home-gateway-deploy.lock/owner-pid
+ printf '%s\n' "$unrelated" > /tmp/home-gateway-deploy.lock/pid
+ printf 'HG_OWNER_PROCESS_V1 %s %s %s\n' "$boot" "$unrelated" "$start" > /tmp/home-gateway-deploy.lock/owner-process
+ refused sh "$update/update.sh" recover "$pin" || return 1
+ if [ "$mode" = pid ]; then start=$((start-1)); else boot=00000000-0000-0000-0000-000000000000; fi
+ printf 'HG_OWNER_PROCESS_V1 %s %s %s\n' "$boot" "$unrelated" "$start" > /tmp/home-gateway-deploy.lock/owner-process
+ sh "$update/update.sh" recover "$pin" && kill -0 "$unrelated" &&
+ sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || return 1
+ kill "$unrelated"; wait "$unrelated" 2>/dev/null || true
+ archive_update "reused-$mode"
+}
+check reused_pid_preserves_unrelated_process reused_process_case pid
+check prior_boot_identity_preserves_unrelated_process reused_process_case boot
 HG_OWNER_VM_KILL_AT=after-publication sh "$update/update.sh" apply "$pin" > "$LAB/reboot-kill.log" 2>&1
 check reboot_interrupted sh -c '[ "$(cat /etc/home-gateway-owner-update/phase)" = APPLYING ] && [ ! -e /etc/rc.d/S94home-gateway-deploy-recover ] && [ ! -e /etc/rc.d/S95home-gateway-telegram ]'
 cat /proc/sys/kernel/random/boot_id > "$LAB/boot-before"
