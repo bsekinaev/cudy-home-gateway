@@ -75,6 +75,16 @@ tar -xzpf /opt/hg-vm-lab/owner-update.tar.gz -C "$update"
 pin=$(sha256sum "$update/manifest.json" | cut -d ' ' -f1)
 printf '%s\n' "$pin" > "$LAB/update-pin"
 check update_preflight sh "$update/update.sh" preflight "$pin"
+nonempty_serial_case() {
+ printf 'foreign\n' > /tmp/home-gateway-deploy.serial
+ refused sh "$update/update.sh" preflight "$pin" && refused sh "$update/update.sh" apply "$pin" &&
+ [ "$(cat /tmp/home-gateway-deploy.serial)" = foreign ] &&
+ [ ! -e /etc/home-gateway-owner-update ] && [ ! -e /tmp/home-gateway-deploy.lock ]
+ outcome=$?
+ : > /tmp/home-gateway-deploy.serial
+ return "$outcome"
+}
+check nonempty_serial_refused nonempty_serial_case
 check vm_doctor_failure_blocks_apply sh -c 'HG_OWNER_VM_REQUIRE_DOCTOR=1 sh "$1/update.sh" apply "$2"; rc=$?; test "$rc" != 0 && test ! -e /etc/home-gateway-owner-update' -- "$update" "$pin"
 check unknown_file_refused sh -c 'touch /usr/lib/home-gateway/foreign.uc; sh "$1/update.sh" preflight "$2"; rc=$?; rm /usr/lib/home-gateway/foreign.uc; test "$rc" != 0' -- "$update" "$pin"
 check drift_refused sh -c 'cp -p /usr/lib/home-gateway/telegram-poller.uc /tmp/poller.save; printf "// drift\n" >> /usr/lib/home-gateway/telegram-poller.uc; sh "$1/update.sh" preflight "$2"; rc=$?; cp -p /tmp/poller.save /usr/lib/home-gateway/telegram-poller.uc; test "$rc" != 0' -- "$update" "$pin"
@@ -191,6 +201,7 @@ rollback_crash_case() {
 check crash_before_rollback rollback_crash_case before-rollback
 check crash_after_rollback rollback_crash_case after-rollback
 check crash_before_restore_boot rollback_crash_case before-restore-boot
+check crash_after_rollback_terminal rollback_crash_case after-rollback-terminal
 torn_case() {
  torn_name=$1; target=$2
  HG_OWNER_VM_TORN_RECORD=$target sh "$update/update.sh" apply "$pin" > "$LAB/torn-$torn_name.log" 2>&1

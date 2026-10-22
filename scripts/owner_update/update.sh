@@ -20,6 +20,7 @@ if [ "$PROFILE" = OWNER_MANUAL ]; then unset HG_OWNER_VM_KILL_AT HG_OWNER_VM_TOR
 fail() { echo "OWNER_UPDATE_ERROR=$1" >&2; exit 1; }
 absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
 regular() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u:%g:%a:%h' "$1")" = "0:0:$2:1" ]; }
+serial_valid() { regular "$1" 600 && [ "$(stat -c %s "$1")" = 0 ]; }
 admit() { /bin/sh /usr/libexec/home-gateway-deploy/migration-admission.sh "$@"; }
 service() { timeout -k 2 30 /etc/init.d/home-gateway-telegram "$1"; }
 running() { service running >/dev/null 2>&1; }
@@ -92,10 +93,12 @@ acquire() {
     # Serialize with the trusted receiver using its inode-checked serial flock.
     serial=/tmp/home-gateway-deploy.serial
     if absent "$serial"; then (set -C; : > "$serial") 2>/dev/null || fail SERIAL_RACE; fi
-    regular "$serial" 600 || fail SERIAL_METADATA
+    serial_valid "$serial" || fail SERIAL_METADATA
     before=$(stat -c '%d:%i' "$serial")
     exec 9< "$serial"
     [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" = "$before" ] && busybox flock -n 9 || fail SERIAL_BUSY
+    serial_valid "$serial" && [ "$(stat -c '%d:%i' "$serial")" = "$before" ] &&
+    [ "$(stat -Lc %s /proc/self/fd/9)" = 0 ] || fail SERIAL_METADATA
     existing_lease=0
     if ! absent "$LOCK"; then
         existing_lease=1
@@ -161,6 +164,7 @@ replace_poller() {
     mv "$target.hg-owner-new" "$target"; sync
 }
 preflight() {
+    if ! absent /tmp/home-gateway-deploy.serial; then serial_valid /tmp/home-gateway-deploy.serial || fail SERIAL_METADATA; fi
     absent "$J" || fail EXISTING_UPDATE
     absent /etc/init.d/home-gateway-owner-update && absent /etc/rc.d/S07home-gateway-owner-update || fail EXISTING_OWNER_GUARD
     absent "$D/active" && absent "$D/active.new" && absent "$D/latest.new" && absent "$LOCK" || fail ACTIVE_OR_FOREIGN
@@ -255,6 +259,7 @@ restore() {
     hook before-restore-boot
     restore_boot
     phase ROLLED_BACK
+    hook after-rollback-terminal
     release; trap - EXIT
     echo OWNER_UPDATE_ROLLBACK=PASS IDENTITY=HGDEPLOY2_BASELINE
 }
@@ -312,6 +317,19 @@ case "$operation" in
  rollback|recover)
     load_journal
     current=$(cat "$J/phase" 2>/dev/null || printf PREPARED)
+    if [ "$operation" = recover ] && [ "$current" = ROLLED_BACK ]; then
+        # Terminal publication may precede retirement of the RAM fence. This
+        # path authenticates the completed baseline and cleans only our lease;
+        # it never republishes runtime, replays rollback, or starts services.
+        acquire; trap 'echo OWNER_UPDATE_LEASE_RETAINED >&2' EXIT
+        inspect journal; inspect baseline; validate_pointers
+        absent "$D/active" && absent "$D/active.new" && absent "$D/latest.new" &&
+        [ "$(cat "$D/latest")" = "$old" ] || fail TERMINAL_BASELINE_POINTER
+        boot_check; running; inspect workers; checks; admit --telegram-start
+        release; trap - EXIT
+        echo OWNER_UPDATE_RECOVERY=TERMINAL_BASELINE_VERIFIED
+        exit 0
+    fi
     if [ "$operation" = rollback ]; then [ "$current" = COMMITTED ] || fail NOT_COMMITTED;
     else [ "$current" != ROLLED_BACK ] || fail TERMINAL_USE_VERIFY_OR_ROLLBACK; fi
     restore; exit 0;;
