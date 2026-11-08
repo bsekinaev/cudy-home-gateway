@@ -30,7 +30,7 @@
 
 ## Статус
 
-`0.5 — Health & Alerts / in progress`
+**Разработка продолжается.** `0.5.0-dev` — не стабильный production-релиз. Статус отдельных компонентов и внедрения подтверждается только конкретными отчётами и проверками.
 
 Health Core нормализует WAN, DNS, MAIN и service/policy observations. Incident State добавляет debounce/hysteresis и persistent journal. Adaptive external confirmation вызывает secondary egress provider только после неуспешного primary probe. Data plane не изменяется.
 
@@ -40,6 +40,55 @@ MAIN/Torrent delivery, recovery summary, CLI mute/categories и sysupgrade allow
 CI каждой новой ветки проверяется отдельно. `0.5.0-dev` пока не является стабильным релизом.
 
 [Установка и ограничения диспетчера](docs/NOTIFICATIONS.md).
+
+## Архитектура в одном экране
+
+```mermaid
+flowchart LR
+    TG[Telegram UI: разрешённый пользователь] --> CP[Control plane / gateway CLI]
+    CP --> HEALTH[Health Core]
+    HEALTH --> INCIDENT[Incident Engine]
+    INCIDENT --> QUEUE[Notification Projection и Queue]
+    QUEUE --> DELIVERY[Delivery adapter]
+    CP --> CHECKS[Read-only diagnostics]
+    CHECKS -.-> DATA[Существующий OpenWrt data plane]
+```
+
+**Граница безопасности:** control plane наблюдает за состоянием OpenWrt и предоставляет ограниченные управляющие операции, но **не является компонентом маршрутизации**. Никаких произвольных shell-команд через Telegram; опасные операции требуют отдельных проверок и разрешения владельца. Диаграмма описывает логическую архитектуру, а не гарантию, что каждый компонент установлен на реальном устройстве.
+
+Подробности: [архитектура](docs/ARCHITECTURE.md), [инциденты](docs/INCIDENTS.md), [уведомления](docs/NOTIFICATIONS.md).
+
+## Демонстрация безопасных сценариев
+
+Ниже — команды **только для уже установленного экземпляра** Gateway CLI. Они не меняют MAIN, конфигурацию роутера или сетевые правила. Не исполняйте команды установки, миграции либо rollback ради демонстрации.
+
+```sh
+gateway help           # доступные команды и ограничения
+gateway version        # установленная версия
+gateway status --json  # сводка состояния
+gateway health --json  # нормализованное состояние компонентов
+gateway incidents --json # подтверждённые инциденты и кандидаты
+gateway doctor         # проверка окружения и зависимостей
+gateway selftest       # локальная проверка установленного CLI
+```
+
+Для технического интервью здесь показаны три решения:
+- **Разделение control plane / data plane:** проблемы Telegram, health и очереди уведомлений не должны менять пользовательскую маршрутизацию.
+- **Инциденты без шумовых уведомлений:** Health Core → debounce/hysteresis → Incident Engine → Projection → Queue.
+- **Безопасные изменения:** preflight, snapshot, проверяемое решение, post-check, journal и rollback. Наличие механизма в исходниках **не** означает приёмку новых миграций на устройстве.
+
+## Подтверждённые проверки и границы готовности
+
+| Проверка | Результат | Что она подтверждает |
+|---|---|---|
+| [GitHub Actions CI, 21.10.2026](https://github.com/bsekinaev/cudy-home-gateway/actions/runs/39576418134) | PASS | Проверки исходников в CI; не установку на роутер |
+| [Owner LIVE, RC-B 19–20.10.2026](docs/reports/HGDEPLOY2_RC_B_20261019_2_OWNER_LIVE.md) | **Apply заблокирован; rollback PASS** | Восстановление рабочего состояния после неуспешного кандидата |
+| Selftest и doctor после rollback | **58 PASS / 0 FAIL; 11 OK / 0 WARN / 0 FAIL** | Состояние восстановленного legacy-окружения, не приёмку нового RC-B |
+| Повторная установка RC-B | **BLOCKED** | Требуется отдельная проверенная процедура retirement и новая приёмка |
+
+Отчёт владельца подтверждает возврат к прежнему состоянию, а **не успешный выпуск или установку кандидата**. Исходники и тестовые стенды не следует путать с LIVE-приёмкой на CUDY. У проекта нет подтверждённого production-релиза 1.0.0; автоматический write-deploy не должен предполагаться активным.
+
+[Подробный отчёт о LIVE и rollback](docs/reports/HGDEPLOY2_RC_B_20261019_2_OWNER_LIVE.md) · [матрица приёмки](docs/ACCEPTANCE.md) · [развёртывание и ограничения](docs/DEPLOYMENT.md)
 
 ## Документация
 
