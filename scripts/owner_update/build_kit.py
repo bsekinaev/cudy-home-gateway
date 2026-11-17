@@ -4,7 +4,7 @@ import gzip
 import hashlib
 import io
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import tarfile
 import sys
@@ -23,6 +23,8 @@ def git(repo, *args):
 
 
 def validate_acceptance(raw, commit, repo):
+    if len(raw) > 262144:
+        raise ValueError('OWNER_ACCEPTANCE_SIZE')
     a = json.loads(raw)
     if (a.get('format') != 'HG_OWNER_UPDATE_ACCEPTANCE_V1' or a.get('commit') != commit or
             a.get('ci_head') != commit or a.get('ci_conclusion') != 'success' or
@@ -46,6 +48,14 @@ def validate_acceptance(raw, commit, repo):
 
 def content(repo, ref, profile='vm', acceptance=None):
     commit = git(repo, 'rev-parse', '--verify', '--end-of-options', ref + '^{commit}').decode().strip()
+    # PATHS and VM acceptance constants are imported from this checkout.
+    # A historical build must run from a checkout of that source, too.
+    if git(repo, 'rev-parse', 'HEAD').decode().strip() != commit:
+        raise ValueError('SOURCE_CHECKOUT_MISMATCH')
+    for dependency in ('scripts/deploy/transport.py', 'scripts/openwrt/run_vm.py'):
+        expected = git(repo, 'show', commit + ':' + dependency)
+        if (Path(repo) / dependency).read_bytes().replace(b'\r\n', b'\n') != expected:
+            raise ValueError('SOURCE_DEPENDENCY_DRIFT')
     files = {}
     inventories = {}
     for name, sha in [('baseline', BASELINE), ('candidate', commit)]:
@@ -106,7 +116,7 @@ def build(repo, ref, output, profile='vm', acceptance=None):
     buffer = io.BytesIO()
     with gzip.GzipFile(fileobj=buffer, mode='wb', filename='', mtime=0) as gz:
         with tarfile.open(fileobj=gz, mode='w', format=tarfile.USTAR_FORMAT) as tar:
-            parents = {str(d) for p in files for d in Path(p).parents if str(d) != '.'}
+            parents = {str(d) for p in files for d in PurePosixPath(p).parents if str(d) != '.'}
             for p in sorted(parents):
                 entry = tarfile.TarInfo(p + '/'); entry.type = tarfile.DIRTYPE
                 entry.mode = 0o700; entry.mtime = timestamp; tar.addfile(entry)

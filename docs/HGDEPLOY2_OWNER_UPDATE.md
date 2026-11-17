@@ -45,6 +45,11 @@ HGDEPLOY2 / 20 файлов. HGDEPLOY1/18 сохраняется в legacy fixtu
 `profile=OWNER_MANUAL`; VM-only пакет на CUDY запрещён.
 Наличие owner runner в source не означает, что выпуск уже прошёл эти gates.
 
+Сборку выполнять из checkout выбранного `--ref`: его resolved commit должен
+совпадать с HEAD, а `scripts/deploy/transport.py` и `scripts/openwrt/run_vm.py`
+должны совпадать с этим коммитом. Для исторической версии сначала перейти на
+соответствующий commit. Отчёт acceptance ограничен 262144 байтами, как на устройстве.
+
 Пакет содержит exact-source baseline и candidate inventory по 20 файлов,
 14 baseline control pins, SHA256 каждого файла и отдельный package manifest.
 Допустимый runtime delta — только `/usr/lib/home-gateway/telegram-poller.uc`.

@@ -3,12 +3,35 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+import tarfile
 import unittest
+from unittest.mock import patch
 
 from build_kit import BASELINE, DELTA, PATHS, ROOT, build, content, validate_acceptance, git
 
 
 class OwnerUpdateBuildTests(unittest.TestCase):
+    def test_selected_ref_must_match_checkout(self):
+        with self.assertRaisesRegex(ValueError, 'SOURCE_CHECKOUT_MISMATCH'):
+            content(ROOT, BASELINE)
+
+    def test_oversize_acceptance_is_rejected_before_parsing(self):
+        with self.assertRaisesRegex(ValueError, 'OWNER_ACCEPTANCE_SIZE'):
+            validate_acceptance(b' ' * 262145, 'unused', ROOT)
+
+    def test_exact_limit_acceptance_reaches_semantic_validation(self):
+        with self.assertRaisesRegex(ValueError, 'OWNER_ACCEPTANCE_CI_REVIEW_SOURCE'):
+            validate_acceptance(b'{}' + b' ' * 262142, 'unused', ROOT)
+
+    def test_modified_inventory_dependency_is_rejected(self):
+        original = Path.read_bytes
+        def changed(path):
+            data = original(path)
+            return data + b'\n# local edit\n' if path == ROOT / 'scripts/deploy/transport.py' else data
+        with patch.object(Path, 'read_bytes', changed):
+            with self.assertRaisesRegex(ValueError, 'SOURCE_DEPENDENCY_DRIFT'):
+                content(ROOT, 'HEAD')
+
     def test_exact_inventory_and_single_runtime_delta(self):
         commit, files, manifest = content(ROOT, 'HEAD')
         self.assertEqual(manifest['changed'], [DELTA])
@@ -31,8 +54,10 @@ class OwnerUpdateBuildTests(unittest.TestCase):
             content(ROOT, 'HEAD', 'owner', b'{}')
 
     def test_zero_change_cannot_be_relabelled_update(self):
-        with self.assertRaisesRegex(ValueError, 'TELEGRAM_ONLY_DELTA_REQUIRED'):
-            content(ROOT, BASELINE)
+        commit = git(ROOT, 'rev-parse', 'HEAD').decode().strip()
+        with patch('build_kit.BASELINE', commit):
+            with self.assertRaisesRegex(ValueError, 'TELEGRAM_ONLY_DELTA_REQUIRED'):
+                content(ROOT, 'HEAD')
 
     def test_owner_acceptance_rejects_incomplete_vm_and_wrong_source(self):
         commit = git(ROOT, 'rev-parse', 'HEAD').decode().strip()
@@ -50,6 +75,8 @@ class OwnerUpdateBuildTests(unittest.TestCase):
             a = build(ROOT, 'HEAD', Path(d) / 'a')
             b = build(ROOT, 'HEAD', Path(d) / 'b')
             self.assertEqual(a.read_bytes(), b.read_bytes())
+            with tarfile.open(a) as archive:
+                self.assertTrue(all('\\' not in m.name for m in archive))
             manifest = json.loads((a.parent / 'manifest.json').read_bytes())
             self.assertFalse(manifest['production_apply'])
             with self.assertRaises(FileExistsError):
