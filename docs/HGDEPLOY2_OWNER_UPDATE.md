@@ -72,6 +72,15 @@ Explicit rollback/recover возвращает исходный poller и origin
 runtime, не повторяет Apply и не запускает сервисы. Guardian следует за
 аутентифицированной передачей lease в Recover до terminal state; восстановление
 кода остаётся отдельным явным действием владельца.
+До остановки workers guardian отзывает legacy numeric-PID admission, удаляя
+только собственный `pid` под serial exclusion. `owner-process`, `owner-pid`
+и package marker остаются для recovery. Обычный отказ startup делает тот же
+отзыв до quiesce. Повторное использование старого PID не должно разрешать
+новый запуск после завершения cleanup; это отдельная VM-регрессия.
+Отзыв и остановка также удерживают migration startup lock, которым init
+защищает проверку admission и регистрацию procd. Уже допущенный ручной start
+должен завершить регистрацию до quiesce; delayed-registration VM test проверяет
+этот порядок без изменения установленного runtime или сетевой конфигурации.
 Если Apply прерван до PREPARED, Recover проверяет каждый существующий partial file
 как собственный prefix и полный действующий baseline, затем сохраняет skeleton
 и partial backup в отдельный `.aborted.*` receipt. Runtime не меняется; повторный

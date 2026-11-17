@@ -20,3 +20,11 @@
 Решения: --ref другого commit требует checkout этого commit, вместо исполнения
 Python-модулей произвольного ref. Исторический production evidence сохраняется.
 Повторная миграция, прямое копирование poller и подмена pins запрещены.
+
+Дополнение после adversarial review: CI исходного f8a011c завершился 13/13 PASS,
+но найден пробел: guardian завершал quiesce без отзыва legacy numeric-PID
+admission. Нулевой review receipt этого SHA отозван; owner release запрещён.
+Исправление должно удалить только собственный pid marker, сохранив recovery
+identity, и согласовать quiesce с migration startup lock. Добавлены проверки
+повторного запуска с reused PID и задержанной регистрации ручного start.
+Все gates требуют нового exact-source CI и VM evidence.

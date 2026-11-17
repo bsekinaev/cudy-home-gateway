@@ -54,13 +54,13 @@ function owner_alive() {
     require(end>=0 && match(f[19]??'',/^[0-9]+$/),'PROCESS_STAT');
     return f[19]==expected[3] && f[0]!='Z';
 }
-function serial_lock() {
-    let s=fs.lstat(SERIAL);require(s?.type=='file' && s.uid==0 && s.gid==0 && s.mode==0600 && s.nlink==1 && s.size==0,'SERIAL');
-    let f=fs.open(SERIAL,'re');require(f!=null,'SERIAL_OPEN');
+function exclusive_lock(path) {
+    let s=fs.lstat(path);require(s?.type=='file' && s.uid==0 && s.gid==0 && s.mode==0600 && s.nlink==1 && s.size==0,'SERIAL');
+    let f=fs.open(path,'re');require(f!=null,'SERIAL_OPEN');
     let held=fs.stat('/proc/self/fd/'+f.fileno());
     require(held?.inode==s.inode && held.dev.major==s.dev.major && held.dev.minor==s.dev.minor && held.size==0,'SERIAL_IDENTITY');
     if(f.lock('xn')==null) {f.close();return null;}
-    let now=fs.lstat(SERIAL);require(now?.inode==s.inode && now.dev.major==s.dev.major && now.dev.minor==s.dev.minor && now.size==0,'SERIAL_CHANGED');return f;
+    let now=fs.lstat(path);require(now?.inode==s.inode && now.dev.major==s.dev.major && now.dev.minor==s.dev.minor && now.size==0,'SERIAL_CHANGED');return f;
 }
 let raw=fs.readfile('/proc/self/stat'),pid=match(raw??'',/^([1-9][0-9]*) /),end=rindex(raw??'',') '),fields=split(trim(substr(raw??'',end+2)),/\s+/);
 require(pid!=null && end>=0 && match(fields[19]??'',/^[0-9]+$/),'SELF');
@@ -71,12 +71,27 @@ if(json(fs.readfile(kit+'/manifest.json')).profile=='VM_ONLY' && getenv('HG_OWNE
 while(true) {
     if(!load_owner_lease() || terminal())exit(0);
     if(owner_alive()) {require(run(['/bin/sleep','1']),'WAIT');continue;}
-    let lock=serial_lock();if(lock==null) {require(run(['/bin/sleep','1']),'WAIT');continue;}
+    let lock=exclusive_lock(SERIAL);if(lock==null) {require(run(['/bin/sleep','1']),'WAIT');continue;}
     if(!load_owner_lease() || terminal()) {lock.close();exit(0);}
     if(owner_alive()) {lock.close();continue;}
     require(run(['/usr/bin/ucode',kit+'/inspect.uc',kit,pin,'mixed']),'RUNTIME');
+    // A manual start holds this guard through procd registration. Drain any
+    // already-admitted start before revoking admission and proving stopped.
+    let startup=exclusive_lock('/etc/home-gateway-migration.lock');
+    if(startup==null) {lock.close();require(run(['/bin/sleep','1']),'WAIT');continue;}
+    // The installed baseline admission checks only the legacy numeric PID.
+    // Revoke that proof under serial exclusion before quiescing; retain the
+    // authenticated owner-process/owner-pid markers for explicit recovery.
+    if(fs.lstat(LOCK+'/pid')!=null) {
+        let legacy=regular(LOCK+'/pid',16);
+        let parsed=match(legacy,/^[1-9][0-9]{0,9}\n$/);
+        require(parsed!=null && parsed[0]==legacy,'LEGACY_PID');
+        require(fs.unlink(LOCK+'/pid'),'REVOKE_STARTUP');
+        require(run(['/bin/sync']),'REVOKE_SYNC');
+    }
     require(run(['/usr/bin/ucode','-e','import { quiesce_telegram } from "/usr/libexec/home-gateway-deploy/migration-service.uc"; quiesce_telegram("",{assert_root:function(r){if(r!="")die("ROOT");}});']),'QUIESCE');
     exclusive(dir+'/done','HG_OWNER_GUARD_QUIESCED_V1\n');
+    require(startup.close()!=null,'STARTUP_CLOSE');
     require(lock.close()!=null,'SERIAL_CLOSE');
     print('OWNER_UPDATE_GUARD_QUIESCED=PASS\n');exit(0);
 }

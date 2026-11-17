@@ -176,6 +176,8 @@ partial_start_failure_case() {
  partial_pid=$(sed -n 's/^HG_VM_PARTIAL_POLLER_PID=//p' "$tx/service.log")
  [ "$rc" != 0 ] && printf '%s' "$partial_pid" | grep -Eq '^[1-9][0-9]*$' || return 1
  ! kill -0 "$partial_pid" 2>/dev/null && ! /etc/init.d/home-gateway-telegram running &&
+ [ ! -e /tmp/home-gateway-deploy.lock/pid ] &&
+ refused /etc/init.d/home-gateway-telegram start &&
  [ -f /tmp/home-gateway-deploy.lock/owner-update ] &&
  grep -q OWNER_UPDATE_FAILED_START_QUIESCED=PASS "$LAB/partial-start.log" &&
  sh "$update/update.sh" recover "$pin" &&
@@ -184,9 +186,14 @@ partial_start_failure_case() {
 }
 check partial_start_failure_quiesces_candidate partial_start_failure_case
 startup_sigkill_case() {
- mode=${1:-plain}; delay=0; [ "$mode" != handoff ] || delay=30
+ mode=${1:-plain}; delay=0; [ "$mode" = plain ] || delay=30
  HG_OWNER_VM_GUARD_DELAY=$delay HG_OWNER_VM_KILL_AT=during-startup sh "$update/update.sh" apply "$pin" > "$LAB/startup-kill.log" 2>&1
  [ "$?" = 137 ] || return 1
+ if [ "$mode" = reused-pid ]; then
+  # Surrogate for reuse: legacy admission sees a live unrelated PID while
+  # authenticated owner-process still proves the interrupted updater is dead.
+  printf '%s\n' "$$" > /tmp/home-gateway-deploy.lock/pid
+ fi
  if [ "$mode" = handoff ]; then
   HG_OWNER_VM_KILL_AT=recovery-acquired sh "$update/update.sh" recover "$pin" > "$LAB/startup-handoff-kill.log" 2>&1
   [ "$?" = 137 ] || return 1
@@ -197,12 +204,53 @@ startup_sigkill_case() {
   tries=$((tries+1)); [ "$tries" -le 70 ] || return 1; sleep 1
  done
  ! /etc/init.d/home-gateway-telegram running && [ -f /tmp/home-gateway-deploy.lock/owner-update ] &&
+ [ ! -e /tmp/home-gateway-deploy.lock/pid ] &&
+ refused sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start &&
+ refused /etc/init.d/home-gateway-telegram start &&
  sh "$update/update.sh" recover "$pin" &&
  sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start || return 1
  archive_update "startup-$mode"
 }
 check startup_sigkill_guard_quiesces_candidate startup_sigkill_case
 check startup_guard_survives_recovery_handoff startup_sigkill_case handoff
+check startup_guard_revokes_reused_pid_admission startup_sigkill_case reused-pid
+delayed_manual_start_case() {
+ HG_OWNER_VM_GUARD_DELAY=30 HG_OWNER_VM_KILL_AT=during-startup sh "$update/update.sh" apply "$pin" > "$LAB/delayed-start-kill.log" 2>&1
+ [ "$?" = 137 ] || return 1
+ /etc/init.d/home-gateway-telegram stop
+ printf '%s\n' "$$" > /tmp/home-gateway-deploy.lock/pid
+ mkdir -p "$LAB/delayed-init"
+ # Source the exact installed init; delay only this VM invocation between
+ # admission and procd registration, while its real FD8 guard is held.
+ cat > "$LAB/delayed-init/home-gateway-telegram" <<'DELAYED_INIT'
+. /etc/init.d/home-gateway-telegram
+hg_runtime_admitted() {
+ /bin/sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start --held-telegram-guard || return 1
+ if [ ! -e /etc/hg-vm-lab/owner-update/manual-admitted ]; then
+  touch /etc/hg-vm-lab/owner-update/manual-admitted
+  while [ ! -e /etc/hg-vm-lab/owner-update/manual-release ]; do sleep 1; done
+ fi
+}
+DELAYED_INIT
+ timeout -k 2 90 /bin/sh /etc/rc.common "$LAB/delayed-init/home-gateway-telegram" start > "$LAB/delayed-manual.log" 2>&1 &
+ manual=$!; tries=0
+ until [ -e "$LAB/manual-admitted" ]; do
+  tries=$((tries+1)); [ "$tries" -le 20 ] || return 1; sleep 1
+ done
+ sleep 35
+ tx=/etc/home-gateway-deploy/$(cat /etc/home-gateway-owner-update/new-id)
+ [ -e /tmp/home-gateway-deploy.lock/pid ] && ! grep -q OWNER_UPDATE_GUARD_QUIESCED=PASS "$tx/service.log" || return 1
+ touch "$LAB/manual-release"
+ wait "$manual" || return 1
+ tries=0
+ until grep -q OWNER_UPDATE_GUARD_QUIESCED=PASS "$tx/service.log"; do
+  tries=$((tries+1)); [ "$tries" -le 40 ] || return 1; sleep 1
+ done
+ [ ! -e /tmp/home-gateway-deploy.lock/pid ] && ! /etc/init.d/home-gateway-telegram running &&
+ refused /etc/init.d/home-gateway-telegram start && sh "$update/update.sh" recover "$pin" || return 1
+ archive_update delayed-manual-start
+}
+check startup_guard_drains_admitted_manual_start delayed_manual_start_case
 crash_case() {
  point=$1
  HG_OWNER_VM_KILL_AT=$point sh "$update/update.sh" apply "$pin" > "$LAB/kill-$point.log" 2>&1

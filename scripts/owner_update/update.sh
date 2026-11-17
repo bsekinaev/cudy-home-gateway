@@ -38,10 +38,37 @@ quiesce() {
     ! running
 }
 wait_running() { n=0; while ! running; do n=$((n+1)); [ "$n" -lt 6 ] || return 1; sleep 1; done; sleep 2; running && inspect workers; }
+revoke_startup_admission() {
+    # Legacy admission knows only this numeric PID. Remove it before stopping
+    # workers, so PID reuse cannot reopen startup after cleanup completes.
+    regular "$LOCK/pid" 600 && [ "$(cat "$LOCK/pid")" = "$$" ] &&
+    [ "$(stat -c '%d:%i' "$LOCK")" = "$lease" ] &&
+    regular "$LOCK/owner-update" 600 && [ "$(cat "$LOCK/owner-update")" = "$pin" ] &&
+    regular "$LOCK/owner-process" 600 && [ "$(cat "$LOCK/owner-process")" = "$process_record_value" ] || return 1
+    rm "$LOCK/pid" && sync
+}
+revoke_and_quiesce() {
+    # Serialize with init's FD8 guard through registration and service_started.
+    local startup=/etc/home-gateway-migration.lock startup_inode tries=0 result=1
+    regular "$startup" 600 && [ "$(stat -c %s "$startup")" = 0 ] || return 1
+    startup_inode=$(stat -c '%d:%i' "$startup") || return 1
+    exec 8< "$startup" || return 1
+    while ! busybox flock -n 8; do
+        tries=$((tries+1)); [ "$tries" -lt 30 ] || { exec 8<&-; return 1; }
+        sleep 1
+    done
+    if regular "$startup" 600 && [ "$(stat -c %s "$startup")" = 0 ] &&
+       [ "$(stat -c '%d:%i' "$startup")" = "$startup_inode" ] &&
+       [ "$(stat -Lc '%d:%i' /proc/self/fd/8)" = "$startup_inode" ]; then
+        if revoke_startup_admission && quiesce; then result=0; fi
+    fi
+    exec 8<&-
+    return "$result"
+}
 on_exit() {
     exit_code=$?
     if [ "$exit_code" -ne 0 ] && [ "$started_for_update" = 1 ]; then
-        if quiesce; then echo OWNER_UPDATE_FAILED_START_QUIESCED=PASS >&2;
+        if revoke_and_quiesce; then echo OWNER_UPDATE_FAILED_START_QUIESCED=PASS >&2;
         else echo OWNER_UPDATE_FAILED_START_QUIESCE_REFUSED=OWNER_RECOVERY_REQUIRED >&2; fi
     fi
     if ! absent "$LOCK"; then echo OWNER_UPDATE_LEASE_RETAINED >&2; fi
