@@ -342,7 +342,7 @@ export function open_protocol(root) {
         for(let path in roots) {
             need(canonical(path) && match(path,allowed) && !unique[path],'HISTORY_ROOT');unique[path]=true;
         }
-        let entries=[],count=0;
+        let entries=[],count=0,jobs=[];
         function walk(path,depth) {
             need(depth<=20 && length(entries)<4096,'HISTORY_LIMIT');
             let full=root+path;ancestry(full,false);let st=fs.lstat(full);
@@ -357,10 +357,26 @@ export function open_protocol(root) {
                 need(st.type=='file' && index([0600,0644,0700,0755],st.mode)>=0,'HISTORY_METADATA');
                 let inventory=match(path,/^\/etc\/home-gateway-owner-series\/generations\/tx\.[0-9a-f]{32}\/history\.json$/)!=null;
                 if(inventory)need(st.mode==0600,'HISTORY_METADATA');
-                push(entries,{path,type:'file',mode:st.mode,size:st.size,sha256:digest(full,st.mode,inventory?2097152:262144)});count++;
+                checked(full,'file',st.mode,inventory?2097152:262144);
+                push(entries,{path,type:'file',mode:st.mode,size:st.size,sha256:null});
+                push(jobs,{full,stat:st,index:length(entries)-1,limit:inventory?2097152:262144});count++;
             }
         }
         for(let path in sort([...roots]))walk(path,0);
+        // Bounded path-only batches avoid both an ARG_MAX-sized evidence string
+        // and thousands of process launches for retained immutable receipts.
+        for(let start=0;start<length(jobs);start+=64) {
+            let batch=slice(jobs,start,start+64);
+            let command=CLEAN_EXEC+'sha256sum '+join(' ',map(batch,j=>quote(j.full)))+' 2>/dev/null';
+            need(length(command)<40000,'HISTORY_LIMIT');let child=fs.popen(command,'r');need(child!=null,'HASH_PROCESS');
+            let raw=child.read(65537),rc=child.close();need(rc==0 && type(raw)=='string' && length(raw)<=65536,'HASH_OUTPUT');
+            let lines=split(raw,'\n');need(pop(lines)=='' && length(lines)==length(batch),'HASH_OUTPUT');
+            for(let i=0;i<length(batch);i++) {
+                let job=batch[i],pin=substr(lines[i],0,64),after=checked(job.full,'file',job.stat.mode,job.limit);
+                need(hash(pin) && lines[i]==pin+'  '+job.full && after.inode==job.stat.inode && same_device(after,job.stat) &&
+                    after.size==job.stat.size && after.mtime==job.stat.mtime,'HASH_CHANGED');entries[job.index].sha256=pin;
+            }
+        }
         let result={schema_version:1,roots:sort([...roots]),entries,files:count};
         need(length(sprintf('%J',result))<=2097152,'HISTORY_LIMIT');return result;
     }

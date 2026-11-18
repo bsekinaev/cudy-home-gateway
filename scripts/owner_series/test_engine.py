@@ -44,6 +44,21 @@ class EngineTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('OWNER_SERIES_', result.stderr)
 
+    def test_well_formed_but_wrong_after_identity_is_refused(self):
+        manifest = dict(source_commit='1' * 40, baseline_commit='d2039b6c62da3aa458f720af1c46fb619aee48dd')
+        old = dict(generation='V1', transaction='tx.ud2039b6c62da3aa458f720af', source=manifest['baseline_commit'])
+        result = self.describe('APPLY', manifest, old)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        intent = json.loads(result.stdout)
+        intent['before_latest'] = 'V1'
+        intent['after_source'] = '0' * 40
+        code = ('import { validate_operation_intent } from ' + json.dumps(str(MODULE.with_name('state.uc'))) + ';'
+                'let d=json(ARGV[0]);validate_operation_intent(d.intent,d.manifest,d.pin);')
+        result = subprocess.run(['ucode', '-e', code, '--', json.dumps(dict(intent=intent, manifest=manifest, pin='f' * 64))],
+                                capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('OWNER_SERIES_STATE_', result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

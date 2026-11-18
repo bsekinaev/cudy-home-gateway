@@ -5,6 +5,19 @@ function need(ok,why){if(!ok)die('OWNER_SERIES_STATE_'+why);}
 function quote(s){return "'"+replace(s,"'","'\\''")+"'";}
 function same(a,b){return a?.inode==b?.inode && a?.dev?.major==b?.dev?.major && a?.dev?.minor==b?.dev?.minor;}
 
+export function valid_process_prefix(raw,boot) {
+    if(type(raw)!='string' || length(raw)>128 || type(boot)!='string' ||
+        !match(boot,/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/))return false;
+    let header='HG_OWNER_PROCESS_V1 ';
+    if(length(raw)<=length(header))return raw==substr(header,0,length(raw));
+    let rest=substr(raw,length(header));if(substr(raw,0,length(header))!=header)return false;
+    if(length(rest)<=36)return rest==substr(boot,0,length(rest));
+    if(substr(rest,0,37)!=boot+' ')return false;rest=substr(rest,37);
+    return rest=='' || match(rest,/^[1-9][0-9]{0,9}$/)!=null ||
+        match(rest,/^[1-9][0-9]{0,9} [0-9]{0,20}$/)!=null ||
+        match(rest,/^[1-9][0-9]{0,9} [0-9]{1,20}\n$/)!=null;
+};
+
 export function describe_operation(kind,id,m,selected,pin) {
     function opid(value){return type(value)=='string' && match(value,/^tx\.[0-9a-f]{32}$/)!=null;}
     function txid(value){return type(value)=='string' && match(value,/^tx\.[A-Za-z0-9]{1,32}$/)!=null;}
@@ -20,6 +33,19 @@ export function describe_operation(kind,id,m,selected,pin) {
         baseline_commit:m.baseline_commit,before_generation:selected.generation,before_transaction:selected.transaction,
         before_source:selected.source,after_generation:apply?id:selected.parent_generation,
         after_transaction:apply?id:selected.parent_transaction,after_source:apply?m.source_commit:m.baseline_commit};
+};
+
+export function validate_operation_intent(data,m,pin) {
+    need(type(data)=='object' && type(data.before_latest)=='string' &&
+        (data.before_latest=='V1' || match(data.before_latest,/^tx\.[0-9a-f]{32}$/)),'INTENT');
+    let selected={generation:data.before_generation,transaction:data.before_transaction,source:data.before_source,
+        parent_generation:data.after_generation,parent_transaction:data.after_transaction};
+    let expected=describe_operation(data.kind,data.id,m,selected,pin);expected.before_latest=data.before_latest;
+    need(join(',',sort(keys(data)))==join(',',sort(keys(expected))),'INTENT_FIELDS');
+    for(let name in keys(expected))need(type(data[name])=='string' && data[name]==expected[name],'INTENT_VALUE');
+    let original='tx.ud2039b6c62da3aa458f720af';
+    need(data.before_generation=='V1'?data.before_transaction==original:data.before_generation==data.before_transaction,'INTENT_BEFORE');
+    need(data.after_generation=='V1'?data.after_transaction==original:data.after_generation==data.after_transaction,'INTENT_AFTER');return true;
 };
 
 export function open_io(root) {

@@ -1,7 +1,7 @@
 // Owner-controlled coordinator. No automatic installation or recovery at boot.
 import * as fs from 'fs';
 import { open_protocol, decode_record } from './protocol.uc';
-import { open_io, describe_operation } from './state.uc';
+import { open_io, describe_operation, validate_operation_intent, valid_process_prefix } from './state.uc';
 const SERIES='/etc/home-gateway-owner-series',D='/etc/home-gateway-deploy',LOCK='/tmp/home-gateway-deploy.lock';
 const ACCEPTED='d2039b6c62da3aa458f720af1c46fb619aee48dd';
 const V1TX='tx.u'+substr(ACCEPTED,0,24);
@@ -84,12 +84,30 @@ function self_contents(directory) {
     evidence.entries=filter(evidence.entries,e=>index(['contents.json','contents.json.new','sealed','sealed.new','phase.new','postflight.log.new'],substr(e.path,length(directory)+1))<0);
     evidence.files=length(filter(evidence.entries,e=>e.type=='file'));return evidence;
 }
+function journal_layout(directory,kind) {
+    io.check(directory,'directory',0700,0);
+    let limits={'intent.json':8192,'manifest.json':65536,'kit-pin':65,phase:32,'phase.new':32,
+        'history.json':2097152,'contents.json':2097152,'contents.json.new':2097152,'sealed':64,'sealed.new':64,
+        'transaction.json':2097152,'transaction.json.new':2097152,'preflight.log':262144,'postflight.log':262144,
+        'postflight.log.new':262144,'service.log':262144};
+    let names=fs.lsdir(directory);need(names!=null && length(names)<=128,'JOURNAL_LIMIT');
+    for(let name in names) {
+        if(name=='before-runtime'||name=='aborted-transaction') {
+            need(name=='before-runtime'?kind=='ROLLBACK':kind=='APPLY','JOURNAL_UNKNOWN');io.check(directory+'/'+name,'directory',0700,0);continue;
+        }
+        if(match(name,/^interrupted\.[0-9]{1,2}$/)){io.check(directory+'/'+name,'file',0600,2097152);continue;}
+        if(match(name,/^interrupted-runtime\.[0-9]{1,2}$/)){io.check(directory+'/'+name,'file',0644,262144);continue;}
+        need(limits[name]!=null,'JOURNAL_UNKNOWN');io.check(directory+'/'+name,'file',0600,limits[name]);
+    }
+}
 function receipt(operation,shallow) {
     need(opid(operation),'RECEIPT_ID');let path=SERIES+'/generations/'+operation;
     io.check(path,'directory',0700,0);
     need(io.read(path+'/sealed',0600,64)=='HG_OWNER_SERIES_SEALED_V1\n','UNSEALED');
     for(let name in ['phase.new','postflight.log.new','contents.json.new','sealed.new'])need(!io.exists(path+'/'+name),'SEALED_PENDING');
     let data=read_json(path+'/intent.json',8192),manifest=read_json(path+'/manifest.json',65536),phase=line(path+'/phase',32);
+    validate_operation_intent(data,manifest,data.kit_pin);
+    journal_layout(path,data.kind);
     need(data.format=='HG_OWNER_SERIES_OPERATION_V1' && data.id==operation && sha(data.kit_pin) &&
         io.hash(path+'/manifest.json',0600,65536)==data.kit_pin && line(path+'/kit-pin',65)==data.kit_pin &&
         manifest.source_commit==data.source_commit && manifest.baseline_commit==data.baseline_commit &&
@@ -143,7 +161,12 @@ function space() {
     need(length(columns)>=6 && match(columns[3],/^[0-9]+$/) && +columns[3]*1024>=bytes*3+8388608,'PERSISTENT_SPACE');
     let platform=protocol.platform(m.profile);need(platform.available_kib*1024>=bytes*3+67108864,'RAM_SPACE');
 }
+function no_pending_global() {
+    for(let path in [D+'/active',D+'/latest',SERIES+'/active',SERIES+'/current',SERIES+'/latest'])
+        need(!io.exists(path+'.new'),'GLOBAL_PENDING');
+}
 function preflight(kind,held) {
+    no_pending_global();
     for(let name in fs.lsdir('/etc'))need(index(name,'home-gateway-owner-series.preparing-')!=0,'FOREIGN_PREPARATION');
     need(!io.exists(SERIES+'/active') && !io.exists(SERIES+'/active.new') && !io.exists(D+'/active') &&
         !io.exists(D+'/active.new') && !io.exists(D+'/latest.new') && !io.exists(LOCK),'ACTIVE_OR_FOREIGN');
@@ -161,7 +184,7 @@ function process_record() {
     return 'HG_OWNER_PROCESS_V1 '+boot+' '+pid[1]+' '+parts[19]+'\n';
 }
 function process_alive(raw) {
-    let proof=match(raw,/^HG_OWNER_PROCESS_V1 ([0-9a-f-]{36}) ([1-9][0-9]{0,9}) ([0-9]{1,20})\n$/);
+    let proof=match(raw,/^HG_OWNER_PROCESS_V1 ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) ([1-9][0-9]{0,9}) ([0-9]{1,20})\n$/);
     need(proof!=null && proof[0]==raw,'OWNER_PROCESS');
     if(proof[1]!=trim(fs.readfile('/proc/sys/kernel/random/boot_id')??''))return false;
     let stat=fs.readfile('/proc/'+proof[2]+'/stat');if(stat==null)return false;
@@ -229,8 +252,14 @@ function acquire(recovery) {
             let value=field=='owner-process'?own:own_pid+'\n';
             if(io.exists(LOCK+'/'+field+'.new')) {
                 let raw=io.read(LOCK+'/'+field+'.new',0600,128);
-                need(substr(value,0,length(raw))==raw,'UNKNOWN_LEASE_PREFIX');
-                io.rename(LOCK+'/'+field+'.new',LOCK+'/interrupted-'+field+'-'+substr(id,3),false);
+                let boot=split(trim(own),' ')[1];
+                need(field=='owner-process'?valid_process_prefix(raw,boot):
+                    (raw=='' || match(raw,/^[1-9][0-9]{0,9}\n?$/)!=null),'UNKNOWN_LEASE_PREFIX');
+                let n=0;while(io.exists(LOCK+'/interrupted-'+field+'.'+n))n++;need(n<32,'LEASE_EVIDENCE_LIMIT');
+                io.rename(LOCK+'/'+field+'.new',LOCK+'/interrupted-'+field+'.'+n,false);
+            }
+            if(field=='owner-process' && m.profile=='VM_ONLY' && getenv('HG_SERIES_VM_KILL_AT')=='recovery_partial_owner') {
+                io.exclusive(LOCK+'/'+field+'.new',substr(value,0,length(value)-3),0600);io.run(['/bin/sync']);io.run(['/bin/kill','-KILL',own_pid]);
             }
             if(io.exists(LOCK+'/'+field))io.atomic(LOCK+'/'+field,value,0600);else io.exclusive(LOCK+'/'+field,value,0600);
         }
@@ -247,8 +276,8 @@ function acquire(recovery) {
 }
 function guardian_start() {
     let dir=fs.mkdtemp('/tmp/home-gateway-series-guard.XXXXXX');need(dir!=null,'GUARD_DIRECTORY');
-    let script='trap "" HUP; /usr/bin/ucode '+quote(kit+'/watch.uc')+' '+quote(kit)+' '+quote(pin)+' '+quote(id)+' '+quote(trim(own))+' '+quote(dir)+
-        ' </dev/null >'+quote(dir+'/log')+' 2>&1 & echo $!';
+    let script='umask 077; trap "" HUP; /usr/bin/ucode '+quote(kit+'/watch.uc')+' '+quote(kit)+' '+quote(pin)+' '+quote(id)+' '+quote(trim(own))+' '+quote(dir)+
+        ' </dev/null >'+quote(dir+'.log')+' 2>&1 & echo $!';
     let result=capture(['/bin/sh','-c',script],64);need(result.code==0 && match(trim(result.raw),/^[1-9][0-9]*$/),'GUARD_START');
     guardian={dir,pid:trim(result.raw)};
     for(let n=0;n<30;n++) {
@@ -402,10 +431,14 @@ function start_runtime(transaction,identity) {
     need(proved,'WORKER_START');workers('candidate');hook('candidate_started');
 }
 function point_current(generation) {
-    if(generation=='V1') {if(io.exists(SERIES+'/current')){raw_pointer(SERIES+'/current',[intent.before_generation,intent.after_generation]);io.unlink(SERIES+'/current');}}
-    else record(SERIES+'/current',generation+'\n',[intent.before_generation+'\n',intent.after_generation+'\n']);
+    let allowed=filter([intent.before_generation,intent.after_generation],opid);
+    preserve_pending(SERIES+'/current',map(allowed,v=>v+'\n'));
+    if(generation=='V1') {if(io.exists(SERIES+'/current')){raw_pointer(SERIES+'/current',allowed);io.unlink(SERIES+'/current');}}
+    else record(SERIES+'/current',generation+'\n',map(allowed,v=>v+'\n'));
 }
 function seal(terminal) {
+    journal_layout(J,intent.kind);validate_backup(terminal=='ABORTED');
+    if(io.exists(J+'/aborted-transaction'))validate_backup(true,J+'/aborted-transaction');
     phase(terminal);
     if(intent.kind=='APPLY' && io.exists(D+'/'+id+'/backup.sha256')) {
         let expected=encode(protocol.history([D+'/'+id]));
@@ -418,6 +451,7 @@ function seal(terminal) {
     io.atomic(J+'/sealed','HG_OWNER_SERIES_SEALED_V1\n',0600);hook('sealed');
 }
 function retire() {
+    io.check(LOCK,'directory',0700,0);
     need(line(LOCK+'/owner-series',65)==pin && line(LOCK+'/operation',36)==id &&
         io.read(LOCK+'/owner-process',0600,128)==own && fs.lstat(LOCK)?.inode==lease.inode,'LEASE_IDENTITY');
     let retired=fs.mkdtemp('/tmp/home-gateway-series-released.XXXXXX');need(retired!=null,'RETIRE_DIRECTORY');
@@ -429,7 +463,7 @@ function finish(terminal,identity) {
     let after=terminal=='COMMITTED';
     let generation=intent[after?'after_generation':'before_generation'],transaction=intent[after?'after_transaction':'before_transaction'];
     record(D+'/latest',transaction+'\n',[intent.before_transaction+'\n',intent.after_transaction+'\n']);restore_boot();
-    point_current(generation);record(SERIES+'/latest',id+'\n',[intent.before_latest+'\n',id+'\n']);
+    point_current(generation);record(SERIES+'/latest',id+'\n',map(filter([intent.before_latest,id],opid),v=>v+'\n'));
     seal(terminal);retire();
     command(['/bin/sh','/usr/libexec/home-gateway-deploy/migration-admission.sh','--telegram-start']);
     protocol.runtime(m.inventories[identity]);workers('candidate');checks();
@@ -437,15 +471,22 @@ function finish(terminal,identity) {
 function validate_intent() {
     need(line(J+'/kit-pin',65)==pin && io.read(J+'/manifest.json',0600,65536)==io.read(kit+'/manifest.json',0600,65536),'OPERATION_PACKAGE');
     intent=read_json(J+'/intent.json',8192);
+    validate_operation_intent(intent,m,pin);
     need(intent.id==id && intent.kit_pin==pin && intent.format=='HG_OWNER_SERIES_OPERATION_V1' &&
         intent.source_commit==m.source_commit && intent.baseline_commit==m.baseline_commit &&
         index(['APPLY','ROLLBACK'],intent.kind)>=0 && txid(intent.before_transaction) && txid(intent.after_transaction) &&
         (intent.before_generation=='V1'||opid(intent.before_generation)) &&
         (intent.after_generation=='V1'||opid(intent.after_generation)) && commit(intent.before_source) && commit(intent.after_source),'OPERATION_INTENT');
     protocol.verify_history(read_json(J+'/history.json',2097152));
+    if(intent.before_latest=='V1')need(intent.before_generation=='V1','INTENT_PREDECESSOR');
+    else {
+        let before=effective(receipt(intent.before_latest,true));
+        need(before.generation==intent.before_generation && before.transaction==intent.before_transaction &&
+            before.source==intent.before_source,'INTENT_PREDECESSOR');
+    }
 }
-function validate_backup(partial) {
-    let apply=intent.kind=='APPLY',base=apply?D+'/'+id:J+'/before-runtime';
+function validate_backup(partial,override) {
+    let apply=intent.kind=='APPLY',base=override??(apply?D+'/'+id:J+'/before-runtime');
     if(!io.exists(base)){need(partial,'MISSING_BACKUP');return;}
     let values={},modes={};
     if(apply) {
@@ -482,6 +523,14 @@ function validate_backup(partial) {
     }
 }
 function recover() {
+    if(io.exists(J)) {
+        let kind=null;
+        if(io.exists(J+'/intent.json')) {
+            try {kind=read_json(J+'/intent.json',8192).kind;}catch(e){}
+        }
+        // Before a complete intent exists no backup subtree can have been published.
+        journal_layout(J,kind);
+    }
     let phase_raw=io.exists(J+'/phase')?io.read(J+'/phase',0600,32):'';
     let preparing=!io.exists(J+'/intent.json') || !io.exists(J+'/kit-pin') ||
         phase_raw==substr('PREPARING\n',0,length(phase_raw));
@@ -489,6 +538,7 @@ function recover() {
         let selected=selection();parent_match(selected,selected.source==m.baseline_commit?'APPLY':'ROLLBACK');
         intent=describe_operation(selected.source==m.baseline_commit?'APPLY':'ROLLBACK',id,m,selected,pin);intent.before_latest=selected.latest;
         acquire(true);repair_preparing(selected);validate_backup(true);
+        if(io.exists(J+'/aborted-transaction'))validate_backup(true,J+'/aborted-transaction');
         // Only preparation prefixes may exist; no runtime publication was admitted.
         protocol.runtime(m.inventories[intent.kind=='APPLY'?'baseline':'candidate']);
         if(io.exists(D+'/'+id)) {
@@ -504,6 +554,7 @@ function recover() {
     validate_intent();let current=line(J+'/phase',32);validate_backup(current=='ABORTED');
     if(io.exists(J+'/sealed')) {
         let saved=receipt(id),value=effective(saved);need(index(['COMMITTED','ROLLED_BACK','ABORTED'],current)>=0,'TERMINAL_PHASE');
+        no_pending_global();let selected=selection();need(selected.latest==id && selected.generation==value.generation && selected.source==value.source,'TERMINAL_SELECTION');
         need(line(SERIES+'/latest',36)==id && line(D+'/latest',40)==value.transaction,'TERMINAL_POINTER');
         protocol.runtime(m.inventories[value.source==m.source_commit?'candidate':'baseline']);
         acquire(true);guardian_start();raw_active(value.transaction);
@@ -542,6 +593,7 @@ try {
         if(io.exists('/tmp/home-gateway/actions.lock'))actions=io.lock('/tmp/home-gateway/actions.lock',false);
         preflight('APPLY',actions);
     } else if(stage=='verify') {
+        no_pending_global();
         need(!io.exists(LOCK) && !io.exists(SERIES+'/active') && !io.exists(D+'/active'),'VERIFY_PENDING');
         let saved=receipt(id),selected=selection(),value=effective(saved);
         need(selected.latest==id && selected.source==value.source && line(J+'/kit-pin',65)==pin,'VERIFY_IDENTITY');
@@ -560,7 +612,7 @@ try {
         if(kind=='APPLY')record(D+'/'+id+'/phase','COMMITTED\n',['CHECKING\n','COMMITTED\n']);hook('raw_committed');
         // Publish accepted outcome before sealing; recovery may only finalize this outcome.
         record(D+'/latest',intent.after_transaction+'\n',[intent.before_transaction+'\n',intent.after_transaction+'\n']);restore_boot();
-        point_current(intent.after_generation);record(SERIES+'/latest',id+'\n',[intent.before_latest+'\n',id+'\n']);
+        point_current(intent.after_generation);record(SERIES+'/latest',id+'\n',map(filter([intent.before_latest,id],opid),v=>v+'\n'));
         phase('COMMITTED');hook('committed');finish('COMMITTED',kind=='APPLY'?'candidate':'baseline');
     }
     if(startup!=null){startup.close();startup=null;}

@@ -26,7 +26,7 @@ class StateTests(unittest.TestCase):
 
     def run_code(self, source):
         self.assertTrue(MODULE.exists(), 'durable series state module missing')
-        code = 'import { open_io } from ' + json.dumps(str(MODULE)) + ';let io=open_io(ARGV[0]);' + source
+        code = 'import { open_io, valid_process_prefix } from ' + json.dumps(str(MODULE)) + ';let io=open_io(ARGV[0]);' + source
         return subprocess.run(['ucode', '-e', code, '--', str(self.root)],
                               capture_output=True, text=True, timeout=20)
 
@@ -97,6 +97,18 @@ class StateTests(unittest.TestCase):
         for path in ('/etc/escape/payload', '/etc/../tmp/payload'):
             result = self.run_code('io.exclusive(' + json.dumps(path) + ',"no",0600);')
             self.assertNotEqual(result.returncode, 0)
+
+    def test_interrupted_recovery_record_is_not_bound_to_next_process_pid(self):
+        boot = '12345678-1234-1234-1234-123456789abc'
+        data = 'HG_OWNER_PROCESS_V1 ' + boot + ' 987 123456\n'
+        for prefix in ('', 'HG_OWNER_', data[:30], data[:-3], data):
+            result = self.run_code('print(valid_process_prefix(' + json.dumps(prefix) + ',' + json.dumps(boot) + '));')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, 'true')
+        for bad in ('arbitrary', data + 'extra', data.replace('987', '0'), data.replace(boot, '0' * 36)):
+            result = self.run_code('print(valid_process_prefix(' + json.dumps(bad) + ',' + json.dumps(boot) + '));')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, 'false')
 
 
 if __name__ == '__main__':

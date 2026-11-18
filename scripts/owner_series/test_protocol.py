@@ -221,6 +221,17 @@ class ProtocolTests(unittest.TestCase):
         os.link(path, self.root / 'outside-link')
         self.assert_refused('history', ['/etc/home-gateway-owner-update'], 'LINK')
 
+    def test_history_keeps_each_digest_across_large_file_sets(self):
+        for i in range(67):
+            self.put('etc/home-gateway-owner-update/proof%03d' % i, ('record-%d\n' % i).encode())
+        result = self.run_protocol('history', ['/etc/home-gateway-owner-update'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        evidence = json.loads(result.stdout)
+        self.assertEqual(evidence['files'], 67)
+        files = [e for e in evidence['entries'] if e['type'] == 'file']
+        self.assertEqual([e['sha256'] for e in files],
+                         [hashlib.sha256(('record-%d\n' % i).encode()).hexdigest() for i in range(67)])
+
     def test_real_migration_snapshot_retains_private_executable_controls(self):
         self.put('etc/home-gateway-migration/old/runtime/usr/libexec/home-gateway-deploy/engine.sh',
                  self.control_bytes['usr/libexec/home-gateway-deploy/engine.sh'], 0o700)

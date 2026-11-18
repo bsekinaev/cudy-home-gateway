@@ -322,6 +322,9 @@ def run(args):
                                 chunk = os.read(key.fileobj.fileno(), 65536)
                                 if not chunk: selector.unregister(key.fileobj); break
                                 console.extend(chunk); require(len(console) <= 4 * 1024 * 1024, 'CONSOLE_LIMIT')
+                                if args.diagnostic_log:
+                                    fd = os.open(args.diagnostic_log, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+                                    with os.fdopen(fd, 'wb') as live_log: live_log.write(chunk)
                             if not selector.get_map(): break
                         try:
                             status=child.wait(timeout=2)

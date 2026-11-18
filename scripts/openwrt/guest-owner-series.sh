@@ -124,6 +124,15 @@ crash_case() {
  pin=$(sha256sum "$LAB/a/manifest.json" | cut -d ' ' -f1)
  HG_SERIES_VM_KILL_AT="$point" /usr/bin/ucode "$LAB/a/engine.uc" apply "$LAB/a" "$pin" "$interrupted" > "$LAB/crash-output" 2>&1
  killed=$?;cat "$LAB/crash-output";[ "$killed" -ne 0 ] || return 1
+ if [ "$point" = after_publication ];then
+   touch "/etc/home-gateway-deploy/$interrupted/backup/unexpected"
+   chmod 600 "/etc/home-gateway-deploy/$interrupted/backup/unexpected"
+   refused stage "$LAB/a" recover "$interrupted" || return 1
+   (cd / && sha256sum -c "$LAB/a/candidate.sha256") || return 1
+   rm "/etc/home-gateway-deploy/$interrupted/backup/unexpected"
+   HG_SERIES_VM_KILL_AT=recovery_partial_owner /usr/bin/ucode "$LAB/a/engine.uc" recover "$LAB/a" "$pin" "$interrupted" > "$LAB/handoff-output" 2>&1
+   [ "$?" -ne 0 ] || return 1
+ fi
  stage "$LAB/a" recover "$interrupted" || return 1
  stage "$LAB/a" verify "$interrupted" || return 1
  # A terminal cleanup cut preserves the accepted candidate; returning it to V1
