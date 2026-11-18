@@ -124,6 +124,11 @@ crash_case() {
  pin=$(sha256sum "$LAB/a/manifest.json" | cut -d ' ' -f1)
  HG_SERIES_VM_KILL_AT="$point" /usr/bin/ucode "$LAB/a/engine.uc" apply "$LAB/a" "$pin" "$interrupted" > "$LAB/crash-output" 2>&1
  killed=$?;cat "$LAB/crash-output";[ "$killed" -ne 0 ] || return 1
+ if [ "$point" = preparing ];then
+   head -c 32 "/etc/home-gateway-owner-series/generations/$interrupted/history.json" > "$LAB/history-prefix"
+   cp "$LAB/history-prefix" "/etc/home-gateway-owner-series/generations/$interrupted/history.json"
+   chmod 600 "/etc/home-gateway-owner-series/generations/$interrupted/history.json"
+ fi
  if [ "$point" = after_publication ];then
    touch "/etc/home-gateway-deploy/$interrupted/backup/unexpected"
    chmod 600 "/etc/home-gateway-deploy/$interrupted/backup/unexpected"

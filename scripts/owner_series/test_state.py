@@ -110,6 +110,20 @@ class StateTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, 'false')
 
+    def test_known_partial_preparation_json_is_completed_but_foreign_bytes_preserved(self):
+        result = self.run_code('io.mkdir("/etc/preparing");io.exclusive("/etc/preparing/history.json","{\\\"schema",0600);'
+                               'io.complete_prefix("/etc/preparing/history.json","{\\\"schema\\\":1}\\n",0600);')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path = self.root / 'etc/preparing/history.json'
+        self.assertEqual(path.read_bytes(), b'{"schema":1}\n')
+        pending = path.with_name('history.json.new')
+        pending.write_bytes(b'foreign')
+        pending.chmod(0o600)
+        result = self.run_code('io.complete_prefix("/etc/preparing/history.json","{\\\"schema\\\":1}\\n",0600);')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(path.read_bytes(), b'{"schema":1}\n')
+        self.assertEqual(pending.read_bytes(), b'foreign')
+
 
 if __name__ == '__main__':
     unittest.main()

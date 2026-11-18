@@ -118,6 +118,18 @@ export function open_io(root) {
         need(!exists(path+'.new'),'PENDING');exclusive(path+'.new',data,mode);
         need(fs.rename(full(path+'.new'),full(path)),'RENAME');sync(path);
     }
+    function complete_prefix(path,data,mode) {
+        mutable(path);need(type(data)=='string' && length(data)<=2097152,'PREFIX_VALUE');
+        let actual=null;
+        if(exists(path)) {actual=read(path,mode,2097152);need(actual==substr(data,0,length(actual)),'UNKNOWN_PREFIX');}
+        if(exists(path+'.new')) {
+            let pending=read(path+'.new',mode,2097152);need(pending==substr(data,0,length(pending)),'UNKNOWN_PREFIX');
+            // The complete deterministic value retains every byte of this known
+            // prefix. Unknown bytes are never removed or overwritten.
+            unlink(path+'.new');
+        }
+        if(actual!=data)atomic(path,data,mode);
+    }
     function copy(source,target,mode) {
         mutable(target);let source_stat=fs.lstat(full(source));need(source_stat?.type=='file','COPY_SOURCE');
         let data=read(source,source_stat.mode,262144);exclusive(target,data,mode);
@@ -142,5 +154,5 @@ export function open_io(root) {
         need(fs.rename(full(source),full(target)),'RENAME');sync(target);
         need(run(['/bin/busybox','fsync',replace(full(source),/\/[^/]+$/,'')]),'RENAME_SOURCE_SYNC');
     }
-    return {root,full,check,read,exists,hash,mkdir,exclusive,atomic,copy,lock,unlink,rename,sync,run};
+    return {root,full,check,read,exists,hash,mkdir,exclusive,atomic,complete_prefix,copy,lock,unlink,rename,sync,run};
 };

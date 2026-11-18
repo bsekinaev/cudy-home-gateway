@@ -19,7 +19,7 @@ let stage=ARGV[0],kit=ARGV[1],pin=ARGV[2],id=ARGV[3],io=open_io(''),protocol=ope
 let m=protocol.package({kit,manifest_sha256:pin});
 protocol.platform(m.profile);protocol.controls(m.controls);
 const J=SERIES+'/generations/'+id;
-let serial=null,actions=null,startup=null,lease=null,guardian=null,started=false,intent=null;
+let serial=null,actions=null,startup=null,lease=null,guardian=null,started=false,intent=null,milestone='initial';
 function capture(args,limit) {
     let process=fs.popen('/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C timeout -k 2 90 '+
         join(' ',map(args,quote))+' 2>&1','r');need(process!=null,'PROCESS');
@@ -30,6 +30,7 @@ function command(args){let r=capture(args,262144);if(r.raw)print(r.raw);need(r.c
 function read_json(path,limit){return decode_record(io.read(path,0600,limit),'JOURNAL_JSON');}
 function line(path,limit){let raw=io.read(path,0600,limit),value=trim(raw);need(raw==value+'\n','RECORD_BYTES');return value;}
 function hook(point) {
+    milestone=point;print('OWNER_SERIES_STEP='+point+'\n');fs.stdout.flush();
     if(m.profile=='VM_ONLY' && getenv('HG_SERIES_VM_KILL_AT')==point) {
         need(io.run(['/bin/sync']),'VM_SYNC');
         let pid=match(fs.readfile('/proc/self/stat')??'',/^([0-9]+) /);need(pid!=null,'SELF');
@@ -87,7 +88,7 @@ function self_contents(directory) {
 function journal_layout(directory,kind) {
     io.check(directory,'directory',0700,0);
     let limits={'intent.json':8192,'manifest.json':65536,'kit-pin':65,phase:32,'phase.new':32,
-        'history.json':2097152,'contents.json':2097152,'contents.json.new':2097152,'sealed':64,'sealed.new':64,
+        'history.json':2097152,'history.json.new':2097152,'contents.json':2097152,'contents.json.new':2097152,'sealed':64,'sealed.new':64,
         'transaction.json':2097152,'transaction.json.new':2097152,'preflight.log':262144,'postflight.log':262144,
         'postflight.log.new':262144,'service.log':262144};
     let names=fs.lsdir(directory);need(names!=null && length(names)<=128,'JOURNAL_LIMIT');
@@ -320,8 +321,8 @@ function repair_preparing(selected) {
         } else io.exclusive(J+'/'+path,value,0600);
     }
     intent=expected;
-    if(!io.exists(J+'/history.json'))io.exclusive(J+'/history.json',encode(protocol.history(history_roots())),0600);
-    else protocol.verify_history(read_json(J+'/history.json',2097152));
+    io.complete_prefix(J+'/history.json',encode(protocol.history(history_roots())),0600);
+    protocol.verify_history(read_json(J+'/history.json',2097152));
     for(let name in ['preflight.log','postflight.log','service.log'])if(!io.exists(J+'/'+name))io.exclusive(J+'/'+name,'',0600);
 }
 function backup() {
@@ -420,10 +421,12 @@ function start_runtime(transaction,identity) {
     let log=checks(),previous_log=io.read(J+'/postflight.log',0600,262144);
     if(previous_log=='')record(J+'/postflight.log',log,[previous_log,log]);hook('postflight');
     if(guardian==null)guardian_start();hook('guard_ready');
-    if(transaction==id && intent.kind=='APPLY')record(D+'/'+id+'/phase','CHECKING\n',['PREPARED\n','APPLYING\n','CHECKING\n','COMMITTED\n']);
+    if(transaction==id && intent.kind=='APPLY' && line(D+'/'+id+'/phase',32)!='COMMITTED')
+        record(D+'/'+id+'/phase','CHECKING\n',['PREPARED\n','APPLYING\n','CHECKING\n']);
     raw_active(transaction);
     if(startup!=null){startup.close();startup=null;}
     started=true;command(['/etc/init.d/home-gateway-telegram','start']);
+    hook('service_returned');
     let proved=false;for(let n=0;n<8;n++) {
         let result=capture(['/usr/bin/ucode','-e','import { inspect_telegram } from "/usr/libexec/home-gateway-deploy/migration-service.uc"; inspect_telegram("",{assert_root:function(r){if(r!="")die("ROOT");}},"candidate");'],8192);
         if(result.code==0){proved=true;break;}io.run(['/bin/sleep','1']);
@@ -469,6 +472,7 @@ function finish(terminal,identity) {
     protocol.runtime(m.inventories[identity]);workers('candidate');checks();
 }
 function validate_intent() {
+    need(!io.exists(J+'/history.json.new'),'UNEXPECTED_HISTORY_PENDING');
     need(line(J+'/kit-pin',65)==pin && io.read(J+'/manifest.json',0600,65536)==io.read(kit+'/manifest.json',0600,65536),'OPERATION_PACKAGE');
     intent=read_json(J+'/intent.json',8192);
     validate_operation_intent(intent,m,pin);
@@ -537,7 +541,7 @@ function recover() {
     if(preparing) {
         let selected=selection();parent_match(selected,selected.source==m.baseline_commit?'APPLY':'ROLLBACK');
         intent=describe_operation(selected.source==m.baseline_commit?'APPLY':'ROLLBACK',id,m,selected,pin);intent.before_latest=selected.latest;
-        acquire(true);repair_preparing(selected);validate_backup(true);
+        acquire(true);anchor();repair_preparing(selected);validate_backup(true);
         if(io.exists(J+'/aborted-transaction'))validate_backup(true,J+'/aborted-transaction');
         // Only preparation prefixes may exist; no runtime publication was admitted.
         protocol.runtime(m.inventories[intent.kind=='APPLY'?'baseline':'candidate']);
@@ -623,5 +627,5 @@ try {
         try {if(startup==null)startup=io.lock('/etc/home-gateway-migration.lock',false);revoke_pid();quiesce();}
         catch(cleanup){warn('OWNER_SERIES_CLEANUP=EXPLICIT_RECOVERY_REQUIRED\n');}
     }
-    warn(error,'\n');exit(1);
+    warn('OWNER_SERIES_FAILED_AFTER='+milestone+'\n',error,'\n');exit(1);
 }
