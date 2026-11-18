@@ -23,6 +23,14 @@ Status: V1 bootstrap authentication implemented at 8361835; 9 parent tests PASS.
 Actual accepted OWNER_MANUAL archive also validated against the pinned manifest
 and Git source. V2 builder and subsequent-generation parent validation pending.
 
+Implementation order clarification: develop the complete VM_ONLY packaging
+contract using committed host fixtures for controller files before those files
+are implemented. Such fixtures prove only packaging/source closure; they are
+explicitly marked and cannot qualify as native lifecycle evidence. Actual-source
+build refuses missing controller files. OWNER_MANUAL output remains disabled
+until the exact-source native acceptance validator is implemented in Task 6.
+No placeholder controllers are added to the real source tree or owner package.
+
 Files: scripts/owner_series/build_kit.py, test_build.py.
 Consumes Task 1 validated parent package; produces V2 manifest and deterministic
 USTAR package. Full 20 runtime paths + 14 immutable control pins; observer delta
