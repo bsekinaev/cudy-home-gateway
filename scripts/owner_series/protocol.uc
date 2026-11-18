@@ -224,11 +224,14 @@ export function open_protocol(root) {
         }
         return {records:length(data.records),status:'DISABLED'};
     }
-    function actions() {
-        let path=root+'/tmp/home-gateway/actions.lock',guard=null;
+    function actions(borrowed) {
+        need(borrowed==null || type(borrowed)=='resource','ACTION_LOCK_RESOURCE');
+        let path=root+'/tmp/home-gateway/actions.lock',guard=borrowed,owned=borrowed==null;
         ancestry(path,true);
+        if(!owned)need(fs.lstat(path)!=null,'ACTION_LOCK');
         if(fs.lstat(path)!=null) {
-            let before=checked(path,'file',0600,0);guard=fs.open(path,'re');need(guard!=null,'ACTION_LOCK');
+            let before=checked(path,'file',0600,0);
+            if(owned)guard=fs.open(path,'re');need(guard!=null,'ACTION_LOCK');
             let held=fs.stat('/proc/self/fd/'+guard.fileno()),after=fs.lstat(path);
             need(held?.inode==before.inode && same_device(held,before) &&
                 after?.inode==before.inode && same_device(after,before),'ACTION_LOCK_CHANGED');
@@ -237,8 +240,8 @@ export function open_protocol(root) {
         // Absent lock is not created by preflight. The future writer must acquire
         // or create it and recheck this state before preparing any transaction.
         let result;
-        try {result=inspect_actions();}catch(e){if(guard!=null)guard.close();die(e);}
-        if(guard!=null)need(guard.close()!=null,'ACTION_LOCK_CLOSE');return result;
+        try {result=inspect_actions();}catch(e){if(owned && guard!=null)guard.close();die(e);}
+        if(owned && guard!=null)need(guard.close()!=null,'ACTION_LOCK_CLOSE');return result;
     }
     function history(roots) {
         need(type(roots)=='array' && length(roots)>0 && length(roots)<=66,'HISTORY_ROOT');

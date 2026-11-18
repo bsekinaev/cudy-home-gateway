@@ -16,7 +16,9 @@ must be composed before such an entrypoint can succeed. Actions inspection never
 calls `actions show`, expires pending records or recovers executing records. An
 existing actions lock is held while parsing; an absent lock is not created by a
 read-only call. The future writer must create/acquire it and repeat inspection
-under exclusion. Unsupported action path overrides are refused explicitly.
+under exclusion using `actions(borrowed_guard)`. This checks the exact file
+descriptor/inode, retains the caller's lock and avoids reacquiring a conflicting
+second file description. Unsupported action path overrides are refused explicitly.
 
 Platform tests use a private, explicitly marked synthetic filesystem and report
 `TEST_FS_ONLY`; they do not count as procd/crash/reboot acceptance. Production

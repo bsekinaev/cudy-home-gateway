@@ -29,6 +29,7 @@ class ProtocolTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.root.chmod(0o700)
         self.protocol_environment = {}
+        self.borrow_action_guard = False
         self.put('.hg-owner-series-test-root', b'HG_OWNER_SERIES_TEST_ROOT_V1\n')
         self.inventory = {}
         for path in PATHS:
@@ -61,8 +62,15 @@ class ProtocolTests(unittest.TestCase):
         if not MODULE.exists():
             self.fail('read-only native target protocol is missing')
         code = ('import { open_protocol } from ' + json.dumps(str(MODULE)) + ';'
-                'let p=open_protocol(ARGV[0]);'
-                'let value=p[ARGV[1]](json(ARGV[2])); print(sprintf("%J\\n",value));')
+                'import * as fs from "fs";let p=open_protocol(ARGV[0]);')
+        if self.borrow_action_guard:
+            code += ('let guard=fs.open(ARGV[0]+"/tmp/home-gateway/actions.lock","re");'
+                     'if(!guard || guard.lock("xn")==null)die("TEST_LOCK");'
+                     'let value=p.actions(guard);'
+                     'if(guard.fileno()==null || guard.lock("xn")==null)die("BORROWED_LOCK_CLOSED");'
+                     'guard.close();print(sprintf("%J\\n",value));')
+        else:
+            code += 'let value=p[ARGV[1]](json(ARGV[2])); print(sprintf("%J\\n",value));'
         result = subprocess.run(['ucode', '-e', code, '--', str(self.root), operation,
                                  json.dumps(data)], capture_output=True, text=True, timeout=20,
                                 env={**os.environ, **self.protocol_environment})
@@ -156,6 +164,14 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with lock.open('rb') as held:
             fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_actions_can_recheck_under_the_writers_existing_guard(self):
+        self.put('tmp/home-gateway/actions.lock', b'')
+        self.borrow_action_guard = True
+        result = self.run_protocol('actions')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.borrow_action_guard = False
+        self.assert_refused('actions', {'fileno': 'forged'}, 'ACTION_LOCK_RESOURCE')
 
     def test_unchanged_deployment_controls_are_authenticated(self):
         controls = {}
