@@ -237,6 +237,11 @@ function status_state(value) {
 function status_text(value, fallback) {
 	if (type(value) != 'string' || !length(value) || length(value) > 128 || index(value, '\x00') >= 0 || match(value, /[[:cntrl:]]/))
 		return fallback;
+	// POSIX cntrl does not cover Unicode visual line/direction controls.
+	for (let unsafe in [ '\u0085', '\u061c', '\u200e', '\u200f', '\u2028', '\u2029',
+		'\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u2066', '\u2067', '\u2068', '\u2069' ])
+		if (index(value, unsafe) >= 0)
+			return fallback;
 	return value;
 }
 
@@ -247,9 +252,11 @@ function status_ipv4(value) {
 	return m != null && m[0] == value && int(m[1]) <= 255 && int(m[2]) <= 255 && int(m[3]) <= 255 && int(m[4]) <= 255;
 }
 
-function status_egress(evidence, local_state, now) {
+function status_egress(evidence, local_state, now, wan_state) {
 	if (local_state == 'DOWN')
 		return 'нет подтверждения (служба недоступна)';
+	if (wan_state == 'DOWN')
+		return 'нет подтверждения (канал WAN недоступен)';
 	if (type(evidence) != 'object')
 		return 'не проверен';
 	let source = evidence.source;
@@ -291,25 +298,32 @@ function build_status() {
 	let now = time();
 	let main_state = status_state(data?.vpn?.main?.state);
 	let torrent_state = status_state(data?.torrent?.state);
-	let direct = status_egress(data?.network?.direct_egress, status_state(data?.network?.wan?.state), now);
-	let main = status_egress(data?.vpn?.main?.egress, main_state, now);
-	let torrent = status_egress(data?.torrent?.egress, torrent_state, now);
+	let wan_state = status_state(data?.network?.wan?.state);
+	let main_process = status_state(data?.vpn?.main?.xray_process);
+	let torrent_process = status_state(data?.torrent?.xray_process);
+	let main_local = main_process == 'DOWN' || main_state == 'DOWN' ? 'DOWN' : main_process;
+	let torrent_local = torrent_process == 'DOWN' || torrent_state == 'DOWN' ? 'DOWN' : torrent_process;
+	let direct = status_egress(data?.network?.direct_egress, 'UNKNOWN', now, wan_state);
+	let main = status_egress(data?.vpn?.main?.egress, main_local, now, wan_state);
+	let torrent = status_egress(data?.torrent?.egress, torrent_local, now, wan_state);
 	let main_node = status_text(data?.vpn?.main?.configured_node?.name, 'неизвестен');
 	let torrent_node = status_text(data?.torrent?.configured_node?.name, 'неизвестен');
 	let updated = status_text(data?.generated_at?.local, 'неизвестно');
 
 	return `🏠 CUDY Home Gateway
+🕒 Данные статуса: ${updated}
+Возраст проверок — на момент обновления сообщения.
 
-🌐 Канал провайдера (WAN): ${status_state(data?.network?.wan?.state)}
+🌐 Канал провайдера (WAN): ${wan_state}
 Выход WAN: ${direct}
 🌍 DNS роутера: ${status_state(data?.dns?.state)}
 
-🛡 Служба MAIN VPN: ${main_state}
-Узел MAIN: ${main_node}
+🛡 Служба MAIN VPN: ${main_process}
+Настроенный узел MAIN: ${main_node}
 Выход MAIN: ${main}
 
-⬇️ Служба Torrent: ${torrent_state}
-Узел Torrent: ${torrent_node}
+⬇️ Служба Torrent: ${torrent_process}
+Настроенный узел Torrent: ${torrent_node}
 Выход Torrent: ${torrent}
 
 📱 REDMI
@@ -320,8 +334,7 @@ Kill Switch: ${status_state(data?.redmi?.kill_switch?.state)}
 🖥 ASATA (устройство/правила): ${status_state(data?.asata?.state)}
 🔗 Служба Tailscale: ${status_state(data?.tailscale?.state)}
 
-🕒 Данные статуса: ${updated}
-Возраст внешних проверок указан выше.
+Для актуальных данных нажмите «Обновить статус».
 Версия: ${status_text(data?.gateway_version, 'unknown')}`;
 }
 

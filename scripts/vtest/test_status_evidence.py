@@ -49,10 +49,10 @@ else: sys.exit(97)
                     generated_at=dict(epoch=now, local='2026-11-18 12:00:00 MSK'),
                     network=dict(wan=dict(state='OK'), direct_egress=dict(state='UNKNOWN')),
                     dns=dict(state='OK'),
-                    vpn=dict(main=dict(state='OK', configured_node=dict(name='MAIN TEST'),
+                    vpn=dict(main=dict(state='OK', xray_process='OK', configured_node=dict(name='MAIN TEST'),
                                        egress=dict(state='OK', ipv4='203.0.113.4',
                                                    source='live_probe', checked_at=now-2))),
-                    torrent=dict(state='OK', egress=dict(state='UNKNOWN')),
+                    torrent=dict(state='OK', xray_process='OK', egress=dict(state='UNKNOWN')),
                     redmi=dict(state='OK', xray_process='OK', routing_policy=dict(state='OK'),
                                kill_switch=dict(state='OK'), egress=dict(state='UNKNOWN')))
 
@@ -148,7 +148,7 @@ else: sys.exit(97)
         self.assertNotIn('MISLEADING', text)
 
     def test_control_characters_in_node_names_are_not_forwarded(self):
-        for control in ('\n', '\x00'):
+        for control in ('\n', '\x00', '\u0085', '\u2028', '\u2029', '\u202e', '\u2066'):
             with self.subTest(control=repr(control)):
                 data = self.fixture()
                 data['vpn']['main']['configured_node']['name'] = 'PRIVATE' + control + 'NODE'
@@ -165,6 +165,35 @@ else: sys.exit(97)
 
     def test_nonobject_payload_is_unavailable(self):
         self.assertEqual(self.render(True), 'Статус временно недоступен.')
+
+    def test_service_labels_use_process_state_not_aggregate_health(self):
+        data = self.fixture()
+        data['vpn']['main']['state'] = 'DEGRADED'
+        data['torrent']['state'] = 'DEGRADED'
+        text = self.render(data)
+        self.assertIn('Служба MAIN VPN: OK', text)
+        self.assertIn('Служба Torrent: OK', text)
+
+    def test_explicit_process_down_vetoes_aggregate_ok(self):
+        data = self.fixture()
+        data['vpn']['main']['xray_process'] = 'DOWN'
+        text = self.render(data)
+        self.assertIn('Служба MAIN VPN: DOWN', text)
+        self.assertIn('Выход MAIN: нет подтверждения (служба недоступна)', text)
+        self.assertNotIn('203.0.113.4', text)
+
+    def test_wan_down_does_not_present_recent_cache_as_current_access(self):
+        data = self.fixture()
+        data['network']['wan']['state'] = 'DOWN'
+        data['vpn']['main']['egress']['source'] = 'cache'
+        text = self.render(data)
+        self.assertIn('Выход MAIN: нет подтверждения (канал WAN недоступен)', text)
+        self.assertNotIn('203.0.113.4', text)
+
+    def test_node_is_configured_and_ages_are_snapshot_relative(self):
+        text = self.render(self.fixture())
+        self.assertIn('Настроенный узел MAIN: MAIN TEST', text)
+        self.assertIn('Возраст проверок — на момент обновления сообщения.', text)
 
     def test_unauthorized_message_does_not_collect_status(self):
         self.render(self.fixture(), authorized=False)

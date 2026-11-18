@@ -33,11 +33,13 @@ Files: scripts/vtest/test_status_evidence.py.
 Files: src/usr/lib/home-gateway/telegram-poller.uc, docs/TELEGRAM.md.
 - [x] Реализовать typed/bounded state, node/IP и timestamp presentation.
 - [x] Отображать scope/freshness/local failures, сохранить navigation.
-- [x] Запустить новые и существующие poller/navigation/auth tests; GREEN (48/48).
+- [x] Запустить новые и существующие poller/navigation/auth tests; GREEN (52/52).
 
 ## Task 3: Review и проверяемый source checkpoint
 
-- [ ] Независимое ревью всего diff, исправление существенных замечаний с regressions.
+- [x] Независимое ревью всего diff; закрыты замечания по dedicated process state,
+      WAN DOWN, Unicode line/bidi controls, configured node и snapshot-relative age.
+      Регрессии воспроизведены RED, затем полный набор 52/52 GREEN.
 - [ ] Проверить whitespace, LF, runtime delta и CI; открыть отдельный draft PR.
 - [ ] Отдельно зафиксировать, что установка на текущий d2039b6 требует нового
       проверенного update path и не покрыта прошлым owner kit.
