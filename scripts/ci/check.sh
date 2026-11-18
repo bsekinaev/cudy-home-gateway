@@ -128,6 +128,10 @@ python3 -m unittest discover -s scripts/openwrt -p 'test_*.py' -v ||
     fail 'Isolated VM report integrity contracts'
 pass 'Isolated VM report integrity contracts'
 
+python3 -m unittest discover -s scripts/owner_series -p 'test_*.py' -v ||
+    fail 'Owner series archive and bootstrap source boundaries'
+pass 'Owner series archive and bootstrap source boundaries'
+
 # Ensure public runtime never contains universal remote shell primitives.
 if git grep -n -I -E \
     -- '/exec|gateway[[:space:]]+exec|shell-console|arbitrary[[:space:]]+uci' \
