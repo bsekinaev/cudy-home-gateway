@@ -48,7 +48,7 @@ class BuildTests(unittest.TestCase):
             source = ROOT / 'scripts/owner_series' / name
             if source.exists():
                 shutil.copyfile(source, cls.repo / 'scripts/owner_series' / name)
-        for name in ('protocol.uc', 'engine.uc', 'watch.uc', 'boot.init', 'owner.ps1'):
+        for name in ('protocol.uc', 'state.uc', 'engine.uc', 'watch.uc', 'boot.init', 'owner.ps1'):
             (cls.repo / 'scripts/owner_series' / name).write_bytes(b'HOST PACKAGING FIXTURE ONLY\n')
         (cls.repo / 'scripts/owner_series/boot.init').chmod(0o755)
         git(cls.repo, 'add', 'scripts/owner_series')

@@ -51,7 +51,7 @@ function strict_json(raw,why) {
         need(false,why);
     }
     function value(depth) {
-        need(depth<=16 && ++nodes<=8192,why);whitespace();
+        need(depth<=16 && ++nodes<=32768,why);whitespace();
         let c=substr(raw,position,1);
         if(c=='{') {
             position++;whitespace();let seen={};
@@ -75,6 +75,8 @@ function strict_json(raw,why) {
     need(type(raw)=='string',why);value(0);whitespace();need(position==length(raw),why);
     try { return json(raw); }catch(e){need(false,why);}
 }
+
+export function decode_record(raw,why) { return strict_json(raw,why??'RECORD_JSON'); };
 
 export function open_protocol(root) {
     root??='';
@@ -173,6 +175,96 @@ export function open_protocol(root) {
         }
         return {status:'VERIFIED',scope:root==''?'TARGET':'TEST_FS_ONLY',profile,boot_id:boot,
             total_kib:+total[1],available_kib:+available[1]};
+    }
+    function package(input) {
+        need(same_keys(input,['kit','manifest_sha256']) && canonical(input.kit) && hash(input.manifest_sha256),'PACKAGE_ARGUMENTS');
+        let kit=root+input.kit;checked(kit,'directory',0700,0);
+        need(digest(kit+'/manifest.json',0600,65536)==input.manifest_sha256,'PACKAGE_MANIFEST_PIN');
+        let m=strict_json(read(kit+'/manifest.json',0600,65536),'PACKAGE_JSON');
+        need(same_keys(m,['format','profile','production_apply','source_commit','baseline_commit','source_fixture',
+            'parent','bootstrap','inventories','changed','controls','files']) && m.format=='HG_OWNER_UPDATE_V2' &&
+            type(m.source_commit)=='string' && match(m.source_commit,/^[0-9a-f]{40}$/) &&
+            type(m.baseline_commit)=='string' && match(m.baseline_commit,/^[0-9a-f]{40}$/) &&
+            type(m.source_fixture)=='bool','PACKAGE_FORMAT');
+        let owner=m.profile=='OWNER_MANUAL' && m.production_apply==true && m.source_fixture==false;
+        need(owner || (m.profile=='VM_ONLY' && m.production_apply==false),'PACKAGE_PROFILE');
+        let expected={'protocol.uc':0600,'state.uc':0600,'engine.uc':0600,'watch.uc':0600,'boot.init':0755,'owner.ps1':0600,
+            'baseline.sha256':0600,'candidate.sha256':0600,'parent.json':0600,'bootstrap.tar.gz':0600};
+        if(owner)expected['acceptance.json']=0600;
+        need(same_keys(m.inventories,['baseline','candidate']),'PACKAGE_INVENTORY');
+        for(let name in ['baseline','candidate']) {
+            need(same_keys(m.inventories[name],PATHS),'PACKAGE_INVENTORY');
+            for(let path in PATHS) {
+                need(hash(m.inventories[name][path]),'PACKAGE_INVENTORY');
+                expected[name+'/'+path]=index(PATHS,path)<3?0755:0644;
+            }
+        }
+        need(type(m.files)=='array' && length(m.files)==length(keys(expected)),'PACKAGE_INVENTORY');
+        let seen={};
+        for(let f in m.files) {
+            need(same_keys(f,['path','mode','size','sha256']) && type(f.path)=='string' && expected[f.path]!=null &&
+                !seen[f.path] && type(f.mode)=='int' && f.mode==expected[f.path] && type(f.size)=='int' &&
+                f.size>=0 && f.size<=262144 && hash(f.sha256),'PACKAGE_INVENTORY');seen[f.path]=true;
+            let st=checked(kit+'/'+f.path,'file',f.mode,262144);
+            need(st.size==f.size && digest(kit+'/'+f.path,f.mode,262144)==f.sha256,'PACKAGE_FILE_PIN');
+        }
+        function walk(path,prefix) {
+            checked(path,'directory',0700,0);let names=fs.lsdir(path);need(names!=null && length(names)<=64,'PACKAGE_DIRECTORY');
+            for(let name in names) {
+                let rel=prefix?prefix+'/'+name:name;
+                need(rel=='manifest.json' || expected[rel]!=null || length(filter(keys(expected),n=>index(n,rel+'/')==0))>0,'PACKAGE_UNKNOWN');
+                if(fs.lstat(path+'/'+name)?.type=='directory')walk(path+'/'+name,rel);
+                else need(rel=='manifest.json' || seen[rel],'PACKAGE_UNKNOWN');
+            }
+        }
+        walk(kit,'');
+        let changed=[];
+        for(let path in PATHS) {
+            if(m.inventories.baseline[path]!=m.inventories.candidate[path])push(changed,path);
+            for(let name in ['baseline','candidate'])need(digest(kit+'/'+name+'/'+path,expected[name+'/'+path],262144)==m.inventories[name][path],'PACKAGE_RUNTIME_PIN');
+        }
+        let allowed=map(['telegram-poller.uc','dns.sh','health.sh','redmi.sh','status.sh'],n=>'usr/lib/home-gateway/'+n);
+        need(type(m.changed)=='array' && length(changed)>0 && join('\n',m.changed)==join('\n',changed) &&
+            length(filter(changed,p=>index(allowed,p)>=0))==length(changed),'PACKAGE_DELTA');
+        for(let name in ['baseline','candidate']) {
+            let sums=join('',map(PATHS,p=>m.inventories[name][p]+'  '+p+'\n'));
+            need(read(kit+'/'+name+'.sha256',0600,8192)==sums,'PACKAGE_SUMS');
+        }
+        need(same_keys(m.controls,keys(CONTROL_PINS)),'PACKAGE_CONTROLS');
+        for(let path in keys(CONTROL_PINS))need(m.controls[path]==CONTROL_PINS[path],'PACKAGE_CONTROLS');
+        need(same_keys(m.bootstrap,['archive_sha256','manifest_sha256']) && hash(m.bootstrap.archive_sha256) &&
+            hash(m.bootstrap.manifest_sha256) && digest(kit+'/bootstrap.tar.gz',0600,262144)==m.bootstrap.archive_sha256,'PACKAGE_BOOTSTRAP');
+        let previous=strict_json(read(kit+'/parent.json',0600,65536),'PACKAGE_PARENT');
+        need(same_keys(m.parent,['format','source_commit','manifest_sha256','archive_sha256']) &&
+            hash(m.parent.archive_sha256) && hash(m.parent.manifest_sha256) &&
+            digest(kit+'/parent.json',0600,65536)==m.parent.manifest_sha256 && type(previous)=='object' &&
+            m.parent.source_commit==m.baseline_commit && previous.source_commit==m.baseline_commit &&
+            m.parent.format==previous.format && index(['HG_OWNER_UPDATE_V1','HG_OWNER_UPDATE_V2'],previous.format)>=0 &&
+            same_keys(previous.inventories?.candidate,PATHS) && same_keys(previous.controls,keys(CONTROL_PINS)),'PACKAGE_PARENT');
+        for(let path in PATHS)need(previous.inventories.candidate[path]==m.inventories.baseline[path],'PACKAGE_PARENT');
+        for(let path in keys(CONTROL_PINS))need(previous.controls[path]==CONTROL_PINS[path],'PACKAGE_PARENT');
+        if(previous.format=='HG_OWNER_UPDATE_V1') {
+            need(m.baseline_commit=='d2039b6c62da3aa458f720af1c46fb619aee48dd' &&
+                m.parent.archive_sha256==m.bootstrap.archive_sha256 && m.parent.manifest_sha256==m.bootstrap.manifest_sha256,'PACKAGE_PARENT');
+            if(owner)need(m.bootstrap.archive_sha256=='a39fb710909661d6c03c4f2f73f3b7645017b14a07999c80666de6735b926eed' &&
+                m.bootstrap.manifest_sha256=='430383e3b0bfff46fbee688068cfea4e1446ca4491d6ded83d67ef1179e6b0df','PACKAGE_OWNER_BOOTSTRAP');
+        } else {
+            need(previous.profile==m.profile && previous.production_apply==m.production_apply &&
+                (!previous.source_fixture || m.source_fixture) &&
+                same_keys(previous.bootstrap,['archive_sha256','manifest_sha256']) &&
+                previous.bootstrap.archive_sha256==m.bootstrap.archive_sha256 &&
+                previous.bootstrap.manifest_sha256==m.bootstrap.manifest_sha256,'PACKAGE_PARENT');
+        }
+        if(owner) {
+            need(m.bootstrap.archive_sha256=='a39fb710909661d6c03c4f2f73f3b7645017b14a07999c80666de6735b926eed','PACKAGE_OWNER_BOOTSTRAP');
+            let approval=strict_json(read(kit+'/acceptance.json',0600,262144),'PACKAGE_APPROVAL');
+            need(approval.format=='HG_OWNER_SERIES_ACCEPTANCE_V1' && approval.commit==m.source_commit &&
+                approval.ci_head==m.source_commit && approval.ci_conclusion=='success' &&
+                approval.review_head==m.source_commit && type(approval.review_blockers)=='int' && approval.review_blockers==0 &&
+                approval.report?.commit==m.source_commit && approval.report.scenario=='owner-series' &&
+                approval.report.status=='PASS' && approval.report.failed==0,'PACKAGE_APPROVAL');
+        }
+        return m;
     }
     function runtime(inventory) {
         need(same_keys(inventory,PATHS) && length(filter(values(inventory),hash))==20,'RUNTIME_INVENTORY');
@@ -285,5 +377,5 @@ export function open_protocol(root) {
         }
         return {files:actual.files,status:'VERIFIED'};
     }
-    return {platform,runtime,controls,actions,history,verify_history};
+    return {platform,package,runtime,controls,actions,history,verify_history};
 };

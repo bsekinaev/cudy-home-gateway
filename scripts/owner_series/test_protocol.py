@@ -308,6 +308,69 @@ class ProtocolTests(unittest.TestCase):
         self.put(path.name, json.dumps(record).encode())
         self.assert_refused('platform', 'VM_ONLY', 'BUSYBOX')
 
+    def package_fixture(self):
+        kit = '/tmp/hg-series-test-kit'
+        files = {}
+        baseline = dict(self.inventory)
+        candidate = dict(baseline)
+        for name in ('baseline', 'candidate'):
+            for path in PATHS:
+                data = (self.root / path).read_bytes()
+                if name == 'candidate' and path.endswith('/telegram-poller.uc'):
+                    data += b'// UI fixture\n'
+                    candidate[path] = hashlib.sha256(data).hexdigest()
+                files[name + '/' + path] = (0o755 if path in PATHS[:3] else 0o644, data)
+        for name, hashes in (('baseline', baseline), ('candidate', candidate)):
+            files[name + '.sha256'] = (0o600, ''.join(hashes[p] + '  ' + p + '\n' for p in PATHS).encode())
+        for name in ('protocol.uc', 'state.uc', 'engine.uc', 'watch.uc', 'boot.init', 'owner.ps1'):
+            files[name] = (0o755 if name == 'boot.init' else 0o600, b'HOST PACKAGING FIXTURE\n')
+        controls = {p: hashlib.sha256(d).hexdigest() for p, d in self.control_bytes.items()}
+        previous = dict(format='HG_OWNER_UPDATE_V1', source_commit='d2039b6c62da3aa458f720af1c46fb619aee48dd',
+                        inventories={'candidate': baseline}, controls=controls)
+        parent = json.dumps(previous).encode()
+        files['parent.json'] = (0o600, parent)
+        files['bootstrap.tar.gz'] = (0o600, b'opaque witness; validated by separate anchor inspector\n')
+        manifest = dict(format='HG_OWNER_UPDATE_V2', profile='VM_ONLY', production_apply=False,
+                        source_commit='1' * 40, baseline_commit=previous['source_commit'], source_fixture=True,
+                        inventories=dict(baseline=baseline, candidate=candidate),
+                        changed=['usr/lib/home-gateway/telegram-poller.uc'], controls=controls,
+                        parent=dict(format=previous['format'], source_commit=previous['source_commit'],
+                            manifest_sha256=hashlib.sha256(parent).hexdigest(), archive_sha256=hashlib.sha256(files['bootstrap.tar.gz'][1]).hexdigest()),
+                        bootstrap=dict(archive_sha256=hashlib.sha256(files['bootstrap.tar.gz'][1]).hexdigest(),
+                                       manifest_sha256=hashlib.sha256(parent).hexdigest()),
+                        files=[dict(path=p, mode=m, size=len(d), sha256=hashlib.sha256(d).hexdigest())
+                               for p, (m, d) in sorted(files.items())])
+        for path, (mode, data) in files.items():
+            self.put(kit.lstrip('/') + '/' + path, data, mode)
+        return kit, manifest
+
+    def inspect_package(self, kit, manifest):
+        raw = json.dumps(manifest).encode()
+        self.put(kit.lstrip('/') + '/manifest.json', raw)
+        return self.run_protocol('package', dict(kit=kit, manifest_sha256=hashlib.sha256(raw).hexdigest()))
+
+    def test_package_file_closure_and_parent_identity_are_read_only(self):
+        kit, manifest = self.package_fixture()
+        result = self.inspect_package(kit, manifest)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['source_commit'], '1' * 40)
+        self.put(kit.lstrip('/') + '/unexpected', b'x')
+        result = self.inspect_package(kit, manifest)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('PACKAGE_UNKNOWN', result.stderr)
+
+    def test_package_hash_drift_and_forged_parent_are_refused(self):
+        kit, manifest = self.package_fixture()
+        self.put(kit.lstrip('/') + '/watch.uc', b'corrupt')
+        result = self.inspect_package(kit, manifest)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('PACKAGE_FILE_PIN', result.stderr)
+        self.put(kit.lstrip('/') + '/watch.uc', b'HOST PACKAGING FIXTURE\n')
+        manifest['parent']['source_commit'] = '0' * 40
+        result = self.inspect_package(kit, manifest)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('PACKAGE_PARENT', result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

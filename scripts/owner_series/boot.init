@@ -1,0 +1,35 @@
+#!/bin/sh /etc/rc.common
+# S06 runs synchronously before service/network admission. No supported writer
+# races this publication; the lstat/rename pair is not renameat2(NOREPLACE)
+# against an unscheduled privileged actor creating an empty destination.
+# Only reconstruct a PID-less exclusion fence; explicit recovery owns all writes.
+START=06
+STOP=06
+start() {
+    local root=/etc/home-gateway-owner-series lock=/tmp/home-gateway-deploy.lock active pin staged valid=1
+    [ -e "$root/active" ] || [ -L "$root/active" ] || return 0
+    [ ! -e "$lock" ] && [ ! -L "$lock" ] || return 0
+    [ -d "$root" ] && [ ! -L "$root" ] && [ "$(stat -c '%u:%g:%a' "$root")" = '0:0:700' ] || valid=0
+    [ -f "$root/active" ] && [ ! -L "$root/active" ] && [ "$(stat -c '%u:%g:%a:%h:%s' "$root/active")" = '0:0:600:1:36' ] || valid=0
+    active=$(cat "$root/active" 2>/dev/null)
+    printf '%s' "$active" | grep -Eq '^tx\.[0-9a-f]{32}$' || valid=0
+    if [ "$valid" = 1 ]; then
+        [ -d "$root/generations" ] && [ ! -L "$root/generations" ] && [ "$(stat -c '%u:%g:%a' "$root/generations")" = '0:0:700' ] || valid=0
+        [ -d "$root/generations/$active" ] && [ ! -L "$root/generations/$active" ] && [ "$(stat -c '%u:%g:%a' "$root/generations/$active")" = '0:0:700' ] || valid=0
+        [ -f "$root/generations/$active/kit-pin" ] && [ ! -L "$root/generations/$active/kit-pin" ] && [ "$(stat -c '%u:%g:%a:%h:%s' "$root/generations/$active/kit-pin")" = '0:0:600:1:65' ] || valid=0
+        pin=$(cat "$root/generations/$active/kit-pin" 2>/dev/null)
+        printf '%s' "$pin" | grep -Eq '^[0-9a-f]{64}$' || valid=0
+    fi
+    umask 077
+    staged=$(mktemp -d /tmp/home-gateway-series-boot.XXXXXX) || return 1
+    if [ "$valid" = 1 ]; then
+        printf '%s\n' "$pin" > "$staged/owner-series" || return 1
+        printf '%s\n' "$active" > "$staged/operation" || return 1
+    else
+        printf '%s\n' 'HG_OWNER_SERIES_UNKNOWN_V1' > "$staged/unknown" || return 1
+    fi
+    sync
+    /usr/bin/ucode -e 'import * as fs from "fs"; if(fs.lstat(ARGV[1])!=null || !fs.rename(ARGV[0],ARGV[1]))exit(1);' -- "$staged" "$lock" || return 1
+    sync
+    return 0
+}

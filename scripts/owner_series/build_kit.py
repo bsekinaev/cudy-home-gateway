@@ -16,7 +16,7 @@ from archive import read_archive, MAX_ARCHIVE
 from parent import ACCEPTED, ORIGINAL, PATHS, CONTROLS, digest, git, strict_json, validate_parent
 
 ROOT = Path(__file__).resolve().parents[2]
-HELPERS = {'protocol.uc': 0o600, 'engine.uc': 0o600, 'watch.uc': 0o600,
+HELPERS = {'protocol.uc': 0o600, 'state.uc': 0o600, 'engine.uc': 0o600, 'watch.uc': 0o600,
            'boot.init': 0o755, 'owner.ps1': 0o600}
 ALLOWED = {'usr/lib/home-gateway/' + name for name in
            ('telegram-poller.uc', 'dns.sh', 'health.sh', 'redmi.sh', 'status.sh')}
