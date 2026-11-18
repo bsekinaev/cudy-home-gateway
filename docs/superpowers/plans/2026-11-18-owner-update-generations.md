@@ -44,6 +44,15 @@ Expected: all boundaries pass; V1 builder tests still pass unchanged.
 
 ## Task 3: Read-only target protocol
 
+Status: native inspection primitives implemented at fb000ed; 23 native ucode
+tests PASS on synthetic filesystems, including unchanged-content/mode/mtime
+assertions on both acceptance and refusal. Independent review found legacy
+0700 history controls and environment assumptions; reproduced RED and fixed.
+Task remains open: compose package/parent receipt authentication, full worker
+proof, space budgeting and exclusion into a fail-closed public preflight.
+History format decision: each operation's `history.json` is private mode0600
+and may reach 2 MiB; other historical files retain the 262144-byte bound.
+
 Files: scripts/owner_series/protocol.uc, engine.uc, native protocol tests.
 Consumes Task 2 manifest. Validate full live parent/control/history inventories,
 hardware/profile, action policy/state without actions show, worker identities,

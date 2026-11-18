@@ -260,7 +260,9 @@ export function open_protocol(root) {
                 }
             } else {
                 need(st.type=='file' && index([0600,0644,0700,0755],st.mode)>=0,'HISTORY_METADATA');
-                push(entries,{path,type:'file',mode:st.mode,size:st.size,sha256:digest(full,st.mode,262144)});count++;
+                let inventory=match(path,/^\/etc\/home-gateway-owner-series\/generations\/tx\.[0-9a-f]{32}\/history\.json$/)!=null;
+                if(inventory)need(st.mode==0600,'HISTORY_METADATA');
+                push(entries,{path,type:'file',mode:st.mode,size:st.size,sha256:digest(full,st.mode,inventory?2097152:262144)});count++;
             }
         }
         for(let path in sort([...roots]))walk(path,0);

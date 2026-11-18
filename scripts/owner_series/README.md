@@ -6,7 +6,23 @@ updates. It does not yet provide a usable router updater or owner release.
 - `archive.py`: bounded, non-extracting gzip/USTAR validation.
 - `parent.py`: authenticate the immutable d2039b6 V1 bootstrap against Git.
 - `build_kit.py`: VM_ONLY V2 package builder and flat parent witness validation.
+- `protocol.uc`: native read-only platform, 20-file runtime, 14-control,
+  action-state and closed historical inventory inspection primitives.
 - `test_*.py`: hostile archive tests and committed host packaging fixtures.
+
+The native module has no public preflight-success entrypoint. Package and parent
+receipt authentication, worker checks, free-space budgeting and writer exclusion
+must be composed before such an entrypoint can succeed. Actions inspection never
+calls `actions show`, expires pending records or recovers executing records. An
+existing actions lock is held while parsing; an absent lock is not created by a
+read-only call. The future writer must create/acquire it and repeat inspection
+under exclusion. Unsupported action path overrides are refused explicitly.
+
+Platform tests use a private, explicitly marked synthetic filesystem and report
+`TEST_FS_ONLY`; they do not count as procd/crash/reboot acceptance. Production
+orchestration must always use the real root and verify the running workers'
+environment independently. Historical inventory stores hashes and metadata only;
+it neither copies private client state nor restores anything.
 
 The candidate contains all 20 baseline/candidate runtime paths. Only observer/UI
 leaves may differ. Migration/deploy controls retain their original 14 hashes.

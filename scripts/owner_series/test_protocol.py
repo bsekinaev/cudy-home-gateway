@@ -216,6 +216,18 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(evidence['files'], 2)
         self.assertEqual(self.run_protocol('verify_history', evidence).returncode, 0)
 
+    def test_history_inventory_files_can_grow_to_the_documented_budget(self):
+        path = 'etc/home-gateway-owner-series/generations/tx.' + 'a' * 32
+        self.put(path + '/history.json', b'{}' + b' ' * 262143)
+        result = self.run_protocol('history', ['/' + path])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['files'], 1)
+        self.put(path + '/history.json', b'{}' + b' ' * 2097150)
+        result = self.run_protocol('history', ['/' + path])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.put(path + '/history.json', b'{}' + b' ' * 2097151)
+        self.assert_refused('history', ['/' + path], 'SIZE')
+
     def test_action_location_overrides_are_refused_explicitly(self):
         enabled = self.put('override-policy', b'1\n')
         for name in ('HG_ACTION_POLICY_FILE', 'HG_ACTION_STATE_DIR', 'HG_ACTION_RUNTIME_DIR'):
