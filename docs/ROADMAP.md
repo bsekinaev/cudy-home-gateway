@@ -24,11 +24,12 @@ Owner incremental update `d2039b6c62da3aa458f720af1c46fb619aee48dd`
 5. vtest runner, Safe Actions, MAIN transactions и backup — отдельными milestones
    по существующим safety gates. Автоматическая смена MAIN не добавляется.
 
-Текущий этап пункта 2: реализованы строгая проверка gzip/USTAR без распаковки
-и аутентификация исходного V1 parent d2039b6 по полному Git inventory.
-19 boundary tests PASS, независимый review без блокеров. Это ещё не V2 updater:
-сборка последовательных поколений, target protocol, транзакции/rollback,
-Windows runner и native crash/reboot suite остаются в работе.
+Текущий этап пункта 2: реализованы строгая проверка gzip/USTAR без распаковки,
+аутентификация исходного V1 parent d2039b6 по полному Git inventory и VM_ONLY
+сборщик последовательных поколений с постоянным bootstrap и flat parent witness.
+33 boundary/packaging tests PASS; два замечания независимого review воспроизведены
+и исправлены. Это ещё не готовый V2 updater: target protocol, транзакции/rollback,
+Windows runner, native crash/reboot suite и owner acceptance gate остаются в работе.
 [План реализации](superpowers/plans/2026-11-18-owner-update-generations.md).
 
 ## Предыдущая очередь — 21.10.2026 (история)

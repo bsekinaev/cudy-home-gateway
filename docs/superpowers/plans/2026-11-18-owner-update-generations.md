@@ -21,7 +21,9 @@ Commit the archive boundary with passing tests.
 
 Status: V1 bootstrap authentication implemented at 8361835; 9 parent tests PASS.
 Actual accepted OWNER_MANUAL archive also validated against the pinned manifest
-and Git source. V2 builder and subsequent-generation parent validation pending.
+and Git source. VM_ONLY V2 builder and subsequent-generation parent validation
+implemented at d684f96. Owner acceptance/output gate remains intentionally closed
+until Task 6; native installation/rollback is not proven by host packaging tests.
 
 Implementation order clarification: develop the complete VM_ONLY packaging
 contract using committed host fixtures for controller files before those files
