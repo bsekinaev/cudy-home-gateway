@@ -7,6 +7,8 @@ V1 package, runtime controls, evidence and guards remain immutable.
 
 ## Task 1: Strict archive boundary
 
+Status: implemented at 8361835; 10 archive tests PASS, independently reviewed.
+
 Files: scripts/owner_series/archive.py, test_archive.py.
 Interface: read_archive(raw, expected_sha256) returns path -> (mode, bytes).
 Validate digest before decompression, compressed/expanded budgets, strict USTAR,
@@ -16,6 +18,10 @@ Expected: valid deterministic archive accepted; malformed variants rejected.
 Commit the archive boundary with passing tests.
 
 ## Task 2: Source-bound package and parent lineage
+
+Status: V1 bootstrap authentication implemented at 8361835; 9 parent tests PASS.
+Actual accepted OWNER_MANUAL archive also validated against the pinned manifest
+and Git source. V2 builder and subsequent-generation parent validation pending.
 
 Files: scripts/owner_series/build_kit.py, test_build.py.
 Consumes Task 1 validated parent package; produces V2 manifest and deterministic

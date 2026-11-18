@@ -5,7 +5,9 @@
 Owner incremental update `d2039b6c62da3aa458f720af1c46fb619aee48dd`
 установлен: COMMITTED, отдельный Verify PASS, selftest 62/0, doctor 11/0/0.
 [LIVE evidence](reports/HGDEPLOY2_OWNER_UPDATE_20261118_LIVE.md).
-Пользовательская Telegram/network acceptance и soak ещё ожидаются.
+Владелец подтвердил ответ /status и интернет на компьютере и REDMI:
+[client acceptance](reports/HGDEPLOY2_OWNER_UPDATE_20261118_CLIENT_ACCEPTANCE.md).
+Расширенные сценарии Telegram и soak ещё ожидаются.
 
 Владелец выбрал Telegram основным пультом; веб-интерфейс пока не нужен.
 Последовательность: достоверный статус → полезные уведомления → удобная главная
@@ -21,6 +23,13 @@ Owner incremental update `d2039b6c62da3aa458f720af1c46fb619aee48dd`
 4. Наблюдение 24–72 часа; сводка инцидентов и качество связи.
 5. vtest runner, Safe Actions, MAIN transactions и backup — отдельными milestones
    по существующим safety gates. Автоматическая смена MAIN не добавляется.
+
+Текущий этап пункта 2: реализованы строгая проверка gzip/USTAR без распаковки
+и аутентификация исходного V1 parent d2039b6 по полному Git inventory.
+19 boundary tests PASS, независимый review без блокеров. Это ещё не V2 updater:
+сборка последовательных поколений, target protocol, транзакции/rollback,
+Windows runner и native crash/reboot suite остаются в работе.
+[План реализации](superpowers/plans/2026-11-18-owner-update-generations.md).
 
 ## Предыдущая очередь — 21.10.2026 (история)
 
