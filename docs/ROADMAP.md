@@ -1,6 +1,28 @@
 # План релизов
 
-## Ближайший milestone — 21.10.2026
+## Ближайшие milestones — 18.11.2026
+
+Owner incremental update `d2039b6c62da3aa458f720af1c46fb619aee48dd`
+установлен: COMMITTED, отдельный Verify PASS, selftest 62/0, doctor 11/0/0.
+[LIVE evidence](reports/HGDEPLOY2_OWNER_UPDATE_20261118_LIVE.md).
+Пользовательская Telegram/network acceptance и soak ещё ожидаются.
+
+Владелец выбрал Telegram основным пультом; веб-интерфейс пока не нужен.
+Последовательность: достоверный статус → полезные уведомления → удобная главная
+→ лёгкая диагностика → история качества → безопасное управление/восстановление.
+[Первый выпуск и границы](superpowers/specs/2026-11-18-internet-observability-design.md).
+
+1. Честно обозначить scope/freshness уже имеющихся доказательств в Telegram;
+   REDMI process/policy не выдавать за подтверждение клиентского интернета.
+2. Подготовить проверенный путь последующего обновления установленного d2039b6
+   и других модулей. Прежний immutable kit повторно не применяется.
+3. Добавить bounded DNS observations REDMI с обнаружением актуального runtime;
+   затем принять уведомления о сбое/восстановлении, anti-noise и mute.
+4. Наблюдение 24–72 часа; сводка инцидентов и качество связи.
+5. vtest runner, Safe Actions, MAIN transactions и backup — отдельными milestones
+   по существующим safety gates. Автоматическая смена MAIN не добавляется.
+
+## Предыдущая очередь — 21.10.2026 (история)
 
 HGDEPLOY2 production migration завершена: RC-B 20261020.2, source
 `62592457237e7f026786c086d1ca6fdd4b6c095d`, COMMITTED / Owner Verify PASS.

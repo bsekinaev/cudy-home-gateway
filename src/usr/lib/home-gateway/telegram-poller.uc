@@ -230,6 +230,46 @@ function value_or(value, fallback) {
 	return value ?? fallback;
 }
 
+function status_state(value) {
+	return index([ 'OK', 'DEGRADED', 'DOWN', 'UNKNOWN', 'MAINTENANCE' ], value) >= 0 ? value : 'UNKNOWN';
+}
+
+function status_text(value, fallback) {
+	if (type(value) != 'string' || !length(value) || length(value) > 128 || index(value, '\x00') >= 0 || match(value, /[[:cntrl:]]/))
+		return fallback;
+	return value;
+}
+
+function status_ipv4(value) {
+	if (type(value) != 'string' || length(value) > 15)
+		return false;
+	let m = match(value, /^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$/);
+	return m != null && m[0] == value && int(m[1]) <= 255 && int(m[2]) <= 255 && int(m[3]) <= 255 && int(m[4]) <= 255;
+}
+
+function status_egress(evidence, local_state, now) {
+	if (local_state == 'DOWN')
+		return 'нет подтверждения (служба недоступна)';
+	if (type(evidence) != 'object')
+		return 'не проверен';
+	let source = evidence.source;
+	if (index([ 'live_probe', 'cache', 'stale_cache' ], source) < 0)
+		return 'не проверен';
+	let stamp = evidence.checked_at;
+	if (type(stamp) != 'int' || stamp <= 0 || stamp > now)
+		return source == 'stale_cache' ? 'нет свежей проверки' : 'не проверен';
+	let age = now - stamp;
+	// UI trust is bounded independently of backend cache configuration.
+	if (source == 'stale_cache' || age > 300)
+		return `нет свежей проверки · ${age} с назад`;
+	if (evidence.state == 'DOWN')
+		return `проверка неуспешна · ${age} с назад`;
+	if (evidence.state != 'OK' || !status_ipv4(evidence.ipv4))
+		return 'не проверен';
+	let label = source == 'cache' ? 'проверен, кэш' : 'проверен';
+	return `${label} · ${age} с назад · IP ${evidence.ipv4}`;
+}
+
 function build_status() {
 	let response = run_gateway([ 'status', '--json' ]);
 
@@ -245,31 +285,44 @@ function build_status() {
 		return 'Статус временно недоступен.';
 	}
 
-	if (data == null)
+	if (type(data) != 'object')
 		return 'Статус временно недоступен.';
 
-	let main_ip = value_or(data?.vpn?.main?.egress?.ipv4, 'n/a');
-	let torrent_ip = value_or(data?.torrent?.egress?.ipv4, 'n/a');
-	let updated = value_or(data?.generated_at?.local, 'n/a');
+	let now = time();
+	let main_state = status_state(data?.vpn?.main?.state);
+	let torrent_state = status_state(data?.torrent?.state);
+	let direct = status_egress(data?.network?.direct_egress, status_state(data?.network?.wan?.state), now);
+	let main = status_egress(data?.vpn?.main?.egress, main_state, now);
+	let torrent = status_egress(data?.torrent?.egress, torrent_state, now);
+	let main_node = status_text(data?.vpn?.main?.configured_node?.name, 'неизвестен');
+	let torrent_node = status_text(data?.torrent?.configured_node?.name, 'неизвестен');
+	let updated = status_text(data?.generated_at?.local, 'неизвестно');
 
 	return `🏠 CUDY Home Gateway
 
-🌐 WAN: ${state(data?.network?.wan?.state)}
-↗️ Direct egress: ${state(data?.network?.direct_egress?.state)}
+🌐 Канал провайдера (WAN): ${status_state(data?.network?.wan?.state)}
+Выход WAN: ${direct}
+🌍 DNS роутера: ${status_state(data?.dns?.state)}
 
-🛡 MAIN VPN: ${state(data?.vpn?.main?.state)}
-MAIN egress: ${main_ip} (${state(data?.vpn?.main?.egress?.state)})
+🛡 Служба MAIN VPN: ${main_state}
+Узел MAIN: ${main_node}
+Выход MAIN: ${main}
 
-⬇️ Torrent: ${state(data?.torrent?.state)}
-Torrent egress: ${torrent_ip} (${state(data?.torrent?.egress?.state)})
+⬇️ Служба Torrent: ${torrent_state}
+Узел Torrent: ${torrent_node}
+Выход Torrent: ${torrent}
 
-📱 Redmi: ${state(data?.redmi?.state)}
-🖥 ASATA: ${state(data?.asata?.state)}
-🔗 Tailscale: ${state(data?.tailscale?.state)}
-🌍 DNS: ${state(data?.dns?.state)}
+📱 REDMI
+Правила: ${status_state(data?.redmi?.routing_policy?.state)} · Xray: ${status_state(data?.redmi?.xray_process)}
+Kill Switch: ${status_state(data?.redmi?.kill_switch?.state)}
+Интернет REDMI: не проверен
 
-🕒 Обновлено: ${updated}
-Версия: ${value_or(data?.gateway_version, 'unknown')}`;
+🖥 ASATA (устройство/правила): ${status_state(data?.asata?.state)}
+🔗 Служба Tailscale: ${status_state(data?.tailscale?.state)}
+
+🕒 Данные статуса: ${updated}
+Возраст внешних проверок указан выше.
+Версия: ${status_text(data?.gateway_version, 'unknown')}`;
 }
 
 function build_vtest() {
