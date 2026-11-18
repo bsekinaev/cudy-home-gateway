@@ -143,7 +143,9 @@ check cut_active_published crash_case active_published
 check cut_quarantined crash_case quarantined
 check cut_before_publication crash_case before_publication
 check cut_staged_runtime crash_case staged_runtime
+check cut_partial_runtime crash_case partial_runtime
 check cut_after_publication crash_case after_publication
+check cut_partial_phase crash_case partial_phase
 check cut_postflight crash_case postflight
 check cut_guard_ready crash_case guard_ready
 check cut_candidate_started crash_case candidate_started
@@ -166,7 +168,10 @@ update=/etc/hg-vm-lab/update-kit
 op=$(cat "$LAB/reboot-operation")
 stage() {
  kit=$1;mode=$2;operation=$3;pin=$(sha256sum "$kit/manifest.json" | cut -d ' ' -f1)
- /usr/bin/ucode "$kit/engine.uc" "$mode" "$kit" "$pin" "$operation"
+ /usr/bin/ucode "$kit/engine.uc" "$mode" "$kit" "$pin" "$operation" > "$LAB/stage-output" 2>&1
+ result=$?;cat "$LAB/stage-output";[ "$result" = 0 ] || return "$result"
+ source=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$kit/manifest.json")
+ grep -qx "OWNER_SERIES_STAGE=$mode RESULT=PASS SOURCE=$source OPERATION=$operation" "$LAB/stage-output"
 }
 check actual_series_reboot sh -c 'test "$(cat /proc/sys/kernel/random/boot_id)" != "$(cat "$1/boot-before")"' -- "$LAB"
 check reboot_no_replay sh -c '[ -e /etc/home-gateway-owner-series/active ] && [ ! -e /tmp/home-gateway-deploy.lock/pid ] && ! /etc/init.d/home-gateway-telegram running'

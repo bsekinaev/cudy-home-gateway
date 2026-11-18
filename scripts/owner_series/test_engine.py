@@ -12,7 +12,7 @@ MODULE = Path(__file__).with_name('engine.uc')
 class EngineTests(unittest.TestCase):
     def describe(self, kind, manifest, selected, operation='tx.' + 'a' * 32):
         self.assertTrue(MODULE.exists(), 'transactional engine missing')
-        code = ('import { describe_operation } from ' + json.dumps(str(MODULE)) + ';'
+        code = ('import { describe_operation } from ' + json.dumps(str(MODULE.with_name('state.uc'))) + ';'
                 'let d=json(ARGV[0]);print(sprintf("%J\\n",describe_operation(d.kind,d.id,d.manifest,d.selected,d.pin)));')
         return subprocess.run(['ucode', '-e', code, '--', json.dumps(dict(kind=kind, id=operation,
             manifest=manifest, selected=selected, pin='f' * 64))], capture_output=True, text=True, timeout=10)
@@ -42,7 +42,7 @@ class EngineTests(unittest.TestCase):
         for operation in ('tx.' + 'a' * 32, '../escape'):
             result = self.describe('APPLY', manifest, selected, operation)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn('OWNER_SERIES_ENGINE_', result.stderr)
+            self.assertIn('OWNER_SERIES_', result.stderr)
 
 
 if __name__ == '__main__':

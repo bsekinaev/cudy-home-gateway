@@ -5,6 +5,23 @@ function need(ok,why){if(!ok)die('OWNER_SERIES_STATE_'+why);}
 function quote(s){return "'"+replace(s,"'","'\\''")+"'";}
 function same(a,b){return a?.inode==b?.inode && a?.dev?.major==b?.dev?.major && a?.dev?.minor==b?.dev?.minor;}
 
+export function describe_operation(kind,id,m,selected,pin) {
+    function opid(value){return type(value)=='string' && match(value,/^tx\.[0-9a-f]{32}$/)!=null;}
+    function txid(value){return type(value)=='string' && match(value,/^tx\.[A-Za-z0-9]{1,32}$/)!=null;}
+    function commit(value){return type(value)=='string' && match(value,/^[0-9a-f]{40}$/)!=null;}
+    need(index(['APPLY','ROLLBACK'],kind)>=0 && opid(id) && type(pin)=='string' && match(pin,/^[0-9a-f]{64}$/),'IDENTITY');
+    need(type(selected)=='object' && txid(selected.transaction) && commit(selected.source) &&
+        (selected.generation=='V1' || opid(selected.generation)) && commit(m.source_commit) && commit(m.baseline_commit),'SELECTION');
+    let apply=kind=='APPLY';
+    need(selected.source==(apply?m.baseline_commit:m.source_commit),'BASELINE_MISMATCH');
+    if(!apply)need(opid(selected.generation) && (selected.parent_generation=='V1' || opid(selected.parent_generation)) &&
+        txid(selected.parent_transaction),'ROLLBACK_PARENT');
+    return {format:'HG_OWNER_SERIES_OPERATION_V1',id,kind,kit_pin:pin,source_commit:m.source_commit,
+        baseline_commit:m.baseline_commit,before_generation:selected.generation,before_transaction:selected.transaction,
+        before_source:selected.source,after_generation:apply?id:selected.parent_generation,
+        after_transaction:apply?id:selected.parent_transaction,after_source:apply?m.source_commit:m.baseline_commit};
+};
+
 export function open_io(root) {
     root??='';open_protocol(root);let owner=root==''?0:fs.lstat(root).uid,group=root==''?0:fs.lstat(root).gid;
     function full(path) {
