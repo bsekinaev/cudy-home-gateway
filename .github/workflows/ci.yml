@@ -103,6 +103,9 @@ jobs:
       - name: Verify owner update candidate release boundaries
         run: python3 -m unittest discover -s scripts/owner_update -p 'test_*.py' -v
 
+      - name: Verify sequential owner update contracts
+        run: python3 -m unittest discover -s scripts/owner_series -p 'test_*.py' -v
+
       # The distribution's minimal BusyBox omits flock/fsync. Run the entire
       # deployment suite on pinned 1.37 with mandatory applet checks instead.
       - name: Deployment, crash recovery and regression on pinned BusyBox 1.37.0
@@ -209,11 +212,11 @@ jobs:
     name: Native crash recovery (${{ matrix.scenario }})
     runs-on: ubuntu-24.04
     # Retirement scenario exercises two full transactions plus SIGKILL/reboot.
-    timeout-minutes: ${{ matrix.scenario == 'owner-update' && 35 || matrix.scenario == 'retirement-reboot' && 20 || 12 }}
+    timeout-minutes: ${{ matrix.scenario == 'owner-series' && 75 || matrix.scenario == 'owner-update' && 35 || 20 }}
     strategy:
       fail-fast: false
       matrix:
-        scenario: [owner-update, retirement-reboot, rc-b-root-cycle, rc-b-crash-apply, rc-b-crash-restore, runtime-crash-apply, runtime-crash-restore, runtime-crash-phase, rc-a-package, control-cycle, service-cycle]
+        scenario: [owner-series, owner-update, retirement-reboot, rc-b-root-cycle, rc-b-crash-apply, rc-b-crash-restore, runtime-crash-apply, runtime-crash-restore, runtime-crash-phase, rc-a-package, control-cycle, service-cycle]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -247,6 +250,23 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: native-crash-${{ matrix.scenario }}-${{ env.HG_CANDIDATE_SHA }}
+          name: native-crash-${{ matrix.scenario }}-${{ env.HG_CANDIDATE_SHA }}-${{ github.run_attempt }}
           path: vm-crash-report.json
           retention-days: 30
+
+  owner-windows:
+    name: Owner installer on Windows PowerShell 5.1
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.HG_CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact candidate checkout
+        shell: powershell
+        run: if ((git rev-parse HEAD) -ne $env:HG_CANDIDATE_SHA) { throw 'Wrong candidate source' }
+      - name: Test owner runner without router access
+        shell: powershell
+        run: python -m unittest discover -s scripts/owner_series -p 'test_owner*.py' -v

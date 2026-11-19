@@ -528,6 +528,9 @@ function validate_intent() {
     }
 }
 function recover() {
+    // Recover may complete an interrupted operation, never invent a new one.
+    if(!io.exists(J))need(io.exists(LOCK) && line(LOCK+'/owner-series',65)==pin &&
+        line(LOCK+'/operation',36)==id,'NO_OWNED_OPERATION');
     if(io.exists(J)) {
         let kind=null;
         if(io.exists(J+'/intent.json')) {

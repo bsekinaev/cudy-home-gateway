@@ -96,6 +96,7 @@ stage() {
  grep -qx "OWNER_SERIES_STAGE=$mode RESULT=PASS SOURCE=$source OPERATION=$operation" "$LAB/stage-output"
 }
 new_id; a1=$op
+check unused_recovery_refused refused stage "$LAB/a" recover "$a1"
 check series_preflight stage "$LAB/a" preflight "$a1"
 check series_apply_a stage "$LAB/a" apply "$a1"
 check series_verify_a stage "$LAB/a" verify "$a1"
@@ -119,11 +120,52 @@ new_id; a2=$op
 check apply_after_full_rollback_chain stage "$LAB/a" apply "$a2"
 new_id
 check restore_v1_for_crash_matrix stage "$LAB/a" rollback "$op"
+guardian_admission_case() {
+ # Reuse the interrupted operation: only the disposable VM's lease is edited.
+ # A live unrelated PID must never authenticate a stale process start time.
+ sleep 180 & unrelated=$!
+ boot=$(cat /proc/sys/kernel/random/boot_id)
+ born=$(/usr/bin/ucode -e 'import * as fs from "fs";let s=fs.readfile("/proc/"+ARGV[0]+"/stat");print(split(trim(substr(s,rindex(s,") ")+2)),/\s+/)[19]);' -- "$unrelated")
+ lease=/tmp/home-gateway-deploy.lock
+ printf 'HG_OWNER_PROCESS_V1 %s %s %s\n' "$boot" "$unrelated" "$born" > "$lease/owner-process.new"
+ chmod 600 "$lease/owner-process.new";mv "$lease/owner-process.new" "$lease/owner-process"
+ printf '%s\n' "$unrelated" > "$lease/owner-pid"
+ printf '%s\n' "$unrelated" > "$lease/pid"
+ guard=$(mktemp -d /tmp/home-gateway-series-guard.XXXXXX)
+ /usr/bin/ucode "$LAB/a/watch.uc" "$LAB/a" "$pin" "$interrupted" "HG_OWNER_PROCESS_V1 $boot $unrelated $born" "$guard" > "$guard.log" 2>&1 &
+ watcher=$!;tries=0
+ until [ -f "$guard/ready" ];do tries=$((tries+1));[ "$tries" -le 30 ] || return 1;sleep 1;done
+ mkdir -p "$LAB/delayed-init"
+ cat > "$LAB/delayed-init/home-gateway-telegram" <<'DELAYED_INIT'
+. /etc/init.d/home-gateway-telegram
+hg_runtime_admitted() {
+ /bin/sh /usr/libexec/home-gateway-deploy/migration-admission.sh --telegram-start --held-telegram-guard || return 1
+ touch /etc/hg-vm-lab/owner-series/manual-admitted
+ while [ ! -e /etc/hg-vm-lab/owner-series/manual-release ];do sleep 1;done
+}
+DELAYED_INIT
+ timeout -k 2 90 /bin/sh /etc/rc.common "$LAB/delayed-init/home-gateway-telegram" start > "$LAB/manual-start.log" 2>&1 &
+ manual=$!;tries=0
+ until [ -e "$LAB/manual-admitted" ];do tries=$((tries+1));[ "$tries" -le 25 ] || return 1;sleep 1;done
+ printf 'HG_OWNER_PROCESS_V1 %s %s %s\n' "$boot" "$unrelated" "$((born-1))" > "$lease/owner-process.new"
+ chmod 600 "$lease/owner-process.new";mv "$lease/owner-process.new" "$lease/owner-process"
+ sleep 3
+ # The already admitted start still owns FD8; guardian must drain it first.
+ [ -f "$lease/pid" ] && [ ! -e "$guard/done" ] || return 1
+ touch "$LAB/manual-release";wait "$manual" || return 1
+ tries=0
+ until [ -e "$guard/done" ];do tries=$((tries+1));[ "$tries" -le 30 ] || return 1;sleep 1;done
+ wait "$watcher" || return 1
+ kill -0 "$unrelated" && [ ! -e "$lease/pid" ] &&
+ ! /etc/init.d/home-gateway-telegram running && refused /etc/init.d/home-gateway-telegram start || return 1
+ kill "$unrelated"
+}
 crash_case() {
  point=$1;new_id; interrupted=$op
  pin=$(sha256sum "$LAB/a/manifest.json" | cut -d ' ' -f1)
  HG_SERIES_VM_KILL_AT="$point" /usr/bin/ucode "$LAB/a/engine.uc" apply "$LAB/a" "$pin" "$interrupted" > "$LAB/crash-output" 2>&1
  killed=$?;cat "$LAB/crash-output";[ "$killed" -ne 0 ] || return 1
+ if [ "$point" = candidate_started ];then guardian_admission_case || return 1;fi
  if [ "$point" = preparing ];then
    head -c 32 "/etc/home-gateway-owner-series/generations/$interrupted/history.json" > "$LAB/history-prefix"
    cp "$LAB/history-prefix" "/etc/home-gateway-owner-series/generations/$interrupted/history.json"
