@@ -1,4 +1,5 @@
 // Owner-controlled coordinator. No automatic installation or recovery at boot.
+'use strict';
 import * as fs from 'fs';
 import { open_protocol, decode_record } from './protocol.uc';
 import { open_io, describe_operation, validate_operation_intent, valid_process_prefix } from './state.uc';
@@ -439,6 +440,43 @@ function point_current(generation) {
     if(generation=='V1') {if(io.exists(SERIES+'/current')){raw_pointer(SERIES+'/current',allowed);io.unlink(SERIES+'/current');}}
     else record(SERIES+'/current',generation+'\n',map(allowed,v=>v+'\n'));
 }
+function validate_backup(partial,override) {
+    let apply=intent.kind=='APPLY',base=override??(apply?D+'/'+id:J+'/before-runtime');
+    if(!io.exists(base)){need(partial,'MISSING_BACKUP');return;}
+    let values={},modes={};
+    if(apply) {
+        values={commit:m.source_commit+'\n','inventory-version':'HGDEPLOY2\n','was-running':'1\n',
+            'backup.sha256':io.read(kit+'/baseline.sha256',0600,8192),'new.sha256':io.read(kit+'/candidate.sha256',0600,8192),
+            'preflight.log':'','postflight.log':'','service.log':''};
+        for(let path in keys(values))modes[path]=0600;
+    }
+    for(let path in keys(m.inventories.baseline)) {
+        let rel=(apply?'backup/':'')+path,mode=path=='etc/init.d/home-gateway-telegram'||index(path,'usr/bin/')==0?0755:0644;
+        values[rel]=io.read(kit+'/'+(apply?'baseline':'candidate')+'/'+path,mode,262144);modes[rel]=mode;
+    }
+    let seen={};
+    function walk(path,prefix) {
+        io.check(path,'directory',0700,0);let names=fs.lsdir(path);need(names!=null && length(names)<=64,'BACKUP_INVENTORY');
+        for(let name in names) {
+            let rel=prefix?prefix+'/'+name:name,full=path+'/'+name,st=fs.lstat(full);
+            let known=values[rel]!=null || (apply && index(['phase','phase.new'],rel)>=0);
+            need(known || length(filter(keys(values),p=>index(p,rel+'/')==0))>0,'BACKUP_UNKNOWN');
+            if(st?.type=='directory') {need(!known,'BACKUP_UNKNOWN');walk(full,rel);continue;}
+            seen[rel]=true;
+            if(apply && index(['phase','phase.new'],rel)>=0) {
+                let raw=io.read(full,0600,32),phases=map(['PREPARED','APPLYING','CHECKING','COMMITTED'],v=>v+'\n');
+                need(length(filter(phases,v=>rel=='phase.new'||partial?substr(v,0,length(raw))==raw:v==raw))>0,'BACKUP_PHASE');
+            } else {
+                let raw=io.read(full,modes[rel],262144);
+                need(partial?raw==substr(values[rel],0,length(raw)):raw==values[rel],'BACKUP_DRIFT');
+            }
+        }
+    }
+    walk(base,'');
+    if(!partial) {
+        need(length(filter(keys(values),p=>!seen[p]))==0 && (!apply || seen.phase),'BACKUP_INCOMPLETE');
+    }
+}
 function seal(terminal) {
     journal_layout(J,intent.kind);validate_backup(terminal=='ABORTED');
     if(io.exists(J+'/aborted-transaction'))validate_backup(true,J+'/aborted-transaction');
@@ -487,43 +525,6 @@ function validate_intent() {
         let before=effective(receipt(intent.before_latest,true));
         need(before.generation==intent.before_generation && before.transaction==intent.before_transaction &&
             before.source==intent.before_source,'INTENT_PREDECESSOR');
-    }
-}
-function validate_backup(partial,override) {
-    let apply=intent.kind=='APPLY',base=override??(apply?D+'/'+id:J+'/before-runtime');
-    if(!io.exists(base)){need(partial,'MISSING_BACKUP');return;}
-    let values={},modes={};
-    if(apply) {
-        values={commit:m.source_commit+'\n','inventory-version':'HGDEPLOY2\n','was-running':'1\n',
-            'backup.sha256':io.read(kit+'/baseline.sha256',0600,8192),'new.sha256':io.read(kit+'/candidate.sha256',0600,8192),
-            'preflight.log':'','postflight.log':'','service.log':''};
-        for(let path in keys(values))modes[path]=0600;
-    }
-    for(let path in keys(m.inventories.baseline)) {
-        let rel=(apply?'backup/':'')+path,mode=path=='etc/init.d/home-gateway-telegram'||index(path,'usr/bin/')==0?0755:0644;
-        values[rel]=io.read(kit+'/'+(apply?'baseline':'candidate')+'/'+path,mode,262144);modes[rel]=mode;
-    }
-    let seen={};
-    function walk(path,prefix) {
-        io.check(path,'directory',0700,0);let names=fs.lsdir(path);need(names!=null && length(names)<=64,'BACKUP_INVENTORY');
-        for(let name in names) {
-            let rel=prefix?prefix+'/'+name:name,full=path+'/'+name,st=fs.lstat(full);
-            let known=values[rel]!=null || (apply && index(['phase','phase.new'],rel)>=0);
-            need(known || length(filter(keys(values),p=>index(p,rel+'/')==0))>0,'BACKUP_UNKNOWN');
-            if(st?.type=='directory') {need(!known,'BACKUP_UNKNOWN');walk(full,rel);continue;}
-            seen[rel]=true;
-            if(apply && index(['phase','phase.new'],rel)>=0) {
-                let raw=io.read(full,0600,32),phases=map(['PREPARED','APPLYING','CHECKING','COMMITTED'],v=>v+'\n');
-                need(length(filter(phases,v=>rel=='phase.new'||partial?substr(v,0,length(raw))==raw:v==raw))>0,'BACKUP_PHASE');
-            } else {
-                let raw=io.read(full,modes[rel],262144);
-                need(partial?raw==substr(values[rel],0,length(raw)):raw==values[rel],'BACKUP_DRIFT');
-            }
-        }
-    }
-    walk(base,'');
-    if(!partial) {
-        need(length(filter(keys(values),p=>!seen[p]))==0 && (!apply || seen.phase),'BACKUP_INCOMPLETE');
     }
 }
 function recover() {

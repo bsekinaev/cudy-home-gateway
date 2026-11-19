@@ -117,6 +117,11 @@ class StateTests(unittest.TestCase):
         path = self.root / 'etc/preparing/history.json'
         self.assertEqual(path.read_bytes(), b'{"schema":1}\n')
         pending = path.with_name('history.json.new')
+        pending.write_bytes(b'{"schema')
+        pending.chmod(0o600)
+        result = self.run_code('io.complete_prefix("/etc/preparing/history.json","{\\\"schema\\\":1}\\n",0600);')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(pending.exists())
         pending.write_bytes(b'foreign')
         pending.chmod(0o600)
         result = self.run_code('io.complete_prefix("/etc/preparing/history.json","{\\\"schema\\\":1}\\n",0600);')

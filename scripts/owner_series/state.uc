@@ -1,4 +1,5 @@
 // Internal durable I/O for the series coordinator. Never a bot command surface.
+'use strict';
 import * as fs from 'fs';
 import { open_protocol } from './protocol.uc';
 function need(ok,why){if(!ok)die('OWNER_SERIES_STATE_'+why);}
@@ -118,18 +119,6 @@ export function open_io(root) {
         need(!exists(path+'.new'),'PENDING');exclusive(path+'.new',data,mode);
         need(fs.rename(full(path+'.new'),full(path)),'RENAME');sync(path);
     }
-    function complete_prefix(path,data,mode) {
-        mutable(path);need(type(data)=='string' && length(data)<=2097152,'PREFIX_VALUE');
-        let actual=null;
-        if(exists(path)) {actual=read(path,mode,2097152);need(actual==substr(data,0,length(actual)),'UNKNOWN_PREFIX');}
-        if(exists(path+'.new')) {
-            let pending=read(path+'.new',mode,2097152);need(pending==substr(data,0,length(pending)),'UNKNOWN_PREFIX');
-            // The complete deterministic value retains every byte of this known
-            // prefix. Unknown bytes are never removed or overwritten.
-            unlink(path+'.new');
-        }
-        if(actual!=data)atomic(path,data,mode);
-    }
     function copy(source,target,mode) {
         mutable(target);let source_stat=fs.lstat(full(source));need(source_stat?.type=='file','COPY_SOURCE');
         let data=read(source,source_stat.mode,262144);exclusive(target,data,mode);
@@ -147,6 +136,18 @@ export function open_io(root) {
         mutable(path);ancestors(path);let st=fs.lstat(full(path));
         need(st!=null && st.uid==owner && st.gid==group && index(['file','link'],st.type)>=0 && st.nlink==1,'UNLINK');
         need(fs.unlink(full(path)),'UNLINK');need(run(['/bin/busybox','fsync',replace(full(path),/\/[^/]+$/,'')]),'UNLINK_SYNC');
+    }
+    function complete_prefix(path,data,mode) {
+        mutable(path);need(type(data)=='string' && length(data)<=2097152,'PREFIX_VALUE');
+        let actual=null;
+        if(exists(path)) {actual=read(path,mode,2097152);need(actual==substr(data,0,length(actual)),'UNKNOWN_PREFIX');}
+        if(exists(path+'.new')) {
+            let pending=read(path+'.new',mode,2097152);need(pending==substr(data,0,length(pending)),'UNKNOWN_PREFIX');
+            // The complete deterministic value retains every byte of this known
+            // prefix. Unknown bytes are never removed or overwritten.
+            unlink(path+'.new');
+        }
+        if(actual!=data)atomic(path,data,mode);
     }
     function rename(source,target,replace_existing) {
         mutable(source);mutable(target);ancestors(source);ancestors(target);
