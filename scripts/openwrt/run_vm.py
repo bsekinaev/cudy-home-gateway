@@ -15,6 +15,7 @@ import re
 import selectors
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -36,6 +37,16 @@ REBOOT_SCENARIOS = ('owner-series', 'owner-update', 'rc-b-crash-apply', 'rc-b-cr
 
 def require(ok, reason):
     if not ok: raise ValueError(reason)
+
+
+def public_progress(console, expected, previous):
+    """Expose counts only, never raw guest diagnostics or unknown check names."""
+    count = len({name for name, _ in CHECK.findall(console.decode('utf-8', errors='replace'))
+                 if name in expected})
+    if count > previous and (count >= previous + 5 or count == len(expected)):
+        print(f'HGVM_PROGRESS={count}/{len(expected)}', file=sys.stderr, flush=True)
+        return count
+    return previous
 
 
 def git(*args):
@@ -308,7 +319,8 @@ def run(args):
         if args.bios: command += ['-bios', str(args.bios)]
         # The control scenario snapshots runtime plus its dependency closure.
         # TCG-only hosts need a separate bounded budget; assertions are unchanged.
-        console = bytearray(); deadline = time.monotonic() + (3600 if args.scenario=='owner-series' else 1800 if args.scenario=='owner-update' else 900 if args.scenario=='retirement-reboot' else 600 if args.scenario in ('rc-b-crash-apply','rc-b-crash-restore') else 300 if args.scenario in ('rc-b-root-cycle','control-cycle','service-cycle') else 180)
+        console = bytearray(); progress = 0
+        deadline = time.monotonic() + (7200 if args.scenario=='owner-series' else 1800 if args.scenario=='owner-update' else 900 if args.scenario=='retirement-reboot' else 600 if args.scenario in ('rc-b-crash-apply','rc-b-crash-restore') else 300 if args.scenario in ('rc-b-root-cycle','control-cycle','service-cycle') else 180)
         try:
             for boot in range(2 if args.scenario in REBOOT_SCENARIOS else 1):
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -322,10 +334,15 @@ def run(args):
                                 chunk = os.read(key.fileobj.fileno(), 65536)
                                 if not chunk: selector.unregister(key.fileobj); break
                                 console.extend(chunk); require(len(console) <= 4 * 1024 * 1024, 'CONSOLE_LIMIT')
+                                progress = public_progress(console, expected, progress)
                                 if args.diagnostic_log:
                                     fd = os.open(args.diagnostic_log, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
                                     with os.fdopen(fd, 'wb') as live_log: live_log.write(chunk)
                             if not selector.get_map(): break
+                        # An exited guest can still have unread pipe output.
+                        # Never misclassify deadline-truncated evidence as a
+                        # complete run missing its final marker.
+                        require(not selector.get_map(), 'VM_TIME_LIMIT')
                         try:
                             status=child.wait(timeout=2)
                         except subprocess.TimeoutExpired:

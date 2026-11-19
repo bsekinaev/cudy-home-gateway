@@ -1,9 +1,22 @@
 """Reject partial, duplicated or contradictory VM completion evidence."""
 import unittest
-from run_vm import parse_result, failure_report
+from run_vm import parse_result, failure_report, public_progress
 
 
 class ReportTests(unittest.TestCase):
+    def test_progress_exposes_only_counted_source_check_names(self):
+        import contextlib
+        import io
+        output = io.StringIO()
+        raw = b'PRIVATE_TOKEN\nHGVM_CHECK=boot:PASS\nHGVM_CHECK=boot:PASS\nHGVM_CHECK=private_unknown:PASS\nHGVM_CHECK=restore:FAIL\n'
+        with contextlib.redirect_stderr(output):
+            count = public_progress(raw, {'boot', 'restore'}, 0)
+        self.assertEqual(count, 2)
+        self.assertEqual(output.getvalue(), 'HGVM_PROGRESS=2/2\n')
+        with contextlib.redirect_stderr(output):
+            self.assertEqual(public_progress(raw, {'boot', 'restore'}, count), count)
+        self.assertEqual(output.getvalue(), 'HGVM_PROGRESS=2/2\n')
+
     def test_public_failure_code_without_private_exception_details(self):
         self.assertEqual(failure_report(ValueError('PACKAGE_INDEX_SHA256'))['reason'], 'PACKAGE_INDEX_SHA256')
         for message in ('/private/owner/archive', 'PRIVATE_TOKEN'):
