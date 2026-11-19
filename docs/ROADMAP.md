@@ -25,14 +25,12 @@ Owner incremental update `d2039b6c62da3aa458f720af1c46fb619aee48dd`
    по существующим safety gates. Автоматическая смена MAIN не добавляется.
 
 Текущий этап пункта 2: реализованы строгая проверка gzip/USTAR без распаковки,
-аутентификация исходного V1 parent d2039b6 по полному Git inventory и VM_ONLY
-сборщик последовательных поколений с постоянным bootstrap и flat parent witness.
-33 boundary/packaging tests PASS; два замечания независимого review воспроизведены
-и исправлены. Это ещё не готовый V2 updater: target protocol, транзакции/rollback,
-Windows runner, native crash/reboot suite и owner acceptance gate остаются в работе.
-В target protocol добавлены native read-only primitives: проверка платформы,
-20 runtime/14 control файлов, Safe Actions и closed history. Их 24 теста используют
-синтетическую файловую систему и не заменяют native lifecycle acceptance.
+аутентификация V1/V2 parent, последовательные транзакции с отдельным откатом,
+защита запуска при прерывании и Windows PowerShell 5.1 runner. Проверяются все
+20 runtime/14 control файлов, Safe Actions и неизменность истории. Сборка owner
+пакета требует полного native crash/reboot отчёта, успешного CI и независимого
+review той же версии исходников. Отдельные проверки упаковки и Windows проходят;
+полная native приёмка ещё выполняется. На CUDY остаётся установленный d2039b6.
 [План реализации](superpowers/plans/2026-11-18-owner-update-generations.md).
 
 ## Предыдущая очередь — 21.10.2026 (история)

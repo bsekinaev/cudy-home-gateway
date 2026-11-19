@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from test_archive import packed
 import tarfile
@@ -96,8 +97,42 @@ class BuildTests(unittest.TestCase):
         self.assertIs(manifest['source_fixture'], True)
 
     def test_owner_output_stays_closed_until_native_acceptance_exists(self):
-        with self.assertRaisesRegex(ValueError, 'OWNER_SERIES_ACCEPTANCE_NOT_IMPLEMENTED'):
+        with self.assertRaisesRegex(ValueError, 'OWNER_SOURCE_FIXTURE'):
             self.candidate(profile='owner')
+
+    def test_owner_requires_acceptance_and_exact_owner_bootstrap(self):
+        with self.assertRaisesRegex(ValueError, 'OWNER_ACCEPTANCE_REQUIRED'):
+            content(self.repo, self.source, self.bootstrap, self.pin, profile='owner')
+        with self.assertRaisesRegex(ValueError, 'PARENT_OWNER_PIN'):
+            content(self.repo, self.source, self.bootstrap, self.pin, profile='owner', acceptance=b'{}')
+
+    def test_owner_inventory_roundtrip_and_profile_separation_in_memory(self):
+        # Isolate V2 packaging from the independently tested immutable V1 gate.
+        import build_kit
+        from parent import validate_parent
+        bootstrap = validate_parent(self.bootstrap, self.pin, 'vm', self.repo)
+        with patch.object(build_kit, 'validate_parent', return_value=bootstrap), patch.object(
+                build_kit, 'validate_acceptance', return_value={}):
+            _, files, manifest = content(self.repo, self.source, self.bootstrap, self.pin,
+                                         profile='owner', acceptance=b'{"test_fixture":true}')
+            self.assertEqual(manifest['profile'], 'OWNER_MANUAL')
+            self.assertIs(manifest['production_apply'], True)
+            self.assertIs(manifest['source_fixture'], False)
+            self.assertEqual(files['acceptance.json'][0], 0o600)
+            raw, pin = repack(files, manifest)
+            self.assertEqual(validate_series(raw, pin, 'owner', self.repo)['manifest'], manifest)
+            with self.assertRaisesRegex(ValueError, 'SERIES_MANIFEST'):
+                validate_series(raw, pin, 'vm', self.repo)
+            fixture_manifest = json.loads(json.dumps(manifest))
+            fixture_manifest['source_fixture'] = True
+            fixture_raw, fixture_pin = repack(files, fixture_manifest)
+            with self.assertRaisesRegex(ValueError, 'SERIES_MANIFEST'):
+                content(self.repo, self.source, fixture_raw, fixture_pin,
+                        profile='owner', acceptance=b'{"test_fixture":true}')
+            manifest['source_fixture'] = True
+            raw, pin = repack(files, manifest)
+            with self.assertRaisesRegex(ValueError, 'SERIES_MANIFEST'):
+                validate_series(raw, pin, 'owner', self.repo)
 
     def test_wrong_ref_and_dirty_source_refused(self):
         with self.assertRaisesRegex(ValueError, 'SOURCE_CHECKOUT_MISMATCH'):

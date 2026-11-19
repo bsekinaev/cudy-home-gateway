@@ -126,6 +126,23 @@ export function open_protocol(root) {
         let match_hash=match(raw,/^([0-9a-f]{64})  /);
         need(match_hash!=null && raw==match_hash[1]+'  '+path+'\n','HASH_OUTPUT');return match_hash[1];
     }
+    function digest_many(jobs) {
+        let result={};
+        for(let start=0;start<length(jobs);start+=64) {
+            let batch=slice(jobs,start,start+64),before=map(batch,j=>checked(j.path,'file',j.mode,j.limit));
+            let command=CLEAN_EXEC+'sha256sum '+join(' ',map(batch,j=>quote(j.path)))+' 2>/dev/null';
+            need(length(command)<40000,'HASH_LIMIT');
+            let child=fs.popen(command,'r');need(child!=null,'HASH_PROCESS');
+            let raw=child.read(65537),rc=child.close();need(rc==0 && type(raw)=='string' && length(raw)<=65536,'HASH_OUTPUT');
+            let lines=split(raw,'\n');need(pop(lines)=='' && length(lines)==length(batch),'HASH_OUTPUT');
+            for(let i=0;i<length(batch);i++) {
+                let job=batch[i],pin=substr(lines[i],0,64),after=checked(job.path,'file',job.mode,job.limit),was=before[i];
+                need(hash(pin) && lines[i]==pin+'  '+job.path && after.inode==was.inode && same_device(after,was) &&
+                    after.size==was.size && after.mtime==was.mtime,'HASH_CHANGED');result[job.path]=pin;
+            }
+        }
+        return result;
+    }
     function probe(path,limit) {
         ancestry(path,false);let before=fs.lstat(path);
         need(before?.type=='file' && before.uid==owner && before.gid==group &&
@@ -200,14 +217,16 @@ export function open_protocol(root) {
             }
         }
         need(type(m.files)=='array' && length(m.files)==length(keys(expected)),'PACKAGE_INVENTORY');
-        let seen={};
+        let seen={},jobs=[];
         for(let f in m.files) {
             need(same_keys(f,['path','mode','size','sha256']) && type(f.path)=='string' && expected[f.path]!=null &&
                 !seen[f.path] && type(f.mode)=='int' && f.mode==expected[f.path] && type(f.size)=='int' &&
                 f.size>=0 && f.size<=262144 && hash(f.sha256),'PACKAGE_INVENTORY');seen[f.path]=true;
             let st=checked(kit+'/'+f.path,'file',f.mode,262144);
-            need(st.size==f.size && digest(kit+'/'+f.path,f.mode,262144)==f.sha256,'PACKAGE_FILE_PIN');
+            need(st.size==f.size,'PACKAGE_FILE_PIN');push(jobs,{path:kit+'/'+f.path,mode:f.mode,limit:262144});
         }
+        let pins=digest_many(jobs);
+        for(let f in m.files)need(pins[kit+'/'+f.path]==f.sha256,'PACKAGE_FILE_PIN');
         function walk(path,prefix) {
             checked(path,'directory',0700,0);let names=fs.lsdir(path);need(names!=null && length(names)<=64,'PACKAGE_DIRECTORY');
             for(let name in names) {
@@ -221,7 +240,7 @@ export function open_protocol(root) {
         let changed=[];
         for(let path in PATHS) {
             if(m.inventories.baseline[path]!=m.inventories.candidate[path])push(changed,path);
-            for(let name in ['baseline','candidate'])need(digest(kit+'/'+name+'/'+path,expected[name+'/'+path],262144)==m.inventories[name][path],'PACKAGE_RUNTIME_PIN');
+            for(let name in ['baseline','candidate'])need(pins[kit+'/'+name+'/'+path]==m.inventories[name][path],'PACKAGE_RUNTIME_PIN');
         }
         let allowed=map(['telegram-poller.uc','dns.sh','health.sh','redmi.sh','status.sh'],n=>'usr/lib/home-gateway/'+n);
         need(type(m.changed)=='array' && length(changed)>0 && join('\n',m.changed)==join('\n',changed) &&
@@ -233,11 +252,11 @@ export function open_protocol(root) {
         need(same_keys(m.controls,keys(CONTROL_PINS)),'PACKAGE_CONTROLS');
         for(let path in keys(CONTROL_PINS))need(m.controls[path]==CONTROL_PINS[path],'PACKAGE_CONTROLS');
         need(same_keys(m.bootstrap,['archive_sha256','manifest_sha256']) && hash(m.bootstrap.archive_sha256) &&
-            hash(m.bootstrap.manifest_sha256) && digest(kit+'/bootstrap.tar.gz',0600,262144)==m.bootstrap.archive_sha256,'PACKAGE_BOOTSTRAP');
+            hash(m.bootstrap.manifest_sha256) && pins[kit+'/bootstrap.tar.gz']==m.bootstrap.archive_sha256,'PACKAGE_BOOTSTRAP');
         let previous=strict_json(read(kit+'/parent.json',0600,65536),'PACKAGE_PARENT');
         need(same_keys(m.parent,['format','source_commit','manifest_sha256','archive_sha256']) &&
             hash(m.parent.archive_sha256) && hash(m.parent.manifest_sha256) &&
-            digest(kit+'/parent.json',0600,65536)==m.parent.manifest_sha256 && type(previous)=='object' &&
+            pins[kit+'/parent.json']==m.parent.manifest_sha256 && type(previous)=='object' &&
             m.parent.source_commit==m.baseline_commit && previous.source_commit==m.baseline_commit &&
             m.parent.format==previous.format && index(['HG_OWNER_UPDATE_V1','HG_OWNER_UPDATE_V2'],previous.format)>=0 &&
             same_keys(previous.inventories?.candidate,PATHS) && same_keys(previous.controls,keys(CONTROL_PINS)),'PACKAGE_PARENT');
@@ -268,9 +287,9 @@ export function open_protocol(root) {
     }
     function runtime(inventory) {
         need(same_keys(inventory,PATHS) && length(filter(values(inventory),hash))==20,'RUNTIME_INVENTORY');
+        let pins=digest_many(map(PATHS,path=>({path:root+'/'+path,mode:index(PATHS,path)<3?0755:0644,limit:262144})));
         for(let path in PATHS) {
-            let mode=index(PATHS,path)<3?0755:0644;
-            need(digest(root+'/'+path,mode,262144)==inventory[path],'LIVE_DRIFT');
+            need(pins[root+'/'+path]==inventory[path],'LIVE_DRIFT');
         }
         let library=fs.lsdir(root+'/usr/lib/home-gateway');
         need(library!=null && length(library)==17 && length(filter(library,n=>index(PATHS,'usr/lib/home-gateway/'+n)>=0))==17,'UNKNOWN_RUNTIME');
@@ -279,9 +298,10 @@ export function open_protocol(root) {
     function controls(inventory) {
         need(same_keys(inventory,keys(CONTROL_PINS)),'CONTROL_INVENTORY');
         for(let path in keys(CONTROL_PINS))need(inventory[path]==CONTROL_PINS[path],'CONTROL_INVENTORY');
+        let pins=digest_many(map(keys(CONTROL_PINS),path=>({path:root+'/'+path,
+            mode:index(path,'etc/init.d/')==0?0755:substr(path,-3)=='.uc'?0600:0700,limit:262144})));
         for(let path in keys(CONTROL_PINS)) {
-            let mode=index(path,'etc/init.d/')==0?0755:substr(path,-3)=='.uc'?0600:0700;
-            need(digest(root+'/'+path,mode,262144)==CONTROL_PINS[path],'CONTROL_DRIFT');
+            need(pins[root+'/'+path]==CONTROL_PINS[path],'CONTROL_DRIFT');
         }
         return {files:14,status:'VERIFIED'};
     }

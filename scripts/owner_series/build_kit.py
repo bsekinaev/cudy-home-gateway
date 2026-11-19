@@ -1,9 +1,10 @@
-"""Build source-bound VM_ONLY series packages; owner release stays closed.
+"""Build source-bound series packages; owner requires exact release evidence.
 
 Controller files must exist in the selected committed source. Host fixtures can
 exercise this packaging contract, but are not executable lifecycle evidence.
 """
 import argparse
+import ast
 import gzip
 import io
 import json
@@ -29,10 +30,48 @@ def encoded(value):
 
 
 def _vm_only(profile):
-    if profile == 'owner':
-        raise ValueError('OWNER_SERIES_ACCEPTANCE_NOT_IMPLEMENTED')
-    if profile != 'vm':
+    if profile not in ('vm', 'owner'):
         raise ValueError('SERIES_PROFILE')
+
+
+def validate_acceptance(raw, commit, repo):
+    if not isinstance(raw, bytes) or not 0 < len(raw) <= 262144:
+        raise ValueError('OWNER_ACCEPTANCE_SIZE')
+    a = strict_json(raw)
+    if (not isinstance(a, dict) or a.get('format') != 'HG_OWNER_SERIES_ACCEPTANCE_V1' or
+            a.get('commit') != commit or a.get('ci_head') != commit or
+            a.get('ci_conclusion') != 'success' or a.get('review_head') != commit or
+            type(a.get('review_blockers')) is not int or a['review_blockers'] != 0 or
+            not isinstance(a.get('ci_url'), str) or not re.fullmatch(
+                r'https://github.com/bsekinaev/cudy-home-gateway/actions/runs/[0-9]+', a['ci_url'])):
+        raise ValueError('OWNER_ACCEPTANCE_CI_REVIEW_SOURCE')
+    guest = git(repo, 'show', commit + ':scripts/openwrt/guest-owner-series.sh')
+    expected = {n.decode() for n in re.findall(rb'^\s*check ([a-z0-9_]+) ', guest, re.M)}
+    # Read constants from the accepted source; never import mutable checkout code.
+    tree = ast.parse(git(repo, 'show', commit + ':scripts/openwrt/run_vm.py'))
+    pins = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            if node.targets[0].id in ('KERNEL_SHA', 'ROOTFS_SHA', 'PACKAGE_SHA'):
+                pins[node.targets[0].id] = ast.literal_eval(node.value)
+    r = a.get('report')
+    if (not isinstance(r, dict) or not expected or len(pins) != 3 or
+            r.get('commit') != commit or r.get('real_candidate_commit') != commit or
+            r.get('scenario') != 'owner-series' or r.get('status') != 'PASS' or
+            type(r.get('failed')) is not int or r['failed'] != 0 or
+            type(r.get('total')) is not int or r['total'] != len(expected) or
+            not isinstance(r.get('checks'), dict) or set(r['checks']) != expected or
+            any(value != 'PASS' for value in r['checks'].values()) or r.get('scope') != 'ISOLATED_X86_NOT_CUDY' or
+            r.get('production_supported') is not False or
+            r.get('kernel_sha256') != pins['KERNEL_SHA'] or r.get('rootfs_sha256') != pins['ROOTFS_SHA'] or
+            r.get('package_sha256') != pins['PACKAGE_SHA'] or
+            type(r.get('network_devices')) is not int or r['network_devices'] != 0 or
+            type(r.get('host_shared_directories')) is not int or r['host_shared_directories'] != 0 or
+            r.get('reboot_mechanism') != 'GUEST_REBOOT_SUPERVISED_COLD_BOOT' or
+            not _commit(r.get('fixture_commit')) or r['fixture_commit'] == commit or
+            r.get('fixture_scope') != 'VM_ONLY_OBSERVER_COMMENT'):
+        raise ValueError('OWNER_ACCEPTANCE_VM_INCOMPLETE')
+    return a
 
 
 def _commit(value):
@@ -124,21 +163,23 @@ def _parent(raw, pin, profile, repo):
     return validate_series(raw, pin, profile, repo)
 
 
-def _core(m):
+def _core(m, profile):
     if (not isinstance(m, dict) or set(m) != KEYS or m['format'] != 'HG_OWNER_UPDATE_V2' or
-            m['profile'] != 'VM_ONLY' or m['production_apply'] is not False or
+            m['profile'] != ('OWNER_MANUAL' if profile == 'owner' else 'VM_ONLY') or
+            m['production_apply'] is not (profile == 'owner') or
+            (profile == 'owner' and m['source_fixture'] is not False) or
             type(m['source_fixture']) is not bool or not _commit(m['source_commit']) or
             not _commit(m['baseline_commit'])):
         raise ValueError('SERIES_MANIFEST')
 
 
-def _prior_manifest(m, repo, bootstrap):
+def _prior_manifest(m, repo, bootstrap, profile):
     """Check all flat prior metadata derivable from Git and the fixed anchor.
 
     Its own parent.json bytes are deliberately not recursively embedded. That
     record remains a bounded digest to be matched against durable target history.
     """
-    _core(m)
+    _core(m, profile)
     known = {}
     inventories = {}
     for name, source in (('baseline', m['baseline_commit']), ('candidate', m['source_commit'])):
@@ -165,7 +206,8 @@ def _prior_manifest(m, repo, bootstrap):
     bootstrap_size = bootstrap['raw_size']
     expected['bootstrap.tar.gz'] = dict(path='bootstrap.tar.gz', mode=0o600,
                                       size=bootstrap_size, sha256=bootstrap['archive_sha256'])
-    if not isinstance(m['files'], list) or len(m['files']) != len(expected) + 1:
+    bounded = {'parent.json'} | ({'acceptance.json'} if profile == 'owner' else set())
+    if not isinstance(m['files'], list) or len(m['files']) != len(expected) + len(bounded):
         raise ValueError('SERIES_PRIOR_INVENTORY')
     seen = set()
     for entry in m['files']:
@@ -175,13 +217,13 @@ def _prior_manifest(m, repo, bootstrap):
             raise ValueError('SERIES_PRIOR_INVENTORY')
         path = entry['path']
         seen.add(path)
-        if path == 'parent.json':
-            if (entry['mode'] != 0o600 or not 0 < entry['size'] <= 65536 or
+        if path in bounded:
+            if (entry['mode'] != 0o600 or not 0 < entry['size'] <= (65536 if path == 'parent.json' else 262144) or
                     not isinstance(entry['sha256'], str) or not re.fullmatch(r'[0-9a-f]{64}', entry['sha256'])):
                 raise ValueError('SERIES_PRIOR_INVENTORY')
         elif path not in expected or entry != expected[path]:
             raise ValueError('SERIES_PRIOR_INVENTORY')
-    if seen != set(expected) | {'parent.json'}:
+    if seen != set(expected) | bounded:
         raise ValueError('SERIES_PRIOR_INVENTORY')
     link = m['parent']
     if (not isinstance(link, dict) or
@@ -206,8 +248,10 @@ def validate_series(raw, pin, profile, repo):
     if 'manifest.json' not in files or files['manifest.json'][0] != 0o600:
         raise ValueError('SERIES_MANIFEST')
     m = strict_json(files['manifest.json'][1])
-    _core(m)
+    _core(m, profile)
     expected = dict(HELPERS)
+    if profile == 'owner':
+        expected['acceptance.json'] = 0o600
     expected.update({p: 0o600 for p in ('baseline.sha256', 'candidate.sha256', 'bootstrap.tar.gz', 'parent.json')})
     for name in ('baseline', 'candidate'):
         expected.update({name + '/' + p: 0o755 if p in PATHS[:3] else 0o644 for p in PATHS})
@@ -271,21 +315,27 @@ def validate_series(raw, pin, profile, repo):
                 link != _identity(bootstrap) or m['baseline_commit'] != ACCEPTED):
             raise ValueError('SERIES_PARENT_LINK')
     else:
-        _prior_manifest(previous, repo, bootstrap)
+        _prior_manifest(previous, repo, bootstrap, profile)
         if (previous['bootstrap'] != anchor or
                 previous['source_fixture'] and not m['source_fixture']):
             raise ValueError('SERIES_PARENT_LINK')
     if subprocess.run(['git', '-C', str(repo), 'merge-base', '--is-ancestor',
                        m['baseline_commit'], m['source_commit']], capture_output=True).returncode:
         raise ValueError('SERIES_SOURCE_LINEAGE')
+    if profile == 'owner':
+        validate_acceptance(files['acceptance.json'][1], m['source_commit'], repo)
     return {'manifest': m, 'manifest_sha256': digest(files['manifest.json'][1]),
             'archive_sha256': pin, 'files': files}
 
 
-def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=False):
+def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=False, acceptance=None):
     _vm_only(profile)
     if type(source_fixture) is not bool:
         raise ValueError('SERIES_FIXTURE_FLAG')
+    if profile == 'owner' and source_fixture:
+        raise ValueError('OWNER_SOURCE_FIXTURE')
+    if profile == 'owner' and acceptance is None:
+        raise ValueError('OWNER_ACCEPTANCE_REQUIRED')
     source = git(repo, 'rev-parse', '--verify', '--end-of-options', ref + '^{commit}').decode().strip()
     if git(repo, 'rev-parse', 'HEAD').decode().strip() != source:
         raise ValueError('SOURCE_CHECKOUT_MISMATCH')
@@ -323,7 +373,10 @@ def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=Fals
         source_fixture = source_fixture or parent['manifest']['source_fixture']
     files['bootstrap.tar.gz'] = (0o600, bootstrap_raw)
     files['parent.json'] = (0o600, parent['files']['manifest.json'][1])
-    manifest = dict(format='HG_OWNER_UPDATE_V2', profile='VM_ONLY', production_apply=False,
+    if profile == 'owner':
+        validate_acceptance(acceptance, source, repo)
+        files['acceptance.json'] = (0o600, acceptance)
+    manifest = dict(format='HG_OWNER_UPDATE_V2', profile='OWNER_MANUAL' if profile == 'owner' else 'VM_ONLY', production_apply=profile == 'owner',
                     source_commit=source, baseline_commit=baseline, source_fixture=source_fixture,
                     parent=_identity(parent), bootstrap=bootstrap_pin, inventories=inventories,
                     changed=changed, controls=controls, files=_record(files))
@@ -331,8 +384,8 @@ def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=Fals
     return source, files, manifest
 
 
-def build(repo, ref, parent_raw, parent_pin, output, profile='vm', source_fixture=False):
-    source, files, _ = content(repo, ref, parent_raw, parent_pin, profile, source_fixture)
+def build(repo, ref, parent_raw, parent_pin, output, profile='vm', source_fixture=False, acceptance=None):
+    source, files, _ = content(repo, ref, parent_raw, parent_pin, profile, source_fixture, acceptance)
     timestamp = int(git(repo, 'show', '-s', '--format=%ct', source))
     buffer = io.BytesIO()
     with gzip.GzipFile(fileobj=buffer, mode='wb', filename='', mtime=0) as gz:
@@ -374,7 +427,9 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--profile', choices=['vm', 'owner'], default='vm')
     parser.add_argument('--source-fixture', action='store_true')
+    parser.add_argument('--acceptance-report', type=Path)
     args = parser.parse_args()
     with args.parent.open('rb') as source_file:
         parent_raw = source_file.read(MAX_ARCHIVE + 1)
-    print(build(ROOT, args.ref, parent_raw, args.parent_sha256, args.output, args.profile, args.source_fixture))
+    print(build(ROOT, args.ref, parent_raw, args.parent_sha256, args.output, args.profile, args.source_fixture,
+                args.acceptance_report.read_bytes() if args.acceptance_report else None))
