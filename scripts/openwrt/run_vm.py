@@ -41,7 +41,7 @@ def require(ok, reason):
 
 def public_progress(console, expected, previous):
     """Expose counts only, never raw guest diagnostics or unknown check names."""
-    count = len({name for name, _ in CHECK.findall(console.decode('utf-8', errors='replace'))
+    count = len({name for name, _ in CHECK.findall(console.decode('utf-8', errors='replace').replace('\r', ''))
                  if name in expected})
     if count > previous and (count >= previous + 5 or count == len(expected)):
         print(f'HGVM_PROGRESS={count}/{len(expected)}', file=sys.stderr, flush=True)

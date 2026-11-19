@@ -8,7 +8,7 @@ class ReportTests(unittest.TestCase):
         import contextlib
         import io
         output = io.StringIO()
-        raw = b'PRIVATE_TOKEN\nHGVM_CHECK=boot:PASS\nHGVM_CHECK=boot:PASS\nHGVM_CHECK=private_unknown:PASS\nHGVM_CHECK=restore:FAIL\n'
+        raw = b'PRIVATE_TOKEN\r\nHGVM_CHECK=boot:PASS\r\nHGVM_CHECK=boot:PASS\r\nHGVM_CHECK=private_unknown:PASS\r\nHGVM_CHECK=restore:FAIL\r\n'
         with contextlib.redirect_stderr(output):
             count = public_progress(raw, {'boot', 'restore'}, 0)
         self.assertEqual(count, 2)
