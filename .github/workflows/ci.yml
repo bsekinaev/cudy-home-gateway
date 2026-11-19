@@ -95,7 +95,20 @@ jobs:
           ucode -e 'print("ucode-ci-ok\n")'
 
       - name: Run repository CI checks
-        run: ./scripts/ci/check.sh
+        run: |
+          # These native fixtures exercise root ownership and real fsync.
+          # Ubuntu's reduced BusyBox lacks fsync; install the pinned host build
+          # only on this disposable CI worker, never in a release/router kit.
+          work=$(mktemp -d)
+          curl -fsSL --retry 2 https://busybox.net/downloads/busybox-1.37.0.tar.bz2 -o "$work/source.tar.bz2"
+          echo "3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4  $work/source.tar.bz2" | sha256sum -c -
+          tar -xjf "$work/source.tar.bz2" -C "$work"
+          make -C "$work/busybox-1.37.0" defconfig > "$work/config.log" 2>&1
+          sed -i 's/^CONFIG_TC=y/# CONFIG_TC is not set/' "$work/busybox-1.37.0/.config"
+          make -C "$work/busybox-1.37.0" -j2 > "$work/build.log" 2>&1
+          sudo install -m 755 "$work/busybox-1.37.0/busybox" /bin/busybox
+          /bin/busybox --list | grep -Fx fsync
+          sudo env "PATH=$PATH" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" ./scripts/ci/check.sh
 
       - name: Test release bundle builder
         run: python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
@@ -104,12 +117,12 @@ jobs:
         run: python3 -m unittest discover -s scripts/owner_update -p 'test_*.py' -v
 
       - name: Verify sequential owner update contracts
-        run: python3 -m unittest discover -s scripts/owner_series -p 'test_*.py' -v
+        run: sudo env "PATH=$PATH" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" python3 -m unittest discover -s scripts/owner_series -p 'test_*.py' -v
 
       # The distribution's minimal BusyBox omits flock/fsync. Run the entire
       # deployment suite on pinned 1.37 with mandatory applet checks instead.
       - name: Deployment, crash recovery and regression on pinned BusyBox 1.37.0
-        run: ./scripts/ci/check-busybox137.sh
+        run: sudo env "PATH=$PATH" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" ./scripts/ci/check-busybox137.sh
 
       - name: Build release bundle
         run: python3 scripts/release/build.py --ref HEAD --output dist
@@ -244,7 +257,11 @@ jobs:
           HG_SCENARIO: ${{ matrix.scenario }}
         run: |
           set -euo pipefail
-          python3 scripts/openwrt/run_vm.py --kernel vm-inputs/kernel.bin --rootfs vm-inputs/rootfs.img.gz --packages-directory vm-inputs --ref "$HG_CANDIDATE_SHA" --scenario "$HG_SCENARIO" > vm-crash-report.json || { cat vm-crash-report.json; exit 1; }
+          # Inputs and redirected reports are untracked workspace files. Build
+          # only from an independent clean checkout, preserving SOURCE_DIRTY.
+          clean=$(mktemp -d)
+          git clone --quiet --no-hardlinks . "$clean/source"
+          python3 "$clean/source/scripts/openwrt/run_vm.py" --kernel "$GITHUB_WORKSPACE/vm-inputs/kernel.bin" --rootfs "$GITHUB_WORKSPACE/vm-inputs/rootfs.img.gz" --packages-directory "$GITHUB_WORKSPACE/vm-inputs" --ref "$HG_CANDIDATE_SHA" --scenario "$HG_SCENARIO" > vm-crash-report.json || { cat vm-crash-report.json; exit 1; }
           cat vm-crash-report.json
       - name: Upload public report only
         if: always()
