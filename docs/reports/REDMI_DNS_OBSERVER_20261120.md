@@ -66,3 +66,19 @@ Owner-пакет: `CUDY-REDMI-Probe-20261120-75e176b.zip`, SHA256
 `91f21f487bd390f7479013a878c06ac7c3e8b969638bda9c3e15b717a2654a07`.
 ZIP целостен, payload совпадает с кандидатными исходниками; SOURCE.txt содержит
 полный runtime source commit. Packaged runner повторно проверен offline на 5.1.
+
+## Owner-проверка 20.11.2026, 13:44:07 по Москве
+
+Владелец запустил пакет и предоставил CUDY-REDMI-Probe-20261120-134407.txt.
+Отчёт прочитан; формат и все поля соответствуют кандидату. DNS роутера OK;
+REDMI config/Xray/policy/Kill Switch OK; DNS профиля OK, reason=answer,
+port=2004, source=live_probe. Client internet остаётся unverified.
+
+Это первый положительный активный DNS-тест кандидата на CUDY с проверенной
+принадлежностью порта процессу. Отдельные системные утилиты оказались пригодны.
+Никакой runtime не установлен: source на CUDY по-прежнему fb8d9e3. Телефонная
+end-to-end проверка, длительное наблюдение и установка/отдельный Verify не
+подменяются этим результатом. Агент к роутеру не подключался.
+
+Следующий шаг — полная exact-source GitHub/native matrix, итоговый review и
+пакет V2 с непосредственным parent fb8d9e3; затем ручные owner Preflight/Apply/Verify.

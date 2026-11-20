@@ -1,56 +1,38 @@
-# Owner series development
+# Owner series V2
 
-This directory implements the host packaging boundary for repeatable HGDEPLOY2
-updates. It does not yet provide a usable router updater or owner release.
+Repeatable manual HGDEPLOY2 observer updates. Source fb8d9e3 was installed and
+independently verified by the owner on 20 November 2026. Older descriptions of
+this directory as an unimplemented packaging boundary are obsolete.
 
-- `archive.py`: bounded, non-extracting gzip/USTAR validation.
-- `parent.py`: authenticate the immutable d2039b6 V1 bootstrap against Git.
-- `build_kit.py`: VM_ONLY V2 package builder and flat parent witness validation.
-- `protocol.uc`: native read-only platform, 20-file runtime, 14-control,
-  action-state and closed historical inventory inspection primitives.
-- `test_*.py`: hostile archive tests and committed host packaging fixtures.
+- archive.py: bounded, non-extracting gzip/USTAR validation.
+- parent.py: authenticate the V1 bootstrap and flat immediate V2 parent.
+- build_kit.py: reproducible VM_ONLY or OWNER_MANUAL packages; owner output
+  requires exact-source CI/review/native acceptance.
+- protocol.uc, state.uc: platform/inventory, receipt, locking and state guards.
+- engine.uc, watch.uc, boot.init: transaction, recovery and supervised boot.
+- owner.ps1: explicit owner Preflight/Apply/Verify/Recover/Rollback stages.
 
-The native module has no public preflight-success entrypoint. Package and parent
-receipt authentication, worker checks, free-space budgeting and writer exclusion
-must be composed before such an entrypoint can succeed. Actions inspection never
-calls `actions show`, expires pending records or recovers executing records. An
-existing actions lock is held while parsing; an absent lock is not created by a
-read-only call. The future writer must create/acquire it and repeat inspection
-under exclusion using `actions(borrowed_guard)`. This checks the exact file
-descriptor/inode, retains the caller's lock and avoids reacquiring a conflicting
-second file description. Unsupported action path overrides are refused explicitly.
+Each package carries all 20 baseline/candidate runtime paths and the original
+14 deployment/migration controls. Only dns.sh, redmi.sh, health.sh, status.sh and
+telegram-poller.uc may differ. Changing any other runtime file or adding a new
+module needs a separately designed delivery scope; these checks stay closed.
+Exactly one unchanged V1 bootstrap and one immediate parent manifest are included;
+older packages are not nested recursively. Parent identity is authenticated
+against Git and installed immutable receipts, not inferred from a host archive.
 
-Platform tests use a private, explicitly marked synthetic filesystem and report
-`TEST_FS_ONLY`; they do not count as procd/crash/reboot acceptance. Production
-orchestration must always use the real root and verify the running workers'
-environment independently. Historical inventory stores hashes and metadata only;
-it neither copies private client state nor restores anything.
+New packages require a clean committed source, full CI and native lifecycle
+evidence for that same source, and independent review. Host packaging fixtures
+remain explicitly non-executable and cannot become owner kits. Native tests use
+isolated x86 OpenWrt; they do not establish router installation or client internet.
 
-The candidate contains all 20 baseline/candidate runtime paths. Only observer/UI
-leaves may differ. Migration/deploy controls retain their original 14 hashes.
-Each package includes exactly one unchanged V1 bootstrap archive and the immediate
-parent manifest; older packages are not recursively embedded. The supplied parent
-archive SHA256 must be independently approved by its caller.
+Read-only preflight does not repair user state. Writer exclusion, action locks,
+process ownership, canonical inventories and rollback/recovery contracts remain
+mandatory. Code rollback does not rewind the notification queue or user state.
 
-Flat prior manifests are checked against their Git runtime/helper bytes, modes,
-inventories, permitted delta, controls and lineage. The digest of their own
-`parent.json` is deliberately detached. Future target validation must match these
-historical identities against immutable installed receipts; a host package does
-not prove that its parent was installed.
+Preserve the installed package, its session and receipts. The next package must
+name the actual installed source as its immediate baseline. The owner performs
+installation and a separate Verify; agents do not connect to production CUDY.
 
-All builder code dependencies must match the selected committed source and its
-checkout must be clean. Controller files must exist in that source; the current
-real branch has no transaction engine/guardian/owner runner yet, so building an
-actual installable candidate currently refuses missing controllers. Tests supply
-explicitly labeled, non-executable helper fixtures in temporary committed repos.
-They prove packaging only, never lifecycle/native acceptance. Fixture ancestry is
-retained across subsequent packages.
-
-Owner output unconditionally refuses `OWNER_SERIES_ACCEPTANCE_NOT_IMPLEMENTED`.
-This gate remains closed until exact-source CI/review/native lifecycle acceptance
-is implemented. No new production package is issued by this stage. The installed
-V1 kit, journals, runtime, client state and network configuration remain unchanged.
-
-Local packaging tests: `python -m unittest discover -s scripts/owner_series -p 'test_*.py'`.
-The main control-plane CI script also runs this suite. Linux exercises occupied
-checksum symlinks; Windows may lack permission to create symlink fixtures.
+Tests: python -m unittest discover -s scripts/owner_series -p test_*.py.
+Windows-specific runner tests require Windows PowerShell 5.1; native lifecycle
+and boot/recovery tests run in the existing GitHub Actions matrix.
