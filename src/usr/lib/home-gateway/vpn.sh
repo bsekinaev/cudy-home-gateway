@@ -50,6 +50,8 @@ hg_vpn_collect() {
     HG_VPN_EGRESS_CHECKED_AT=''
     HG_VPN_EGRESS_PROBE_ATTEMPTS='0'
 
+    probe_timeout=6
+    [ "${HG_MONITOR_ACTIVE:-0}" != 1 ] || probe_timeout=4
     egress_cache_file="${HG_MAIN_EGRESS_CACHE_FILE:-/tmp/home-gateway-main-egress.cache}"
     egress_cache_ttl="${HG_MAIN_EGRESS_CACHE_TTL:-300}"
     egress_probe_url="${HG_MAIN_EGRESS_PROBE_URL:-https://api.ipify.org}"
@@ -183,7 +185,7 @@ hg_vpn_collect() {
             curl -4 -fsS \
                 --socks5-hostname "${HG_VPN_MAIN_SOCKS_HOST}:${HG_VPN_MAIN_SOCKS_PORT}" \
                 --connect-timeout 2 \
-                --max-time 6 \
+                --max-time "$probe_timeout" \
                 "$egress_probe_url" 2>/dev/null |
                 awk 'NR == 1 { gsub(/[[:space:]]/, ""); print; exit }' || true
         )"
@@ -207,7 +209,7 @@ hg_vpn_collect() {
                 curl -4 -fsS \
                     --socks5-hostname "${HG_VPN_MAIN_SOCKS_HOST}:${HG_VPN_MAIN_SOCKS_PORT}" \
                     --connect-timeout 2 \
-                    --max-time 6 \
+                    --max-time "$probe_timeout" \
                     "$secondary_probe_url" 2>/dev/null |
                     awk 'NR == 1 { gsub(/[[:space:]]/, ""); print; exit }' || true
             )"

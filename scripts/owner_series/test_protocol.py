@@ -360,6 +360,34 @@ class ProtocolTests(unittest.TestCase):
         self.put(kit.lstrip('/') + '/manifest.json', raw)
         return self.run_protocol('package', dict(kit=kit, manifest_sha256=hashlib.sha256(raw).hexdigest()))
 
+    def monitor_fixture(self):
+        kit, manifest = self.package_fixture()
+        previous = json.loads((self.root / kit.lstrip('/') / 'parent.json').read_bytes())
+        previous.update(format='HG_OWNER_UPDATE_V2', source_commit='62b5c4a9f25bc657fa1456eeacdfdc9039648cae',
+                        profile='VM_ONLY', production_apply=False, source_fixture=True,
+                        bootstrap=manifest['bootstrap'])
+        raw = json.dumps(previous).encode()
+        self.put(kit.lstrip('/') + '/parent.json', raw)
+        manifest.update(format='HG_OWNER_MONITOR_V3', baseline_commit=previous['source_commit'])
+        manifest['parent'].update(format=previous['format'], source_commit=previous['source_commit'],
+                                  manifest_sha256=hashlib.sha256(raw).hexdigest())
+        entry = next(f for f in manifest['files'] if f['path']=='parent.json')
+        entry.update(size=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        return kit, manifest
+
+    def test_monitor_v2_transition_and_closed_guards(self):
+        kit, manifest = self.monitor_fixture()
+        self.assertEqual(self.inspect_package(kit, manifest).returncode, 0)
+        manifest['baseline_commit']='2'*40
+        result=self.inspect_package(kit, manifest)
+        self.assertIn('PACKAGE_MONITOR_BASELINE', result.stderr)
+        manifest['baseline_commit']='62b5c4a9f25bc657fa1456eeacdfdc9039648cae'
+        manifest['format']='HG_OWNER_MONITOR_V4'
+        self.assertIn('PACKAGE_FORMAT', self.inspect_package(kit, manifest).stderr)
+        manifest['format']='HG_OWNER_MONITOR_V3'
+        manifest['controls'][next(iter(manifest['controls']))]='0'*64
+        self.assertIn('PACKAGE_CONTROLS', self.inspect_package(kit, manifest).stderr)
+
     def test_package_file_closure_and_parent_identity_are_read_only(self):
         kit, manifest = self.package_fixture()
         result = self.inspect_package(kit, manifest)

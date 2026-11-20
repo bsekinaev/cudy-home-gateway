@@ -185,10 +185,11 @@ function Assert-Success($Result,[string]$Operation,[string]$Source,[string]$Id) 
     $matches=@($Result.Text -split '\r?\n' | Where-Object { $_ -ceq $token })
     if($Result.Code -ne 0 -or $matches.Count -ne 1) { throw 'Stage failed or exact success token missing. Preserve evidence; use explicit Recover for an interrupted operation.' }
 }
-function Assert-Approval($Approval,[string]$Source) {
+function Assert-Approval($Approval,[string]$Source,[bool]$Monitor=$false) {
     if($Approval.format -cne 'HG_OWNER_SERIES_ACCEPTANCE_V1' -or $Approval.commit -cne $Source -or $Approval.ci_head -cne $Source -or $Approval.ci_conclusion -cne 'success' -or $Approval.review_head -cne $Source -or $Approval.review_blockers -isnot [int] -or $Approval.review_blockers -ne 0 -or $Approval.ci_url -cnotmatch '^https://github.com/bsekinaev/cudy-home-gateway/actions/runs/[0-9]+$') { throw 'SERIES_APPROVAL' }
     $report=$Approval.report
-    if($report.commit -cne $Source -or $report.scenario -cne 'owner-series' -or $report.status -cne 'PASS' -or $report.failed -isnot [int] -or $report.failed -ne 0) { throw 'SERIES_APPROVAL_REPORT' }
+    $scenario='owner-series'; if($Monitor) { $scenario='owner-monitor' }
+    if($report.commit -cne $Source -or $report.scenario -cne $scenario -or $report.status -cne 'PASS' -or $report.failed -isnot [int] -or $report.failed -ne 0) { throw 'SERIES_APPROVAL_REPORT' }
 }
 function Assert-StageAllowed($Session,[string]$RequestedStage) {
     if($RequestedStage -eq 'Apply' -and ($Session.apply_attempted -or $Session.rollback_attempted -or !$Session.preflightPassed)) { throw 'Apply requires successful Preflight and an unused session. An attempted Apply is never replayed; use explicit Recover.' }
@@ -199,7 +200,9 @@ $files=Read-Archive ([IO.Path]::GetFullPath($Bundle)) $BundleSha256
 if(!$files.ContainsKey('manifest.json') -or $files['manifest.json'].Mode -ne 384) { throw 'SERIES_MANIFEST' }
 $manifest=Read-StrictJson $files['manifest.json'].Bytes
 Assert-Keys $manifest @('format','profile','production_apply','source_commit','baseline_commit','source_fixture','parent','bootstrap','inventories','changed','controls','files')
-if($manifest.format -cne 'HG_OWNER_UPDATE_V2' -or $manifest.profile -cne 'OWNER_MANUAL' -or $manifest.production_apply -isnot [bool] -or !$manifest.production_apply -or $manifest.source_fixture -isnot [bool] -or $manifest.source_fixture -or $manifest.source_commit -cnotmatch '^[0-9a-f]{40}$' -or $manifest.baseline_commit -cnotmatch '^[0-9a-f]{40}$') { throw 'Approved OWNER_MANUAL package required; VM_ONLY and source fixtures are refused.' }
+if($manifest.format -cnotin @('HG_OWNER_UPDATE_V2','HG_OWNER_MONITOR_V3') -or $manifest.profile -cne 'OWNER_MANUAL' -or $manifest.production_apply -isnot [bool] -or !$manifest.production_apply -or $manifest.source_fixture -isnot [bool] -or $manifest.source_fixture -or $manifest.source_commit -cnotmatch '^[0-9a-f]{40}$' -or $manifest.baseline_commit -cnotmatch '^[0-9a-f]{40}$') { throw 'Approved OWNER_MANUAL package required; VM_ONLY and source fixtures are refused.' }
+$monitor=$manifest.format -ceq 'HG_OWNER_MONITOR_V3'
+if($monitor -and ($manifest.baseline_commit -cne '62b5c4a9f25bc657fa1456eeacdfdc9039648cae' -or $manifest.parent.format -cne 'HG_OWNER_UPDATE_V2')) { throw 'SERIES_MONITOR_BASELINE' }
 $pin=Get-Digest $files['manifest.json'].Bytes
 $runtime=@('etc/init.d/home-gateway-telegram','usr/bin/gateway','usr/bin/home-gateway-ci-smoke')
 $runtime+=@('actions.uc','asata.sh','common.sh','dns.sh','doctor.sh','health.sh','incidents.uc','network.sh','notifications.uc','redmi.sh','selftest.sh','status.sh','tailscale.sh','telegram-poller.uc','telegram.sh','torrent.sh','vpn.sh') | ForEach-Object { 'usr/lib/home-gateway/'+$_ }
@@ -214,7 +217,11 @@ foreach($entry in $manifest.files) {
     $f=$files[$entry.path]
     if($entry.mode -isnot [int] -or $entry.size -isnot [int] -or $entry.mode -ne $expected[$entry.path] -or $f.Mode -ne $entry.mode -or $entry.size -ne $f.Bytes.Length -or $entry.sha256 -cnotmatch '^[0-9a-f]{64}$' -or (Get-Digest $f.Bytes) -cne $entry.sha256) { throw 'SERIES_FILE_PIN' }
 }
-Assert-Approval (Read-StrictJson $files['acceptance.json'].Bytes) $manifest.source_commit
+Assert-Approval (Read-StrictJson $files['acceptance.json'].Bytes) $manifest.source_commit $monitor
+if($monitor) {
+    $monitorApproval=Read-StrictJson $files['acceptance.json'].Bytes
+    if($monitorApproval.report.delivery -cne 'monitor' -or $monitorApproval.report.package_format -cne 'HG_OWNER_MONITOR_V3' -or $monitorApproval.report.baseline_commit -cne '62b5c4a9f25bc657fa1456eeacdfdc9039648cae') { throw 'SERIES_MONITOR_APPROVAL' }
+}
 Assert-Keys $manifest.inventories @('baseline','candidate')
 foreach($side in @('baseline','candidate')) {
     $inventory=$manifest.inventories.$side; Assert-Keys $inventory $runtime
@@ -224,6 +231,7 @@ foreach($side in @('baseline','candidate')) {
 }
 $changed=@($runtime | Where-Object { $manifest.inventories.baseline.$_ -cne $manifest.inventories.candidate.$_ })
 $allowed=@('dns.sh','health.sh','redmi.sh','status.sh','telegram-poller.uc') | ForEach-Object { 'usr/lib/home-gateway/'+$_ }
+if($monitor) { $allowed=@('usr/bin/gateway')+@('health.sh','network.sh','vpn.sh','incidents.uc','notifications.uc','telegram-poller.uc','torrent.sh' | ForEach-Object { 'usr/lib/home-gateway/'+$_ }) }
 if(!$changed.Count -or @($changed | Where-Object { $_ -cnotin $allowed }).Count -or ($changed -join "`n") -cne ($manifest.changed -join "`n")) { throw 'SERIES_DELTA' }
 $controlPaths=@('usr/libexec/home-gateway-deploy/engine.sh','usr/libexec/home-gateway-deploy/wrapper.sh','etc/init.d/home-gateway-deploy-recover','etc/init.d/home-gateway-migration','usr/libexec/home-gateway-deploy/migration-admission.sh')
 $controlPaths+=@('state','snapshot','candidate','runtime','handoff','coordinator','controls','service','terminal') | ForEach-Object { 'usr/libexec/home-gateway-deploy/migration-'+$_+'.uc' }

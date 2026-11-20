@@ -205,7 +205,9 @@ function dashboard_markup(view) {
 		[ { text: view == 'status' ? '🔄 Обновить статус' : '🏠 Главная', callback_data: 'nav:status' },
 		  { text: view == 'vtest' ? '🔄 Обновить результаты' : '🧪 Результаты vtest', callback_data: 'nav:vtest' } ],
 		[ { text: view == 'actions' ? '🔄 Обновить действия' : '⚙️ Действия', callback_data: 'nav:actions' },
-		  { text: 'ℹ️ Помощь', callback_data: 'nav:help' } ] ] });
+		  { text: 'ℹ️ Помощь', callback_data: 'nav:help' } ],
+        [ { text: '📊 За сутки', callback_data: 'nav:day' },
+          { text: '🗓 За неделю', callback_data: 'nav:week' } ] ] });
 }
 
 function answer_callback(callback_id, text) {
@@ -413,7 +415,8 @@ function help_view() {
 ⚙️ Действия — доступные перезапуски с отдельным подтверждением.
 Кнопки просмотра работают и в старых сообщениях.
 Переход в раздел запрашивает отмену ожидающего подтверждения.
-Команды: /start, /status, /vtest, /actions, /help.
+Команды: /start, /status, /vtest, /actions, /summary, /history, /help.
+📊 /summary — сутки, /history — неделя; только сохранённые наблюдения.
 VPN, DNS, firewall и MAIN через это меню не меняются.`;
 }
 function action_confirmation(callback, action) {
@@ -440,6 +443,13 @@ function confirm_action(callback, token) {
     run_gateway([ 'telegram', 'edit-message', `${callback.message.chat.id}`, `${callback.message.message_id}`, text, dashboard_markup('actions') ]);
 }
 
+function history_view(period) {
+    let result = run_gateway([ 'history', period == 'week' ? 'week' : 'day' ]);
+    if (result.code != 0 || !length(trim(result.output)) || length(result.output) > 3500)
+        return '📊 История пока недоступна. Наблюдение и сохранение проверяются отдельно.';
+    return result.output;
+}
+
 function send_dashboard(chat_id, view) {
 	view = view || 'status';
 	let issued_at = time();
@@ -451,7 +461,7 @@ function send_dashboard(chat_id, view) {
 		'telegram',
 		'send-message',
 		`${chat_id}`,
-		view == 'actions' ? view_data.text : view == 'vtest' ? build_vtest() : view == 'help' ? help_view() : build_status(),
+		view == 'actions' ? view_data.text : view == 'vtest' ? build_vtest() : view == 'help' ? help_view() : index([ 'day', 'week' ], view) >= 0 ? history_view(view) : build_status(),
 		markup
 	]);
 
@@ -480,7 +490,7 @@ function edit_dashboard(chat_id, message_id, view) {
 		'edit-message',
 		`${chat_id}`,
 		`${message_id}`,
-		view == 'actions' ? view_data.text : view == 'vtest' ? build_vtest() : view == 'help' ? help_view() : build_status(),
+		view == 'actions' ? view_data.text : view == 'vtest' ? build_vtest() : view == 'help' ? help_view() : index([ 'day', 'week' ], view) >= 0 ? history_view(view) : build_status(),
 		markup
 	]);
 
@@ -527,10 +537,16 @@ function handle_message(message, allowed_user, allowed_chat) {
 		return;
 
 	let text = message?.text ?? '';
-	if (index([ '/start', '/status', '/vtest', '/actions', '/help' ], text) >= 0)
+	if (index([ '/start', '/status', '/vtest', '/actions', '/help', '/summary', '/history' ], text) >= 0)
 		run_gateway([ 'actions', 'cancel', `${from_id}`, `${chat_id}` ]);
 
 	switch (text) {
+    case '/summary':
+        send_dashboard(chat_id, 'day');
+        break;
+    case '/history':
+        send_dashboard(chat_id, 'week');
+        break;
 	case '/help':
 		send_dashboard(chat_id, 'help');
 		break;
@@ -584,7 +600,7 @@ function handle_callback(callback, allowed_user, allowed_chat) {
 
 	let parts = split(data, ':');
 	if (length(parts) == 2 && parts[0] == 'nav' &&
-	    index([ 'status', 'vtest', 'actions', 'help' ], parts[1]) >= 0) {
+	    index([ 'status', 'vtest', 'actions', 'help', 'day', 'week' ], parts[1]) >= 0) {
 		// Acknowledge before potentially slow status collection. Keep authorization
 		// above this branch; action preparation/confirmation still use bound tokens.
 		answer_callback(`${callback_id}`, '');

@@ -77,9 +77,14 @@ printf '%s\n' "$pin" > "$LAB/update-pin"
 check v1_preflight sh "$update/update.sh" preflight "$pin"
 check v1_apply sh "$update/update.sh" apply "$pin"
 check v1_verify sh "$update/update.sh" verify "$pin"
-mkdir -m 700 "$LAB/a" "$LAB/b"
+mkdir -m 700 "$LAB/a"
+# HGVM_OBSERVER_BEGIN
+mkdir -m 700 "$LAB/b"
+# HGVM_OBSERVER_END
 tar -xzpf /opt/hg-vm-lab/series-a.tar.gz -C "$LAB/a"
+# HGVM_OBSERVER_BEGIN
 tar -xzpf /opt/hg-vm-lab/series-b.tar.gz -C "$LAB/b"
+# HGVM_OBSERVER_END
 printf '0\n' > "$LAB/counter"
 printf 'retained-client-cursor\n' > /etc/home-gateway/state/series-cursor-proof
 printf 'retained-client-queue\n' > /etc/home-gateway/state/series-queue-proof
@@ -95,6 +100,32 @@ stage() {
  source=$(/usr/bin/ucode -e 'import * as fs from "fs";print(json(fs.readfile(ARGV[0])).source_commit);' -- "$kit/manifest.json")
  grep -qx "OWNER_SERIES_STAGE=$mode RESULT=PASS SOURCE=$source OPERATION=$operation" "$LAB/stage-output"
 }
+# HGVM_MONITOR_BEGIN
+mkdir -m 700 "$LAB/baseline"
+tar -xzpf /opt/hg-vm-lab/series-baseline.tar.gz -C "$LAB/baseline"
+new_id;printf '%s\n' "$op" > "$LAB/baseline-operation"
+check installed62_preflight stage "$LAB/baseline" preflight "$op"
+check installed62_apply stage "$LAB/baseline" apply "$op"
+check installed62_verify stage "$LAB/baseline" verify "$op"
+check monitor_format ucode -e 'import * as fs from "fs";let m=json(fs.readfile(ARGV[0]));exit(m.format=="HG_OWNER_MONITOR_V3" && m.baseline_commit=="62b5c4a9f25bc657fa1456eeacdfdc9039648cae" && m.parent.format=="HG_OWNER_UPDATE_V2"?0:1);' -- "$LAB/a/manifest.json"
+setsid_refusal() {
+ mode=$1
+ tool=$(command -v setsid) || return 1
+ find /etc/home-gateway-owner-series /etc/home-gateway-migration /etc/home-gateway-deploy -type f -exec sha256sum '{}' ';' | sort > "$LAB/refusal-before"
+ sha256sum /usr/bin/gateway /usr/lib/home-gateway/* >> "$LAB/refusal-before"
+ mv "$tool" "$tool.hg-vm-saved" || return 1
+ if [ "$mode" = broken ];then printf '#!/bin/sh\nexit 1\n' > "$tool";chmod 755 "$tool";fi
+ new_id
+ stage "$LAB/a" preflight "$op";result=$?
+ rm -f "$tool";mv "$tool.hg-vm-saved" "$tool"
+ [ "$result" -ne 0 ] && grep -q MONITOR_SETSID_REQUIRED "$LAB/stage-output" || return 1
+ find /etc/home-gateway-owner-series /etc/home-gateway-migration /etc/home-gateway-deploy -type f -exec sha256sum '{}' ';' | sort > "$LAB/refusal-after"
+ sha256sum /usr/bin/gateway /usr/lib/home-gateway/* >> "$LAB/refusal-after"
+ cmp "$LAB/refusal-before" "$LAB/refusal-after"
+}
+check monitor_missing_setsid_before_writes setsid_refusal missing
+check monitor_broken_setsid_before_writes setsid_refusal broken
+# HGVM_MONITOR_END
 new_id; a1=$op
 check unused_recovery_refused refused stage "$LAB/a" recover "$a1"
 check series_preflight stage "$LAB/a" preflight "$a1"
@@ -102,6 +133,7 @@ check series_apply_a stage "$LAB/a" apply "$a1"
 check series_verify_a stage "$LAB/a" verify "$a1"
 check apply_not_replayed refused stage "$LAB/a" apply "$a1"
 find "/etc/home-gateway-owner-series/generations/$a1" "/etc/home-gateway-deploy/$a1" -type f -exec sha256sum '{}' ';' | sort > "$LAB/a-history"
+# HGVM_OBSERVER_BEGIN
 new_id; b1=$op
 check series_apply_b stage "$LAB/b" apply "$b1"
 check series_verify_b stage "$LAB/b" verify "$b1"
@@ -120,6 +152,15 @@ new_id; a2=$op
 check apply_after_full_rollback_chain stage "$LAB/a" apply "$a2"
 new_id
 check restore_v1_for_crash_matrix stage "$LAB/a" rollback "$op"
+# HGVM_OBSERVER_END
+# HGVM_MONITOR_BEGIN
+new_id
+check monitor_rollback_to_installed62 stage "$LAB/a" rollback "$op"
+check monitor_rollback_verified stage "$LAB/a" verify "$op"
+check monitor_original_receipt_immutable sha256sum -c "$LAB/a-history"
+check monitor_v1_history_immutable sha256sum -c "$LAB/v1-history"
+# HGVM_MONITOR_END
+
 guardian_admission_case() {
  # Reuse the interrupted operation: only the disposable VM's lease is edited.
  # A live unrelated PID must never authenticate a stale process start time.
@@ -187,7 +228,12 @@ crash_case() {
  if [ "$(cat /etc/home-gateway-owner-series/current 2>/dev/null)" = "$interrupted" ];then
    new_id;stage "$LAB/a" rollback "$op" || return 1
  fi
+# HGVM_OBSERVER_BEGIN
  /usr/bin/ucode "$update/inspect.uc" "$update" "$(cat "$LAB/update-pin")" journal || return 1
+# HGVM_OBSERVER_END
+# HGVM_MONITOR_BEGIN
+ stage "$LAB/baseline" verify "$(cat "$LAB/baseline-operation")" || return 1
+# HGVM_MONITOR_END
  sha256sum -c "$LAB/v1-history" && sha256sum -c "$LAB/client-state"
 }
 check cut_lease_published crash_case lease_published

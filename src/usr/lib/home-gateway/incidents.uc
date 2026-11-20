@@ -88,6 +88,10 @@ function read_json_file(path, fallback) {
 }
 
 function atomic_write_json(path, value) {
+    if (fs.stat(path)?.type == 'directory') {
+        warn('incidents: target is a directory\n');
+        return false;
+    }
     let tmp = `${path}.tmp.${time()}`;
     let file = fs.open(tmp, 'w');
 
@@ -177,7 +181,9 @@ function set_candidate(runtime, component, state, count, reason, first_seen, las
         count,
         reason,
         first_seen,
-        last_seen
+        last_seen,
+        first_uptime: count > 0 ? runtime.observation?.finished_uptime : null,
+        boot_id: runtime.observation?.boot_id
     };
 
     return runtime.candidates[component];
@@ -250,7 +256,10 @@ function load_active_incidents() {
                 state: event?.state ?? 'UNKNOWN',
                 reason: event?.reason ?? 'unknown',
                 opened_at: event?.opened_at ?? event?.at ?? null,
-                changed_at: event?.at ?? null
+                changed_at: event?.at ?? null,
+                opened_boot_id: event?.opened_boot_id,
+                opened_uptime: event?.opened_uptime,
+                opened_context: event?.opened_context
             };
         }
         else if (kind == 'STATE_CHANGED') {
@@ -317,6 +326,10 @@ function process_component(spec, observation, now, runtime, active, events) {
     let state = `${observation?.state ?? 'UNKNOWN'}`;
     let reason = `${observation?.reason ?? 'unknown'}`;
     let incident = active[name];
+    if (type(runtime.context_boundaries) != 'object') runtime.context_boundaries = {};
+    if (incident?.opened_context != null && runtime.observation?.context != null &&
+        incident.opened_context != runtime.observation.context)
+        runtime.context_boundaries[incident.incident_id] = true;
 
     if (state != 'OK' &&
         state != 'DEGRADED' &&
@@ -344,10 +357,19 @@ function process_component(spec, observation, now, runtime, active, events) {
             return;
 
         let opened_at = c.first_seen ?? now;
+        let e = runtime.observation;
         let incident_id = `${name}-${opened_at}`;
+        if (e?.boot_id != null && e?.incarnation != null) {
+            let boot = substr(replace(e.boot_id, /[^a-zA-Z0-9]/g, ''), 0, 32);
+            let incarnation = substr(replace(e.incarnation, /[^a-zA-Z0-9]/g, ''), 0, 32);
+            incident_id = `${name}-${boot}-${incarnation}-${int(e.sequence ?? 0)}`;
+        }
         let event = new_event('OPEN', name, role, incident_id, state, reason, now);
 
         event.opened_at = opened_at;
+        event.opened_boot_id = c.boot_id;
+        event.opened_uptime = c.first_uptime;
+        event.opened_context = runtime.observation?.context;
 
         active[name] = {
             incident_id,
@@ -356,7 +378,10 @@ function process_component(spec, observation, now, runtime, active, events) {
             state,
             reason,
             opened_at,
-            changed_at: now
+            changed_at: now,
+            opened_boot_id: event.opened_boot_id,
+            opened_uptime: event.opened_uptime,
+            opened_context: event.opened_context
         };
 
         push(events, event);
@@ -391,6 +416,12 @@ function process_component(spec, observation, now, runtime, active, events) {
 
         let opened_at = int(incident.opened_at ?? now);
         event.duration_seconds = now >= opened_at ? now - opened_at : null;
+        event.duration_scope = 'same_boot_observation_lifecycle';
+        event.observed_duration_seconds = incident.opened_boot_id == runtime.observation?.boot_id &&
+            incident.opened_uptime != null && runtime.observation?.finished_uptime >= incident.opened_uptime ?
+            runtime.observation.finished_uptime - incident.opened_uptime : null;
+        event.context_changed = runtime.context_boundaries[incident.incident_id] == true;
+        delete runtime.context_boundaries[incident.incident_id];
 
         push(events, event);
         delete active[name];
@@ -462,6 +493,279 @@ function active_count(active) {
     return count;
 }
 
+
+const HISTORY_RAM = RUNTIME_DIR + '/monitor-history.json';
+const HISTORY_DISK = STATE_DIR + '/monitor-history.json';
+const HISTORY_CAP = 2097152;
+function empty_history() {
+    return { schema_version: 1, records: [], daily: [], events: [], truncated: false, last: null, flushed_uptime: null };
+}
+function load_history() {
+    let h = read_json_file(HISTORY_RAM, null);
+    let ram_unreadable = fs.stat(HISTORY_RAM) != null &&
+        (h?.schema_version != 1 || type(h?.records) != 'array' || type(h?.daily) != 'array');
+    if (h?.schema_version != 1 || type(h?.records) != 'array' || type(h?.daily) != 'array')
+        h = read_json_file(HISTORY_DISK, null);
+    let disk_unreadable = h == null && fs.stat(HISTORY_DISK) != null;
+    if (h?.schema_version != 1 || type(h?.records) != 'array' || type(h?.daily) != 'array') {
+        disk_unreadable = disk_unreadable || h != null;
+        h = empty_history();
+    }
+    if (ram_unreadable || disk_unreadable) {
+        h.truncated = true;
+        h.recovery = ram_unreadable ? 'runtime_checkpoint_unreadable' : 'persistent_checkpoint_unreadable';
+    }
+    if (h.last != null && (type(h.last) != 'object' || type(h.last.uptime) != 'int' ||
+        type(h.last.boot_id) != 'string' || type(h.last.components) != 'object')) {
+        h.last = null; h.truncated = true;
+    }
+    if (h.events == null) h.events = [];
+    let good_events = [];
+    if (type(h.events) == 'array') for (let event in h.events) {
+        if (type(event) == 'object' && type(event.incident_id) == 'string' &&
+            type(event.at) == 'int' && index(['OPEN','STATE_CHANGED','RECOVERED'],event.event)>=0 &&
+            length(filter(COMPONENTS, spec=>spec.name==event.component))==1)
+            push(good_events,event);
+        else h.truncated=true;
+    }
+    else h.truncated=true;
+    h.events=good_events;
+    let rows = [];
+    for (let r in h.records) {
+        if (type(r) != 'object' || type(r.boot_id) != 'string' || type(r.end_uptime) != 'int' ||
+            (!r.gap && (type(r.seconds) != 'int' || r.seconds <= 0 || type(r.components) != 'object'))) {
+            h.truncated = true; continue;
+        }
+        let valid = true;
+        if (!r.gap) for (let spec in COMPONENTS) {
+            let c = r.components[spec.name];
+            if (type(c) != 'object' || type(c.covered_seconds) != 'int' ||
+                c.covered_seconds < 0 || c.covered_seconds > r.seconds) valid = false;
+        }
+        if (valid) push(rows, r); else h.truncated = true;
+    }
+    h.records = rows;
+    rows = [];
+    for (let d in h.daily) {
+        if (type(d) == 'object' && type(d.day) == 'int' && type(d.components) == 'object') push(rows, d);
+        else h.truncated = true;
+    }
+    h.daily = rows;
+    return h;
+}
+function valid_sample(c, e) {
+    let s = c?.sample;
+    return e?.schema_version == 1 && type(e?.boot_id) == 'string' &&
+        type(e?.context) == 'string' && type(e?.finished_uptime) == 'int' &&
+        s?.valid == true && type(s?.id) == 'string' && length(s.id) > 0 &&
+        s?.boot_id == e.boot_id && s?.context == e.context &&
+        type(s?.checked_uptime) == 'int' && type(s?.expires_uptime) == 'int' &&
+        s.checked_uptime <= e.finished_uptime && e.finished_uptime <= s.expires_uptime;
+}
+function gated_component(spec, health, runtime) {
+    let c = health.components?.[spec.name] ?? {};
+    if (getenv('HG_INCIDENTS_LEGACY_SAMPLES') == '1' && health?.observation == null) return c;
+    if (!valid_sample(c, health?.observation)) return { state: 'UNKNOWN', reason: 'invalid_or_stale_sample' };
+    if (type(runtime.samples) != 'object') runtime.samples = {};
+    let p = runtime.samples[spec.name];
+    let a = c.sample;
+    if (p?.id == a.id || (p?.boot_id == a.boot_id && p?.context == a.context && p?.checked_uptime >= a.checked_uptime))
+        return null;
+    runtime.samples[spec.name] = { id: a.id, boot_id: a.boot_id, context: a.context, checked_uptime: a.checked_uptime };
+    return c;
+}
+function record_history(health, epoch, events) {
+    let e = health?.observation;
+    if (e?.schema_version != 1 || type(e?.finished_uptime) != 'int') return true;
+    let h = load_history();
+    let p = h.last;
+    let c = { boot_id: e.boot_id, context: e.context, uptime: e.finished_uptime,
+        epoch: epoch >= 1700000000 ? epoch : null, trusted: e.wall_time_trusted == true, components: {} };
+    for (let spec in COMPONENTS) {
+        let a = health.components?.[spec.name];
+        c.components[spec.name] = valid_sample(a, e) ? { state: a.state, expires: a.sample.expires_uptime } :
+            { state: 'UNKNOWN', expires: c.uptime };
+    }
+    if (p?.boot_id == c.boot_id && p?.context == c.context && type(p?.uptime) == 'int' && c.uptime > p.uptime) {
+        let duration = c.uptime - p.uptime;
+        let r = { boot_id: c.boot_id, end_uptime: c.uptime, start_epoch: p.epoch, end_epoch: c.epoch,
+            seconds: duration, components: {} };
+        if (p.epoch == null || c.epoch == null || c.epoch-p.epoch-duration > 5 || c.epoch-p.epoch-duration < -5) {
+            r.start_epoch = null; r.end_epoch = null;
+        }
+        for (let spec in COMPONENTS) {
+            let a = p.components?.[spec.name];
+            let covered = (a?.state == 'OK' || a?.state == 'DOWN' || a?.state == 'DEGRADED') ? max(0, min(c.uptime, a?.expires ?? p.uptime) - p.uptime) : 0;
+            r.components[spec.name] = { state: a?.state ?? 'UNKNOWN', covered_seconds: covered, unknown_seconds: duration-covered };
+        }
+        // Run-length encode stable complete intervals; transitions and partial expiry remain separate.
+        let tail = length(h.records) ? h.records[length(h.records)-1] : null;
+        let merge = tail != null && !tail.gap && tail.boot_id == r.boot_id &&
+            tail.end_uptime == p.uptime && tail.end_epoch == r.start_epoch;
+        for (let spec in COMPONENTS) {
+            let a = tail?.components?.[spec.name]; let b = r.components[spec.name];
+            if (a?.state != b.state ||
+                !((a?.covered_seconds == 0 && b.covered_seconds == 0) ||
+                  (a?.covered_seconds == tail?.seconds && b.covered_seconds == r.seconds))) merge = false;
+        }
+        if (merge) {
+            tail.end_uptime = r.end_uptime; tail.end_epoch = r.end_epoch; tail.seconds += r.seconds;
+            for (let spec in COMPONENTS) {
+                tail.components[spec.name].covered_seconds += r.components[spec.name].covered_seconds;
+                tail.components[spec.name].unknown_seconds += r.components[spec.name].unknown_seconds;
+            }
+        }
+        else push(h.records, r);
+        if (p.epoch != null && c.epoch != null && (c.epoch-p.epoch-duration <= 5 && c.epoch-p.epoch-duration >= -5)) {
+            // Split by UTC midnight; only the retained 30 days are materialized.
+            let cursor = max(p.epoch, (int(c.epoch/86400)-29)*86400);
+            while (cursor < c.epoch) {
+                let day = int(cursor / 86400);
+                let end = min(c.epoch, (day+1)*86400);
+                let bucket = null;
+                for (let d in h.daily) if (d.day == day) bucket = d;
+                if (bucket == null) { bucket = { day, components: {} }; push(h.daily, bucket); }
+                for (let spec in COMPONENTS) {
+                    if (bucket.components[spec.name] == null)
+                        bucket.components[spec.name] = { covered_seconds: 0, unknown_seconds: 0, ok_seconds: 0 };
+                    let t = bucket.components[spec.name]; let a = r.components[spec.name];
+                    let covered = max(0, min(end, p.epoch+a.covered_seconds)-cursor);
+                    t.covered_seconds += covered; t.unknown_seconds += end-cursor-covered;
+                    if (a.state == 'OK') t.ok_seconds += covered;
+                }
+                cursor = end;
+            }
+        }
+    }
+    else if (p != null && (p.boot_id != c.boot_id || p.context != c.context))
+        push(h.records, { gap: true, boot_id: c.boot_id, end_epoch: c.epoch, end_uptime: c.uptime });
+    for (let event in events ?? []) push(h.events, {
+        event:event.event, component:event.component, incident_id:event.incident_id,
+        at:event.at, observed_boot_id:event.observed_boot_id, observed_uptime:event.observed_uptime,
+        state:event.state, observed_duration_seconds:event.observed_duration_seconds ?? null,
+        context_changed:event.context_changed==true, wall_time_trusted:event.wall_time_trusted==true
+    });
+    let recent_events=[];
+    for (let event in h.events) {
+        let age=event.observed_boot_id==c.boot_id && type(event.observed_uptime)=='int'
+            ? c.uptime-event.observed_uptime : c.epoch!=null ? c.epoch-event.at : null;
+        if (age!=null && age>=0 && age<=604800) push(recent_events,event);
+    }
+    h.events=recent_events;
+    while (length(h.events)>512) { shift(h.events); h.truncated=true; }
+    h.last = c;
+    let keep = [];
+    for (let r in h.records) {
+        let recent = r.boot_id == c.boot_id && c.uptime-r.end_uptime <= 604800;
+        if (c.epoch != null && r.end_epoch != null) recent = c.epoch-r.end_epoch <= 604800;
+        if (recent) {
+            if (!r.gap) {
+                let age = r.boot_id == c.boot_id ? c.uptime-r.end_uptime : c.epoch-r.end_epoch;
+                let remove = max(0, r.seconds-(604800-age));
+                if (remove > 0) {
+                    r.seconds -= remove;
+                    if (r.start_epoch != null) r.start_epoch += remove;
+                    for (let spec in COMPONENTS) {
+                        let a = r.components[spec.name];
+                        a.covered_seconds = max(0, a.covered_seconds-remove);
+                        a.unknown_seconds = r.seconds-a.covered_seconds;
+                    }
+                }
+            }
+            push(keep, r);
+        }
+    }
+    h.records = keep; keep = [];
+    for (let d in h.daily) if (c.epoch == null || d.day >= int(c.epoch/86400)-29) push(keep, d);
+    h.daily = keep;
+    while (length(sprintf('%J', h.daily)) > 524288 && length(h.daily)) { shift(h.daily); h.truncated = true; }
+    while (length(sprintf('%J', h)) > HISTORY_CAP && length(h.records)) { shift(h.records); h.truncated = true; }
+    while (length(sprintf('%J', h)) > HISTORY_CAP && length(h.events)) { shift(h.events); h.truncated = true; }
+    if (p?.boot_id != c.boot_id || h.flushed_uptime == null || c.uptime-h.flushed_uptime >= 900) {
+        ensure_state_dir(); h.flushed_uptime = c.uptime;
+        if (!atomic_write_json(HISTORY_DISK, h)) {
+            h.flushed_uptime = null; h.truncated = true; atomic_write_json(HISTORY_RAM, h); return false;
+        }
+    }
+    return atomic_write_json(HISTORY_RAM, h);
+}
+function history_query_clock() {
+    // Local CLI fixture seam only; these values are never persisted as observations.
+    let boot = getenv('HG_HISTORY_QUERY_BOOT_ID') ?? trim(fs.readfile('/proc/sys/kernel/random/boot_id') ?? '');
+    let raw = split(trim(fs.readfile('/proc/uptime') ?? ''), ' ')[0];
+    let uptime = int(getenv('HG_HISTORY_QUERY_UPTIME') ?? raw);
+    let epoch = int(getenv('HG_HISTORY_QUERY_EPOCH') ?? time());
+    return { boot_id: boot, uptime, epoch };
+}
+function history_summary(human) {
+    let period = ARGV[2] || 'day';
+    if (period != 'day' && period != 'week') return 2;
+    let h = load_history(); let span = period == 'week' ? 604800 : 86400;
+    let clock = history_query_clock();
+    let age = null;
+    if (h.last?.boot_id == clock.boot_id && clock.uptime >= h.last?.uptime)
+        age = clock.uptime-h.last.uptime;
+    else if (h.last?.epoch != null && clock.epoch >= h.last.epoch)
+        age = clock.epoch-h.last.epoch;
+    let result = { schema_version: 1, period, requested_seconds: span, detail_retention_days: 7,
+        daily_retention_days: 30, checkpoint_seconds: 900, storage_cap_bytes: HISTORY_CAP,
+        daily_cap_bytes: 524288, truncated: h.truncated, recovery: h.recovery,
+        generated_at: clock.epoch, period_end: 'query_time', query_clock: clock,
+        latest_sample: h.last == null ? null : { epoch: h.last.epoch, uptime: h.last.uptime, boot_id: h.last.boot_id },
+        snapshot_age_seconds: age, wall_time_trusted: h.last?.trusted == true,
+        wall_time_quality: h.last?.trusted ? 'trusted' : (h.last?.epoch != null ? 'unconfirmed' : 'unknown'),
+        reboot_gaps: 0, components: {}, daily: h.daily, events: [],
+        incident_counts:{opened:0,recovered:0,changed:0} };
+    for (let event in h.events) {
+        let age=event.observed_boot_id==clock.boot_id && type(event.observed_uptime)=='int'
+            ? clock.uptime-event.observed_uptime : clock.epoch>=1700000000 ? clock.epoch-event.at : null;
+        if(age==null || age<0 || age>span) continue;
+        push(result.events,event);
+        if(event.event=='OPEN') result.incident_counts.opened++;
+        else if(event.event=='RECOVERED') result.incident_counts.recovered++;
+        else result.incident_counts.changed++;
+    }
+    for (let spec in COMPONENTS) result.components[spec.name] = { covered_seconds: 0, unknown_seconds: 0,
+        ok_seconds: 0, down_seconds: 0, degraded_seconds: 0 };
+    for (let r in h.records) {
+        let age = r.boot_id == clock.boot_id && clock.uptime >= r.end_uptime ? clock.uptime-r.end_uptime : null;
+        if (r.boot_id != clock.boot_id && clock.epoch >= 1700000000 && r.end_epoch != null)
+            age = clock.epoch-r.end_epoch;
+        if (age == null || age < 0 || age >= span) continue;
+        if (r.gap) { result.reboot_gaps++; continue; }
+        let kept_seconds = min(r.seconds, span-age);
+        let removed = r.seconds-kept_seconds;
+        for (let spec in COMPONENTS) {
+            let a = r.components?.[spec.name]; let t = result.components[spec.name];
+            let covered = max(0, (a?.covered_seconds ?? 0)-removed);
+            t.covered_seconds += covered;
+            t.unknown_seconds += kept_seconds-covered;
+            if (a?.state == 'OK') t.ok_seconds += covered;
+            if (a?.state == 'DOWN') t.down_seconds += covered;
+            if (a?.state == 'DEGRADED') t.degraded_seconds += covered;
+        }
+    }
+    for (let spec in COMPONENTS) {
+        let t = result.components[spec.name];
+        t.unobserved_seconds = max(0, span-t.covered_seconds-t.unknown_seconds);
+        t.availability_percent = t.covered_seconds > 0 ? 100*t.ok_seconds/t.covered_seconds : null;
+    }
+    if (!human) { print(result, '\n'); return 0; }
+    print(`Окно до момента запроса; возраст последнего наблюдения: ${age == null ? 'неизвестен' : `${int(age)}с`}\n`);
+    print(`История: ${period == 'week' ? 'неделя' : 'сутки'}; часы: ${result.wall_time_quality}; разрывы: ${result.reboot_gaps}\n`);
+    for (let spec in COMPONENTS) {
+        let t = result.components[spec.name];
+        print(`${spec.label}: OK ${int(t.ok_seconds)}с; DOWN ${int(t.down_seconds)}с; DEGRADED ${int(t.degraded_seconds)}с; покрытие ${int(t.covered_seconds)}с; UNKNOWN ${int(t.unknown_seconds)}с; нет наблюдений ${int(t.unobserved_seconds)}с\n`);
+    }
+    print(`Подтверждено сбоев: ${result.incident_counts.opened}; восстановлений: ${result.incident_counts.recovered}\n`);
+    for(let i=max(0,length(result.events)-8); i<length(result.events); i++) {
+        let event=result.events[i];
+        let kind=event.event=='OPEN'?'сбой':event.event=='RECOVERED'?'восстановление':'изменение';
+        print(`${event.component}: ${kind}; ID ${event.incident_id}\n`);
+    }
+    if (result.truncated) print('Полнота сокращена лимитом хранения или ошибкой записи\n');
+    return 0;
+}
 function tick() {
     let lock = acquire_tick_lock();
 
@@ -491,8 +795,24 @@ function tick() {
     let active = load_active_incidents();
     let events = [];
 
-    for (let spec in COMPONENTS)
-        process_component(spec, health.components?.[spec.name] ?? {}, now, runtime, active, events);
+    let e = health?.observation;
+    if (e != null) {
+        let p = runtime.observation;
+        if (p?.boot_id != e.boot_id || p?.context != e.context ||
+            (getenv('HG_MONITOR_INCARNATION') != null && p?.incarnation != e.incarnation)) runtime.candidates = {};
+        runtime.observation = e;
+    }
+    for (let spec in COMPONENTS) {
+        let c = gated_component(spec, health, runtime);
+        if (c != null) process_component(spec, c, now, runtime, active, events);
+    }
+    for (let event in events) {
+        if (e != null) {
+            event.observed_boot_id = e.boot_id;
+            event.observed_uptime = e.finished_uptime;
+            event.wall_time_trusted = e.wall_time_trusted == true;
+        }
+    }
 
     // Journal является persistent source of truth. Runtime counters сохраняем
     // только после успешного append transition events.
@@ -500,6 +820,8 @@ function tick() {
         lock.close();
         return 70;
     }
+
+    let history_ok = record_history(health, now, events);
 
     runtime.updated_at = now;
     ensure_runtime_dir();
@@ -517,7 +839,7 @@ function tick() {
         print(`incidents: ${event.event} ${event.component} ${event.state} ${event.reason}\n`);
 
     lock.close();
-    return 0;
+    return history_ok ? 0 : 70;
 }
 
 function show_human() {
@@ -648,6 +970,12 @@ function run_selftest() {
 let rc;
 
 switch (MODE) {
+case 'history-json':
+    rc = history_summary(false);
+    break;
+case 'history':
+    rc = history_summary(true);
+    break;
 case 'show':
     rc = show_human();
     break;
@@ -665,7 +993,7 @@ case 'selftest':
     break;
 
 default:
-    warn('usage: incidents.uc [gateway-path] [show|json|tick|selftest]\n');
+    warn('usage: incidents.uc [gateway-path] [show|json|tick|selftest|history|history-json] [day|week]\n');
     rc = 2;
     break;
 }

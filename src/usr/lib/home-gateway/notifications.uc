@@ -15,6 +15,7 @@ const DEDUP = STATE_DIR + '/notification-dedup.json';
 const JOURNAL = STATE_DIR + '/incidents.jsonl';
 const POLICY = STATE_DIR + '/notification-policy.json';
 const COMPONENTS = [ 'wan', 'dns', 'main', 'torrent', 'redmi', 'asata', 'tailscale' ];
+const MONITOR_COMPONENTS = [ 'wan', 'dns', 'main', 'redmi' ];
 const STATUSES = [ 'PENDING', 'INFLIGHT', 'SENT', 'FAILED', 'COALESCED' ];
 const MAX_BYTES = 2097152;
 
@@ -104,7 +105,7 @@ function contains(values, value) {
 }
 function valid_event(event) {
     return event.schema_version == 1 && type(event.incident_id) == 'string' &&
-        match(event.incident_id, /^(wan|dns|main|torrent|redmi|asata|tailscale)-[0-9]+$/) != null &&
+        match(event.incident_id, /^(wan|dns|main|torrent|redmi|asata|tailscale)-([0-9]+|[a-f0-9]{32}-[a-f0-9]{32}-[0-9]{1,20})$/) != null &&
         contains(COMPONENTS, event.component) &&
         contains([ 'OPEN', 'STATE_CHANGED', 'RECOVERED' ], event.event) &&
         type(event.at) == 'int' && event.at >= 0;
@@ -162,7 +163,7 @@ function validate_dedup(value) {
     let seen = {};
     for (let id in value.ids) {
         if (type(id) != 'string' || seen[id] ||
-            match(id, /^(wan|dns|main|torrent|redmi|asata|tailscale)-[0-9]+-(OPEN|STATE_CHANGED|RECOVERED)(-[0-9]+)?$/) == null)
+            match(id, /^(wan|dns|main|torrent|redmi|asata|tailscale)-([0-9]+|[a-f0-9]{32}-[a-f0-9]{32}-[0-9]{1,20})-(OPEN|STATE_CHANGED|RECOVERED)(-[0-9]+)?$/) == null)
             die('notifications: invalid dedup receipt; delivery paused\n');
         seen[id] = true;
     }
@@ -298,10 +299,27 @@ function sync_queue(items) {
             source_event: event.event, incident_id: event.incident_id,
             component: event.component, role: event.role ?? 'unknown',
             state: event.state ?? 'UNKNOWN', reason: event.reason ?? 'unknown',
+            observed_duration_seconds: event.observed_duration_seconds ?? null,
+            context_changed: event.context_changed == true,
+            wall_time_trusted: type(event.wall_time_trusted) == 'bool' ? event.wall_time_trusted : null,
+            duration_unknown: event.duration_unknown == true ||
+                (match(event.incident_id, /-[a-f0-9]{32}-[a-f0-9]{32}-[0-9]{1,20}$/) != null && event.observed_duration_seconds == null),
             created_at: event.at, opened_at: event.opened_at ?? opened_at[event.incident_id] ?? event.at, status: 'PENDING', attempts: 0, next_attempt_at: 0
         });
         known[id] = true;
         changed = true;
+    }
+    // These observations remain in incident/history state, but are not delivery
+    // work in this monitor profile. Retire them explicitly so a disabled category
+    // cannot accumulate permanent PENDING backpressure.
+    if (getenv('HG_MONITOR_ACTIVE') == '1') for (let item in items) {
+        if ((!contains([ 'wan', 'dns', 'main', 'redmi' ], item.component) ||
+             !contains([ 'OPEN', 'RECOVERED' ], item.event)) &&
+            (item.status == 'PENDING' || (item.status == 'INFLIGHT' && (item.next_attempt_at ?? 0) <= time()))) {
+            item.status = 'COALESCED';
+            item.suppression_reason = 'monitor_profile_filter';
+            changed = true;
+        }
     }
     // A recovered incident supersedes undelivered transitions; one recovery summary.
     for (let recovery in items) {
@@ -309,7 +327,8 @@ function sync_queue(items) {
             continue;
         let opened = opened_at[recovery.incident_id] ?? recovery.opened_at ?? recovery.created_at;
         for (let item in items) {
-            if (item.incident_id != recovery.incident_id || item.created_at > recovery.created_at || item == recovery)
+            if (item.incident_id != recovery.incident_id || item == recovery ||
+                (match(recovery.incident_id, /-[a-f0-9]{32}-[a-f0-9]{32}-[0-9]{1,20}$/) == null && item.created_at > recovery.created_at))
                 continue;
             if (item.event == 'OPEN')
                 opened = item.opened_at ?? item.created_at;
@@ -327,18 +346,36 @@ function sync_queue(items) {
             }
         }
         if (recovery.duration_seconds == null) {
-            recovery.duration_seconds = recovery.created_at - opened;
+            recovery.duration_seconds = type(recovery.observed_duration_seconds) == 'int' && recovery.observed_duration_seconds >= 0
+                ? recovery.observed_duration_seconds : recovery.duration_unknown ? null : max(0, recovery.created_at - opened);
             changed = true;
         }
     }
     return !changed || save_queue(items);
 }
 function delivery(item, proxy, chat) {
-    // Only component/state/event IDs appear in messages; raw reasons may contain secrets.
-    let text = item.event == 'RECOVERED'
-        ? `✅ CUDY: ${item.component} восстановлен. Длительность: ${item.duration_seconds ?? 0} с.`
-        : `⚠️ CUDY: ${item.component} — ${contains([ 'DOWN', 'DEGRADED' ], item.state) ? item.state : 'UNKNOWN'}.`;
-    text += `\nСобытие: ${item.notification_id}`;
+    // Raw reasons may contain secrets; display only bounded local labels/IDs.
+    let labels={wan:'Интернет (WAN)',dns:'DNS',main:'Основной VPN',redmi:'REDMI',
+        torrent:'Торрент VPN',asata:'ASATA',tailscale:'Tailscale'};
+    let label=labels[item.component];
+    let text=item.event=='RECOVERED' ? (item.context_changed
+        ? `ℹ️ CUDY: ${label} — контекст подключения изменился; новое состояние подтверждено.`
+        : `✅ CUDY: ${label} — работа восстановлена.`)
+        : `⚠️ CUDY: ${label} — ${item.state=='DOWN'?'недоступен':item.state=='DEGRADED'?'работает с ограничениями':'состояние неизвестно'}.`;
+    function stamp(at) {
+        let date=gmtime(at);
+        return sprintf('%04d-%02d-%02d %02d:%02d:%02d UTC',date.year,date.mon,date.mday,date.hour,date.min,date.sec);
+    }
+    if (item.wall_time_trusted == false) text+='\nВнимание: время не подтверждено; интервалы считаются по uptime.';
+    text+=`\nСбой замечен: ${stamp(item.opened_at ?? item.created_at)}`;
+    if(item.event=='RECOVERED') {
+        text+=`\nВосстановление замечено: ${stamp(item.created_at)}`;
+        text+=item.duration_unknown || item.duration_seconds==null
+            ? '\nДлительность: неизвестна (нет непрерывного наблюдения).'
+            : `\nИнтервал между наблюдениями: ${item.duration_seconds} с.`;
+    }
+    text+=`\nЗадержка доставки: ${max(0,time()-item.created_at)} с.`;
+    text+=`\nСобытие: ${item.notification_id}`;
     let path = RUNTIME_DIR + '/notification-payload.json';
     let file = fs.open(path, 'w');
     if (!file || !fs.chmod(path, 0600))
@@ -389,11 +426,14 @@ function dispatch(items, policy) {
         return 70;
     let sent = 0;
     let processed = 0;
+    let monitor = getenv('HG_MONITOR_ACTIVE') == '1';
+    let limit = monitor ? 1 : 4;
     for (let item in items) {
+        if (monitor && (!contains(MONITOR_COMPONENTS,item.component) || item.event=='STATE_CHANGED')) continue;
         if (!contains([ 'PENDING', 'INFLIGHT' ], item.status) ||
             (item.next_attempt_at ?? 0) > now || policy.categories[item.component] == false)
             continue;
-        if (++processed > 4)
+        if (++processed > limit)
             break;
         item.status = 'INFLIGHT';
         item.attempts = (item.attempts ?? 0) + 1;
@@ -427,7 +467,7 @@ function dispatch(items, policy) {
             break;
         }
     }
-    print(`notifications: processed=${min(processed, 4)} sent=${sent}\n`);
+    print(`notifications: processed=${min(processed, limit)} sent=${sent}\n`);
     return 0;
 }
 function persistence() {
@@ -445,6 +485,10 @@ function configure() {
     let policy = load_policy();
     let value = ARGV[3] ?? '';
     switch (ARGV[2]) {
+    case 'monitoring':
+        policy.enabled=true;
+        for(let component in COMPONENTS) policy.categories[component]=contains(MONITOR_COMPONENTS,component);
+        break;
     case 'enable': policy.enabled = true; break;
     case 'disable': policy.enabled = false; break;
     case 'mute':
@@ -459,7 +503,10 @@ function configure() {
         break;
     default: return 2;
     }
-    return atomic_write(POLICY, sprintf('%J\n', policy)) ? 0 : 70;
+    if(!atomic_write(POLICY, sprintf('%J\n', policy))) return 70;
+    if(ARGV[2]=='monitoring')
+        print(`Мониторинг включён: WAN, DNS, основной VPN, REDMI. Без повторных напоминаний.\nОтключение звука до: ${policy.mute_until}; пауза доставки до: ${policy.delivery_not_before ?? 0}.\n`);
+    return 0;
 }
 function iteration(mode) {
     let lock = lock_queue();
@@ -500,19 +547,97 @@ if (MODE == 'selftest') {
     print('notifications-selftest: PASS\n');
     exit(0);
 }
+function monotonic() {
+    return +split(fs.readfile('/proc/uptime') ?? '0 ', ' ')[0];
+}
+function bounded(args, seconds) {
+    // Dedicated groups bound descendants; the watcher also drains detached
+    // groups when this authenticated worker PID/start time disappears.
+    let parent = split(trim(fs.readfile('/proc/self/stat')), ' ');
+    let watcher = `
+child=$1
+wrapper=$2
+watcher=$$
+(
+ sleep "$HG_BUDGET"
+ kill -TERM -"$child" 2>/dev/null
+ sleep 1
+ kill -KILL -"$child" 2>/dev/null
+ kill -TERM "$watcher" 2>/dev/null
+) &
+while [ "$(awk '{if($3 != "Z") print $22}' /proc/"$HG_PARENT_PID"/stat 2>/dev/null)" = "$HG_PARENT_START" ]; do sleep .1; done
+kill -KILL -"$child" 2>/dev/null
+kill -TERM "$wrapper" 2>/dev/null
+`;
+    let script = `
+setsid "$@" >/dev/null 2>&1 &
+child=$!
+setsid /bin/sh -c "$HG_WATCH_SCRIPT" hg-watch "$child" "$$" >/dev/null 2>&1 &
+watch=$!
+trap 'kill -KILL -"$child" -"$watch" 2>/dev/null' EXIT
+trap 'exit 143' TERM INT
+wait "$child"
+result=$?
+if [ "$result" -ge 128 ]; then wait "$watch"; result=124; fi
+exit "$result"
+`;
+    return command([ '/usr/bin/env', `HG_BUDGET=${seconds - 1}`,
+        `HG_PARENT_PID=${parent[0]}`, `HG_PARENT_START=${parent[21]}`,
+        `HG_WATCH_SCRIPT=${watcher}`, '/bin/sh', '-c', script, 'hg-bounded', ...args ]).code;
+}
+function heartbeat(value) {
+    let path = RUNTIME_DIR + '/monitor-heartbeat.json';
+    let file = fs.open(path + '.new', 'w');
+    if (!file) return false;
+    let raw = sprintf('%J\n', value);
+    let ok = file.write(raw) == length(raw) && file.close() != null;
+    return ok && fs.rename(path + '.new', path);
+}
 if (MODE == 'loop') {
     ensure_dirs();
     let loop_lock = fs.open(RUNTIME_DIR + '/notifications-loop.lock', 'ae');
     if (!loop_lock || loop_lock.lock('xn') == null) exit(73);
+    let incarnation = trim(fs.readfile('/proc/sys/kernel/random/uuid') ?? '');
+    if (!length(incarnation)) die('notifications: worker incarnation unavailable\n');
+    let sequence = 0;
+    let due = monotonic();
+    let missed = 0;
     while (true) {
-        // Policy controls delivery, never observation. Run queue work in child
-        // CLI processes: corrupt policy/queue must not terminate this worker.
-        // Recovery precedes tick because an interrupted compaction can hold the
-        // incident journal, but a failed recovery must still allow an attempt.
-        gateway([ 'notifications', 'recover' ]);
-        if (gateway([ 'incidents', 'tick' ]).code == 0)
-            gateway([ 'notifications', 'dispatch' ]);
-        command([ '/bin/sleep', '30' ]);
+        let now = monotonic();
+        if (now < due) {
+            command([ '/bin/sleep', `${due - now}` ]);
+            continue;
+        }
+        let late = now - due;
+        if (late >= 60) {
+            let skipped = int(late / 60);
+            missed += skipped;
+            due += skipped * 60;
+        }
+        let scheduled = due;
+        due += 60;
+        let status = { schema_version: 1, worker_incarnation: incarnation,
+            sequence: sequence + 1, scheduled_monotonic: scheduled,
+            started_monotonic: monotonic(), next_due_monotonic: due,
+            missed_deadlines: missed, deadline_missed: late >= 1,
+            state: 'OBSERVING', updated_at: time() };
+        if (late >= 1) status.missed_deadlines = ++missed;
+        heartbeat(status);
+        let recovery = bounded([ '/bin/sh', GATEWAY, 'notifications', 'recover' ], 3);
+        status.recovery_result = recovery == 124 ? 'TIMEOUT' : recovery == 0 ? 'OK' : 'FAILED';
+        let observed = bounded([ '/usr/bin/env', 'HG_MONITOR_ACTIVE=1',
+            `HG_MONITOR_INCARNATION=${incarnation}`, `HG_MONITOR_SEQUENCE=${++sequence}`,
+            '/bin/sh', GATEWAY, 'incidents', 'tick' ], 36);
+        status.sequence = sequence;
+        status.observation_result = observed == 124 ? 'TIMEOUT' : observed == 0 ? 'OK' : 'FAILED';
+        status.finished_monotonic = monotonic();
+        status.state = 'WAITING';
+        status.delivery_result = 'SKIPPED';
+        if (observed == 0 && monotonic() + 15 < due)
+            status.delivery_result = bounded([ '/usr/bin/env', 'HG_MONITOR_ACTIVE=1',
+                '/bin/sh', GATEWAY, 'notifications', 'dispatch' ], 15) == 124 ? 'TIMEOUT' : 'FINISHED';
+        status.updated_at = time();
+        heartbeat(status);
     }
 }
 exit(iteration(MODE));

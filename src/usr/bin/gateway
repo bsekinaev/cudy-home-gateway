@@ -28,6 +28,8 @@ CUDY Home Gateway
   gateway incidents        Показать подтверждённые incidents и candidates
   gateway incidents --json Вывести incident state в JSON
   gateway incidents tick   Выполнить одну итерацию incident state machine
+  gateway history [day|week] Сводка сохранённых наблюдений без новых проверок
+  gateway history --json [day|week]
   gateway notifications [--json|sync|dispatch|compact|recover]
                            Очередь и однократная доставка уведомлений
   gateway notifications configure enable|disable
@@ -157,6 +159,21 @@ main() {
         actions)
             shift
             ucode "${HG_LIBDIR}/actions.uc" "$@"
+            ;;
+        history)
+            history_mode=history
+            history_period=day
+            if [ "${2:-}" = '--json' ]; then
+                history_mode=history-json
+                history_period="${3:-day}"
+                [ "$#" -le 3 ] || return "$HG_EXIT_USAGE"
+            else
+                history_period="${2:-day}"
+                [ "$#" -le 2 ] || return "$HG_EXIT_USAGE"
+            fi
+            case "$history_period" in day|week) ;; *) return "$HG_EXIT_USAGE" ;; esac
+            [ -r "${HG_LIBDIR}/incidents.uc" ] || return "$HG_EXIT_SOFTWARE"
+            ucode "${HG_LIBDIR}/incidents.uc" "$0" "$history_mode" "$history_period"
             ;;
         notifications)
             notifications_engine="${HG_LIBDIR}/notifications.uc"

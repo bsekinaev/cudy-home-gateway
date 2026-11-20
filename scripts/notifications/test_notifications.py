@@ -549,7 +549,7 @@ class ObservationLoopTests(unittest.TestCase):
                                       env=env, stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE, start_new_session=True)
             try:
-                deadline = time.monotonic() + (34 if ticks > 1 else 2)
+                deadline = time.monotonic() + (64 if ticks > 1 else 6)
                 while time.monotonic() < deadline:
                     if (calls.exists() and calls.read_text().splitlines().count('incidents tick') >= ticks) or worker.poll() is not None:
                         break

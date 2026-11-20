@@ -36,3 +36,24 @@ installation and a separate Verify; agents do not connect to production CUDY.
 Tests: python -m unittest discover -s scripts/owner_series -p test_*.py.
 Windows-specific runner tests require Windows PowerShell 5.1; native lifecycle
 and boot/recovery tests run in the existing GitHub Actions matrix.
+
+## Explicit monitor transition V3
+
+`--delivery monitor` selects `HG_OWNER_MONITOR_V3`; default delivery remains
+unchanged V2. The only monitor baseline is installed source
+`62b5c4a9f25bc657fa1456eeacdfdc9039648cae`, with its authenticated immediate V2
+parent manifest. V3 is a single transition, not permission to widen V2 or to
+create subsequent monitor generations. Unknown formats are refused.
+
+The monitor delta is closed to `usr/bin/gateway` and existing `health.sh`,
+`network.sh`, `vpn.sh`, `incidents.uc`, `notifications.uc`, and
+`telegram-poller.uc`, and `torrent.sh` in `usr/lib/home-gateway`. All 20 runtime paths and 14
+original controls remain exact and source-bound. No path is created or removed;
+apply, recover, verify and rollback retain the existing inventory transaction.
+History remains user data: code rollback does not rewind it or the queue.
+
+Owner acceptance retains all exact-source CI/review/native checks and additionally
+requires native report fields `delivery: monitor` and
+`package_format: HG_OWNER_MONITOR_V3`. Merely relabelling an observer report does
+not supply monitor lifecycle evidence. VM fixtures remain non-executable host
+packaging tests and do not authorize owner output.

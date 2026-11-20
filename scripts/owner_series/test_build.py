@@ -100,6 +100,30 @@ class BuildTests(unittest.TestCase):
         self.assertIs(manifest['production_apply'], False)
         self.assertIs(manifest['source_fixture'], True)
 
+    def test_monitor_package_uses_separate_scope_and_exact_parent(self):
+        import build_kit
+        _, parent_files, parent_manifest = self.candidate()
+        parent_raw, parent_pin = repack(parent_files, parent_manifest)
+        repo = self.variant(lambda r: (r / 'src/usr/bin/gateway').write_bytes(
+            (r / 'src/usr/bin/gateway').read_bytes() + b'\n# monitor host fixture\n'))
+        source = git(repo, 'rev-parse', 'HEAD').decode().strip()
+        with self.assertRaisesRegex(ValueError, 'SERIES_MONITOR_BASELINE'):
+            content(repo, source, parent_raw, parent_pin, delivery='monitor')
+        # Synthetic source commits cannot equal the real installed source. This
+        # local override tests serialization only; exact pin rejection is above.
+        with patch.object(build_kit, 'MONITOR_BASELINE', self.source):
+            _, files, manifest = content(repo, source, parent_raw, parent_pin, delivery='monitor')
+            self.assertEqual(manifest['format'], build_kit.MONITOR_FORMAT)
+            self.assertEqual(manifest['changed'], ['usr/bin/gateway'])
+            raw, pin = repack(files, manifest)
+            checked = validate_series(raw, pin, 'vm', repo)
+            self.assertEqual(checked['manifest'], manifest)
+            self.assertEqual(manifest['parent']['source_commit'], self.source)
+            manifest['format']='HG_OWNER_UPDATE_V2'
+            raw, pin = repack(files, manifest)
+            with self.assertRaisesRegex(ValueError, 'SERIES_DELTA'):
+                validate_series(raw, pin, 'vm', repo)
+
     def test_owner_output_stays_closed_until_native_acceptance_exists(self):
         with self.assertRaisesRegex(ValueError, 'OWNER_SOURCE_FIXTURE'):
             self.candidate(profile='owner')

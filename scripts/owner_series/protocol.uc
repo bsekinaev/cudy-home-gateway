@@ -76,6 +76,11 @@ function strict_json(raw,why) {
     try { return json(raw); }catch(e){need(false,why);}
 }
 
+export function runtime_mode(path) {
+    need(index(PATHS,path)>=0,'RUNTIME_PATH');
+    return index(PATHS,path)<3?0755:0644;
+};
+
 export function decode_record(raw,why) { return strict_json(raw,why??'RECORD_JSON'); };
 
 export function open_protocol(root) {
@@ -199,10 +204,13 @@ export function open_protocol(root) {
         need(digest(kit+'/manifest.json',0600,65536)==input.manifest_sha256,'PACKAGE_MANIFEST_PIN');
         let m=strict_json(read(kit+'/manifest.json',0600,65536),'PACKAGE_JSON');
         need(same_keys(m,['format','profile','production_apply','source_commit','baseline_commit','source_fixture',
-            'parent','bootstrap','inventories','changed','controls','files']) && m.format=='HG_OWNER_UPDATE_V2' &&
+            'parent','bootstrap','inventories','changed','controls','files']) && index(['HG_OWNER_UPDATE_V2','HG_OWNER_MONITOR_V3'],m.format)>=0 &&
             type(m.source_commit)=='string' && match(m.source_commit,/^[0-9a-f]{40}$/) &&
             type(m.baseline_commit)=='string' && match(m.baseline_commit,/^[0-9a-f]{40}$/) &&
             type(m.source_fixture)=='bool','PACKAGE_FORMAT');
+        let monitor=m.format=='HG_OWNER_MONITOR_V3';
+        need(!monitor || (m.baseline_commit=='62b5c4a9f25bc657fa1456eeacdfdc9039648cae' &&
+            m.parent?.format=='HG_OWNER_UPDATE_V2'),'PACKAGE_MONITOR_BASELINE');
         let owner=m.profile=='OWNER_MANUAL' && m.production_apply==true && m.source_fixture==false;
         need(owner || (m.profile=='VM_ONLY' && m.production_apply==false),'PACKAGE_PROFILE');
         let expected={'protocol.uc':0600,'state.uc':0600,'engine.uc':0600,'watch.uc':0600,'boot.init':0755,'owner.ps1':0600,
@@ -243,6 +251,7 @@ export function open_protocol(root) {
             for(let name in ['baseline','candidate'])need(pins[kit+'/'+name+'/'+path]==m.inventories[name][path],'PACKAGE_RUNTIME_PIN');
         }
         let allowed=map(['telegram-poller.uc','dns.sh','health.sh','redmi.sh','status.sh'],n=>'usr/lib/home-gateway/'+n);
+        if(monitor)allowed=['usr/bin/gateway',...map(['health.sh','network.sh','vpn.sh','incidents.uc','notifications.uc','telegram-poller.uc','torrent.sh'],n=>'usr/lib/home-gateway/'+n)];
         need(type(m.changed)=='array' && length(changed)>0 && join('\n',m.changed)==join('\n',changed) &&
             length(filter(changed,p=>index(allowed,p)>=0))==length(changed),'PACKAGE_DELTA');
         for(let name in ['baseline','candidate']) {
@@ -277,10 +286,12 @@ export function open_protocol(root) {
         if(owner) {
             need(m.bootstrap.archive_sha256=='a39fb710909661d6c03c4f2f73f3b7645017b14a07999c80666de6735b926eed','PACKAGE_OWNER_BOOTSTRAP');
             let approval=strict_json(read(kit+'/acceptance.json',0600,262144),'PACKAGE_APPROVAL');
+            need(!monitor || (approval.report?.delivery=='monitor' && approval.report.package_format=='HG_OWNER_MONITOR_V3' &&
+                approval.report.baseline_commit=='62b5c4a9f25bc657fa1456eeacdfdc9039648cae'),'PACKAGE_MONITOR_APPROVAL');
             need(approval.format=='HG_OWNER_SERIES_ACCEPTANCE_V1' && approval.commit==m.source_commit &&
                 approval.ci_head==m.source_commit && approval.ci_conclusion=='success' &&
                 approval.review_head==m.source_commit && type(approval.review_blockers)=='int' && approval.review_blockers==0 &&
-                approval.report?.commit==m.source_commit && approval.report.scenario=='owner-series' &&
+                approval.report?.commit==m.source_commit && approval.report.scenario==(monitor?'owner-monitor':'owner-series') &&
                 approval.report.status=='PASS' && approval.report.failed==0,'PACKAGE_APPROVAL');
         }
         return m;

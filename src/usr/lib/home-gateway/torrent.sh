@@ -161,6 +161,15 @@ hg_torrent_collect() {
         fi
     fi
 
+    # The minute worker prioritizes WAN/DNS/MAIN/REDMI. Retain a fresh
+    # existing Torrent cache or local failure; never add another 12-second
+    # external pair to its shared deadline. Interactive status still probes.
+    if [ "${HG_MONITOR_ACTIVE:-0}" = 1 ]; then
+        HG_TORRENT_EGRESS_SOURCE=not_probed
+        HG_TORRENT_STATE=UNKNOWN
+        return 0
+    fi
+
     HG_TORRENT_EGRESS_CHECKED_AT="$now"
 
     if command -v curl >/dev/null 2>&1 && [ -n "$HG_TORRENT_SOCKS_PORT" ]; then

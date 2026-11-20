@@ -1,7 +1,7 @@
 // Owner-controlled coordinator. No automatic installation or recovery at boot.
 'use strict';
 import * as fs from 'fs';
-import { open_protocol, decode_record } from './protocol.uc';
+import { open_protocol, decode_record, runtime_mode } from './protocol.uc';
 import { open_io, describe_operation, validate_operation_intent, valid_process_prefix } from './state.uc';
 const SERIES='/etc/home-gateway-owner-series',D='/etc/home-gateway-deploy',LOCK='/tmp/home-gateway-deploy.lock';
 const ACCEPTED='d2039b6c62da3aa458f720af1c46fb619aee48dd';
@@ -86,7 +86,7 @@ function self_contents(directory) {
     evidence.entries=filter(evidence.entries,e=>index(['contents.json','contents.json.new','sealed','sealed.new','phase.new','postflight.log.new'],substr(e.path,length(directory)+1))<0);
     evidence.files=length(filter(evidence.entries,e=>e.type=='file'));return evidence;
 }
-function journal_layout(directory,kind) {
+function journal_layout(directory,kind,format) {
     io.check(directory,'directory',0700,0);
     let limits={'intent.json':8192,'manifest.json':65536,'kit-pin':65,phase:32,'phase.new':32,
         'history.json':2097152,'history.json.new':2097152,'contents.json':2097152,'contents.json.new':2097152,'sealed':64,'sealed.new':64,
@@ -98,7 +98,11 @@ function journal_layout(directory,kind) {
             need(name=='before-runtime'?kind=='ROLLBACK':kind=='APPLY','JOURNAL_UNKNOWN');io.check(directory+'/'+name,'directory',0700,0);continue;
         }
         if(match(name,/^interrupted\.[0-9]{1,2}$/)){io.check(directory+'/'+name,'file',0600,2097152);continue;}
-        if(match(name,/^interrupted-runtime\.[0-9]{1,2}$/)){io.check(directory+'/'+name,'file',0644,262144);continue;}
+        if(match(name,/^interrupted-runtime\.[0-9]{1,2}$/)){
+            let mode=fs.lstat(directory+'/'+name)?.mode;
+            need(mode==0644 || (format=='HG_OWNER_MONITOR_V3' && mode==0755),'JOURNAL_INTERRUPTED_MODE');
+            io.check(directory+'/'+name,'file',mode,262144);continue;
+        }
         need(limits[name]!=null,'JOURNAL_UNKNOWN');io.check(directory+'/'+name,'file',0600,limits[name]);
     }
 }
@@ -109,7 +113,7 @@ function receipt(operation,shallow) {
     for(let name in ['phase.new','postflight.log.new','contents.json.new','sealed.new'])need(!io.exists(path+'/'+name),'SEALED_PENDING');
     let data=read_json(path+'/intent.json',8192),manifest=read_json(path+'/manifest.json',65536),phase=line(path+'/phase',32);
     validate_operation_intent(data,manifest,data.kit_pin);
-    journal_layout(path,data.kind);
+    journal_layout(path,data.kind,manifest.format);
     need(data.format=='HG_OWNER_SERIES_OPERATION_V1' && data.id==operation && sha(data.kit_pin) &&
         io.hash(path+'/manifest.json',0600,65536)==data.kit_pin && line(path+'/kit-pin',65)==data.kit_pin &&
         manifest.source_commit==data.source_commit && manifest.baseline_commit==data.baseline_commit &&
@@ -168,6 +172,10 @@ function no_pending_global() {
         need(!io.exists(path+'.new'),'GLOBAL_PENDING');
 }
 function preflight(kind,held) {
+    if(kind=='APPLY' && m.format=='HG_OWNER_MONITOR_V3') {
+        let prerequisite=capture(['/bin/sh','-c','command -v setsid >/dev/null 2>&1 && setsid /bin/sh -c '+quote('exit 0')],1024);
+        need(prerequisite.code==0,'MONITOR_SETSID_REQUIRED');
+    }
     no_pending_global();
     for(let name in fs.lsdir('/etc'))need(index(name,'home-gateway-owner-series.preparing-')!=0,'FOREIGN_PREPARATION');
     need(!io.exists(SERIES+'/active') && !io.exists(SERIES+'/active.new') && !io.exists(D+'/active') &&
@@ -397,7 +405,7 @@ function publish(identity, recovering) {
         (substr(name,-14)=='.hg-series-new' && index(m.changed,'usr/lib/home-gateway/'+substr(name,0,length(name)-14))>=0),'UNKNOWN_RUNTIME');
     let other=identity=='baseline'?'candidate':'baseline';
     for(let path in m.changed) {
-        let mode=0644,target='/'+path,pending=target+'.hg-series-new',bytes=io.read(kit+'/'+identity+'/'+path,mode,262144);
+        let mode=runtime_mode(path),target='/'+path,pending=target+'.hg-series-new',bytes=io.read(kit+'/'+identity+'/'+path,mode,262144);
         let current=io.hash(target,mode,262144);need(current==m.inventories.baseline[path] || current==m.inventories.candidate[path],'UNKNOWN_RUNTIME');
         if(io.exists(pending)) {
             let raw=io.read(pending,mode,262144),a=io.read(kit+'/baseline/'+path,mode,262144),b=io.read(kit+'/candidate/'+path,mode,262144);
@@ -478,7 +486,7 @@ function validate_backup(partial,override) {
     }
 }
 function seal(terminal) {
-    journal_layout(J,intent.kind);validate_backup(terminal=='ABORTED');
+    journal_layout(J,intent.kind,m.format);validate_backup(terminal=='ABORTED');
     if(io.exists(J+'/aborted-transaction'))validate_backup(true,J+'/aborted-transaction');
     phase(terminal);
     if(intent.kind=='APPLY' && io.exists(D+'/'+id+'/backup.sha256')) {
@@ -537,7 +545,7 @@ function recover() {
             try {kind=read_json(J+'/intent.json',8192).kind;}catch(e){}
         }
         // Before a complete intent exists no backup subtree can have been published.
-        journal_layout(J,kind);
+        journal_layout(J,kind,m.format);
     }
     let phase_raw=io.exists(J+'/phase')?io.read(J+'/phase',0600,32):'';
     let preparing=!io.exists(J+'/intent.json') || !io.exists(J+'/kit-pin') ||

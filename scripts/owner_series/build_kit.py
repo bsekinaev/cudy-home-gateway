@@ -21,6 +21,20 @@ HELPERS = {'protocol.uc': 0o600, 'state.uc': 0o600, 'engine.uc': 0o600, 'watch.u
            'boot.init': 0o755, 'owner.ps1': 0o600}
 ALLOWED = {'usr/lib/home-gateway/' + name for name in
            ('telegram-poller.uc', 'dns.sh', 'health.sh', 'redmi.sh', 'status.sh')}
+MONITOR_FORMAT = 'HG_OWNER_MONITOR_V3'
+MONITOR_BASELINE = '62b5c4a9f25bc657fa1456eeacdfdc9039648cae'
+MONITOR_ALLOWED = {'usr/bin/gateway'} | {'usr/lib/home-gateway/' + name for name in
+    ('health.sh', 'network.sh', 'vpn.sh', 'incidents.uc', 'notifications.uc', 'telegram-poller.uc', 'torrent.sh')}
+
+
+def _allowed(format):
+    if format == 'HG_OWNER_UPDATE_V2':
+        return ALLOWED
+    if format == MONITOR_FORMAT:
+        return MONITOR_ALLOWED
+    raise ValueError('SERIES_FORMAT')
+
+
 KEYS = {'format', 'profile', 'production_apply', 'source_commit', 'baseline_commit',
         'source_fixture', 'parent', 'bootstrap', 'inventories', 'changed', 'controls', 'files'}
 
@@ -34,7 +48,7 @@ def _vm_only(profile):
         raise ValueError('SERIES_PROFILE')
 
 
-def validate_acceptance(raw, commit, repo):
+def validate_acceptance(raw, commit, repo, delivery='observer'):
     if not isinstance(raw, bytes) or not 0 < len(raw) <= 262144:
         raise ValueError('OWNER_ACCEPTANCE_SIZE')
     a = strict_json(raw)
@@ -45,7 +59,17 @@ def validate_acceptance(raw, commit, repo):
             not isinstance(a.get('ci_url'), str) or not re.fullmatch(
                 r'https://github.com/bsekinaev/cudy-home-gateway/actions/runs/[0-9]+', a['ci_url'])):
         raise ValueError('OWNER_ACCEPTANCE_CI_REVIEW_SOURCE')
-    guest = git(repo, 'show', commit + ':scripts/openwrt/guest-owner-series.sh')
+    if delivery not in ('observer', 'monitor'):
+        raise ValueError('SERIES_DELIVERY')
+    scenario = 'owner-monitor' if delivery == 'monitor' else 'owner-series'
+    guest = git(repo, 'show', commit + ':scripts/openwrt/guest-owner-series.sh').decode()
+    for profile in ('MONITOR', 'OBSERVER'):
+        pattern = r'^# HGVM_' + profile + r'_BEGIN\n(.*?)^# HGVM_' + profile + r'_END\n'
+        keep = (scenario == 'owner-monitor') == (profile == 'MONITOR')
+        guest = re.sub(pattern, lambda m: m[1] if keep else '', guest, flags=re.M | re.S)
+    if '# HGVM_' in guest:
+        raise ValueError('OWNER_ACCEPTANCE_GUEST_PROFILE')
+    guest = guest.encode()
     expected = {n.decode() for n in re.findall(rb'^\s*check ([a-z0-9_]+) ', guest, re.M)}
     # Read constants from the accepted source; never import mutable checkout code.
     tree = ast.parse(git(repo, 'show', commit + ':scripts/openwrt/run_vm.py'))
@@ -57,7 +81,7 @@ def validate_acceptance(raw, commit, repo):
     r = a.get('report')
     if (not isinstance(r, dict) or not expected or len(pins) != 3 or
             r.get('commit') != commit or r.get('real_candidate_commit') != commit or
-            r.get('scenario') != 'owner-series' or r.get('status') != 'PASS' or
+            r.get('scenario') != scenario or r.get('status') != 'PASS' or
             type(r.get('failed')) is not int or r['failed'] != 0 or
             type(r.get('total')) is not int or r['total'] != len(expected) or
             not isinstance(r.get('checks'), dict) or set(r['checks']) != expected or
@@ -68,9 +92,12 @@ def validate_acceptance(raw, commit, repo):
             type(r.get('network_devices')) is not int or r['network_devices'] != 0 or
             type(r.get('host_shared_directories')) is not int or r['host_shared_directories'] != 0 or
             r.get('reboot_mechanism') != 'GUEST_REBOOT_SUPERVISED_COLD_BOOT' or
-            not _commit(r.get('fixture_commit')) or r['fixture_commit'] == commit or
-            r.get('fixture_scope') != 'VM_ONLY_OBSERVER_COMMENT'):
+            (delivery == 'observer' and (not _commit(r.get('fixture_commit')) or r['fixture_commit'] == commit or
+             r.get('fixture_scope') != 'VM_ONLY_OBSERVER_COMMENT'))):
         raise ValueError('OWNER_ACCEPTANCE_VM_INCOMPLETE')
+    if delivery == 'monitor' and (r.get('delivery') != 'monitor' or r.get('package_format') != MONITOR_FORMAT or
+                                  r.get('baseline_commit') != MONITOR_BASELINE):
+        raise ValueError('OWNER_ACCEPTANCE_MONITOR_REQUIRED')
     return a
 
 
@@ -164,13 +191,18 @@ def _parent(raw, pin, profile, repo):
 
 
 def _core(m, profile):
-    if (not isinstance(m, dict) or set(m) != KEYS or m['format'] != 'HG_OWNER_UPDATE_V2' or
+    if (not isinstance(m, dict) or set(m) != KEYS or m['format'] not in ('HG_OWNER_UPDATE_V2', MONITOR_FORMAT) or
             m['profile'] != ('OWNER_MANUAL' if profile == 'owner' else 'VM_ONLY') or
             m['production_apply'] is not (profile == 'owner') or
             (profile == 'owner' and m['source_fixture'] is not False) or
             type(m['source_fixture']) is not bool or not _commit(m['source_commit']) or
             not _commit(m['baseline_commit'])):
         raise ValueError('SERIES_MANIFEST')
+    if not isinstance(m['parent'], dict) or m['parent'].get('format') not in ('HG_OWNER_UPDATE_V1', 'HG_OWNER_UPDATE_V2'):
+        raise ValueError('SERIES_PARENT_FORMAT')
+    if m['format'] == MONITOR_FORMAT and (m['baseline_commit'] != MONITOR_BASELINE or
+            not isinstance(m['parent'], dict) or m['parent'].get('format') != 'HG_OWNER_UPDATE_V2'):
+        raise ValueError('SERIES_MONITOR_BASELINE')
 
 
 def _prior_manifest(m, repo, bootstrap, profile):
@@ -190,7 +222,7 @@ def _prior_manifest(m, repo, bootstrap, profile):
     changed = [p for p in PATHS if inventories['baseline'][p] != inventories['candidate'][p]]
     controls = _controls(repo, ORIGINAL)
     anchor = {'archive_sha256': bootstrap['archive_sha256'], 'manifest_sha256': bootstrap['manifest_sha256']}
-    if (m['inventories'] != inventories or not changed or not set(changed) <= ALLOWED or
+    if (m['inventories'] != inventories or not changed or not set(changed) <= _allowed(m['format']) or
             m['changed'] != changed or m['controls'] != controls or
             _controls(repo, m['source_commit']) != controls or m['bootstrap'] != anchor):
         raise ValueError('SERIES_PRIOR_METADATA')
@@ -279,7 +311,7 @@ def validate_series(raw, pin, profile, repo):
         if files[name + '.sha256'][1] != _sums(inventories[name]):
             raise ValueError('SERIES_RUNTIME_MANIFEST')
     changed = [p for p in PATHS if inventories['baseline'][p] != inventories['candidate'][p]]
-    if not changed or not set(changed) <= ALLOWED or m['changed'] != changed or m['inventories'] != inventories:
+    if not changed or not set(changed) <= _allowed(m['format']) or m['changed'] != changed or m['inventories'] != inventories:
         raise ValueError('SERIES_DELTA')
     controls = _controls(repo, ORIGINAL)
     if m['controls'] != controls or _controls(repo, m['source_commit']) != controls:
@@ -323,13 +355,17 @@ def validate_series(raw, pin, profile, repo):
                        m['baseline_commit'], m['source_commit']], capture_output=True).returncode:
         raise ValueError('SERIES_SOURCE_LINEAGE')
     if profile == 'owner':
-        validate_acceptance(files['acceptance.json'][1], m['source_commit'], repo)
+        validate_acceptance(files['acceptance.json'][1], m['source_commit'], repo,
+                            'monitor' if m['format'] == MONITOR_FORMAT else 'observer')
     return {'manifest': m, 'manifest_sha256': digest(files['manifest.json'][1]),
             'archive_sha256': pin, 'files': files}
 
 
-def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=False, acceptance=None):
+def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=False, acceptance=None, delivery='observer'):
     _vm_only(profile)
+    if delivery not in ('observer', 'monitor'):
+        raise ValueError('SERIES_DELIVERY')
+    package_format = MONITOR_FORMAT if delivery == 'monitor' else 'HG_OWNER_UPDATE_V2'
     if type(source_fixture) is not bool:
         raise ValueError('SERIES_FIXTURE_FLAG')
     if profile == 'owner' and source_fixture:
@@ -347,10 +383,13 @@ def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=Fals
             raise ValueError('SOURCE_DEPENDENCY_DRIFT')
     parent = _parent(parent_raw, parent_pin, profile, repo)
     baseline = parent['manifest']['source_commit']
+    if delivery == 'monitor' and (baseline != MONITOR_BASELINE or
+            parent['manifest']['format'] != 'HG_OWNER_UPDATE_V2'):
+        raise ValueError('SERIES_MONITOR_BASELINE')
     runtime = {'baseline': _runtime(repo, baseline), 'candidate': _runtime(repo, source)}
     inventories = {name: _inventory(value) for name, value in runtime.items()}
     changed = [p for p in PATHS if inventories['baseline'][p] != inventories['candidate'][p]]
-    if not changed or not set(changed) <= ALLOWED:
+    if not changed or not set(changed) <= _allowed(package_format):
         raise ValueError('SERIES_OBSERVER_DELTA_REQUIRED')
     controls = _controls(repo, ORIGINAL)
     if _controls(repo, source) != controls or parent['manifest']['controls'] != controls:
@@ -374,9 +413,9 @@ def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=Fals
     files['bootstrap.tar.gz'] = (0o600, bootstrap_raw)
     files['parent.json'] = (0o600, parent['files']['manifest.json'][1])
     if profile == 'owner':
-        validate_acceptance(acceptance, source, repo)
+        validate_acceptance(acceptance, source, repo, delivery)
         files['acceptance.json'] = (0o600, acceptance)
-    manifest = dict(format='HG_OWNER_UPDATE_V2', profile='OWNER_MANUAL' if profile == 'owner' else 'VM_ONLY', production_apply=profile == 'owner',
+    manifest = dict(format=package_format, profile='OWNER_MANUAL' if profile == 'owner' else 'VM_ONLY', production_apply=profile == 'owner',
                     source_commit=source, baseline_commit=baseline, source_fixture=source_fixture,
                     parent=_identity(parent), bootstrap=bootstrap_pin, inventories=inventories,
                     changed=changed, controls=controls, files=_record(files))
@@ -384,8 +423,8 @@ def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=Fals
     return source, files, manifest
 
 
-def build(repo, ref, parent_raw, parent_pin, output, profile='vm', source_fixture=False, acceptance=None):
-    source, files, _ = content(repo, ref, parent_raw, parent_pin, profile, source_fixture, acceptance)
+def build(repo, ref, parent_raw, parent_pin, output, profile='vm', source_fixture=False, acceptance=None, delivery='observer'):
+    source, files, _ = content(repo, ref, parent_raw, parent_pin, profile, source_fixture, acceptance, delivery)
     timestamp = int(git(repo, 'show', '-s', '--format=%ct', source))
     buffer = io.BytesIO()
     with gzip.GzipFile(fileobj=buffer, mode='wb', filename='', mtime=0) as gz:
@@ -426,10 +465,11 @@ if __name__ == '__main__':
     parser.add_argument('--parent-sha256', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--profile', choices=['vm', 'owner'], default='vm')
+    parser.add_argument('--delivery', choices=['observer', 'monitor'], default='observer')
     parser.add_argument('--source-fixture', action='store_true')
     parser.add_argument('--acceptance-report', type=Path)
     args = parser.parse_args()
     with args.parent.open('rb') as source_file:
         parent_raw = source_file.read(MAX_ARCHIVE + 1)
     print(build(ROOT, args.ref, parent_raw, args.parent_sha256, args.output, args.profile, args.source_fixture,
-                args.acceptance_report.read_bytes() if args.acceptance_report else None))
+                args.acceptance_report.read_bytes() if args.acceptance_report else None, args.delivery))

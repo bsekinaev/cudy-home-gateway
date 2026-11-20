@@ -266,7 +266,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
             calls = self.nav(page)
             edit = [c for c in calls if c[:2] == ['telegram', 'edit-message']][-1]
             buttons = [b for row in json.loads(edit[5])['inline_keyboard'] for b in row]
-            self.assertEqual({b['callback_data'] for b in buttons}, {'nav:status', 'nav:vtest', 'nav:actions', 'nav:help'})
+            self.assertEqual({b['callback_data'] for b in buttons}, {'nav:status', 'nav:vtest', 'nav:actions', 'nav:help', 'nav:day', 'nav:week'})
             self.assertTrue(all(len(b['callback_data'].encode()) <= 64 for b in buttons))
 
     def test_navigation_authorization_and_unknown_routes_cannot_execute_actions(self):

@@ -20,13 +20,13 @@ class AcceptanceTests(unittest.TestCase):
                     ci_conclusion='success', review_head=source, review_blockers=0,
                     ci_url='https://github.com/bsekinaev/cudy-home-gateway/actions/runs/123', report=report)
 
-    def validate(self, value):
+    def validate(self, value, delivery='observer'):
         def source(repo, operation, ref):
             if ref.endswith('guest-owner-series.sh'):
                 return b'check native_check true\n'
             return b"KERNEL_SHA = 'kernel'\nROOTFS_SHA = 'rootfs'\nPACKAGE_SHA = {'package': 'pin'}\n"
         with patch.object(builder, 'git', side_effect=source):
-            return builder.validate_acceptance(json.dumps(value).encode(), 'a' * 40, '.')
+            return builder.validate_acceptance(json.dumps(value).encode(), 'a' * 40, '.', delivery)
 
     def test_exact_complete_evidence(self):
         self.assertEqual(self.validate(self.evidence()), self.evidence())
@@ -49,3 +49,12 @@ class AcceptanceTests(unittest.TestCase):
     def test_non_object_and_duplicate_json_refused(self):
         for raw in (None, '', b'', b'x' * 262145, b'[]', b'{"format":1,"format":2}'):
             with self.assertRaises(ValueError): builder.validate_acceptance(raw, 'a' * 40, '.')
+
+    def test_monitor_requires_explicit_native_delivery_evidence(self):
+        evidence = self.evidence()
+        evidence['report']['scenario']='owner-monitor'
+        with self.assertRaisesRegex(ValueError, 'OWNER_ACCEPTANCE_MONITOR_REQUIRED'):
+            self.validate(evidence, 'monitor')
+        evidence['report'].update(delivery='monitor', package_format=builder.MONITOR_FORMAT,
+                                  scenario='owner-monitor', baseline_commit=builder.MONITOR_BASELINE)
+        self.assertEqual(self.validate(evidence, 'monitor'), evidence)

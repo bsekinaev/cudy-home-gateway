@@ -44,6 +44,8 @@ hg_network_collect() {
     HG_NETWORK_DIRECT_CHECKED_AT=''
     HG_NETWORK_DIRECT_PROBE_ATTEMPTS='0'
 
+    probe_timeout=4
+    [ "${HG_MONITOR_ACTIVE:-0}" != 1 ] || probe_timeout=3
     egress_cache_file="${HG_EGRESS_CACHE_FILE:-/tmp/home-gateway-direct-egress.cache}"
     egress_cache_ttl="${HG_EGRESS_CACHE_TTL:-300}"
     egress_probe_url="${HG_EGRESS_PROBE_URL:-https://api.ipify.org}"
@@ -161,7 +163,7 @@ hg_network_collect() {
             curl -4 -fsS \
                 --interface "$HG_NETWORK_WAN_DEVICE" \
                 --connect-timeout 2 \
-                --max-time 4 \
+                --max-time "$probe_timeout" \
                 "$egress_probe_url" 2>/dev/null |
                 awk 'NR == 1 { gsub(/[[:space:]]/, ""); print; exit }' || true
         )"
@@ -184,7 +186,7 @@ hg_network_collect() {
                 curl -4 -fsS \
                     --interface "$HG_NETWORK_WAN_DEVICE" \
                     --connect-timeout 2 \
-                    --max-time 4 \
+                    --max-time "$probe_timeout" \
                     "$secondary_probe_url" 2>/dev/null |
                     awk 'NR == 1 { gsub(/[[:space:]]/, ""); print; exit }' || true
             )"

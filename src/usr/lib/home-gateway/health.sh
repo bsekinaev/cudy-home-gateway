@@ -54,6 +54,12 @@ hg_health_freshness() {
 }
 
 hg_health_reason_wan() {
+    if [ "${HG_MONITOR_ACTIVE:-0}" = 1 ] &&
+       [ "${HG_NETWORK_WAN_STATE:-UNKNOWN}" = OK ] &&
+       [ "${HG_NETWORK_DIRECT_STATE:-UNKNOWN}" != OK ]; then
+        printf 'wan_egress_unconfirmed'
+        return
+    fi
     case "$HG_HEALTH_WAN_STATE" in
         OK) printf 'wan_ready' ;;
         DOWN) printf 'wan_down' ;;
@@ -177,12 +183,109 @@ hg_health_count_state() {
     esac
 }
 
+# Fingerprints contain only hashes of configuration; no configuration or node
+# credentials are emitted. Missing optional generated files remain explicit.
+hg_health_config_fingerprint() (
+    hg_cfg="${HG_MONITOR_CONFIG_DIR:-/etc/config}"
+    hg_generated="${HG_MONITOR_GENERATED_DIR:-/tmp/etc/passwall2}"
+    {
+        for hg_file in "$hg_cfg/network" "$hg_cfg/passwall2" "$hg_generated"/*.json; do
+            if [ -f "$hg_file" ] && [ ! -L "$hg_file" ]; then
+                sha256sum "$hg_file" 2>/dev/null | awk '{print $1}'
+            else
+                printf 'missing\n'
+            fi
+        done
+    } | sha256sum | awk '{print $1}'
+)
+
+hg_health_observation_begin() {
+    HG_OBS_BOOT="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+    HG_OBS_INCARNATION="${HG_MONITOR_INCARNATION:-$(cat /proc/sys/kernel/random/uuid 2>/dev/null || true)}"
+    HG_OBS_SEQUENCE="${HG_MONITOR_SEQUENCE:-1}"
+    case "$HG_OBS_SEQUENCE" in ''|*[!0-9]*) HG_OBS_SEQUENCE=0 ;; esac
+    HG_OBS_START="$(awk '{print int($1)}' /proc/uptime)"
+    HG_OBS_CONFIG_BEFORE="$(hg_health_config_fingerprint)"
+}
+
+hg_health_observation_finish() {
+    HG_OBS_FINISH="$(awk '{print int($1)}' /proc/uptime)"
+    HG_OBS_CONFIG_AFTER="$(hg_health_config_fingerprint)"
+    HG_OBS_VALID=true
+    [ "$HG_OBS_CONFIG_BEFORE" = "$HG_OBS_CONFIG_AFTER" ] || HG_OBS_VALID=false
+    [ "$HG_OBS_FINISH" -ge "$HG_OBS_START" ] &&
+        [ "$((HG_OBS_FINISH - HG_OBS_START))" -le 35 ] || HG_OBS_VALID=false
+    case "$HG_OBS_BOOT:$HG_OBS_INCARNATION" in *[!a-fA-F0-9:-]*|:*) HG_OBS_VALID=false ;; esac
+    [ "${#HG_OBS_BOOT}" -eq 36 ] && [ "${#HG_OBS_INCARNATION}" -eq 36 ] || HG_OBS_VALID=false
+    # Address and route identify the connection, not the public egress IP or uptime.
+    HG_OBS_CONTEXT="$(printf '%s\n' "$HG_OBS_CONFIG_AFTER" \
+        "${HG_NETWORK_WAN_INTERFACE:-}" "${HG_NETWORK_WAN_DEVICE:-}" \
+        "${HG_NETWORK_WAN_PROTO:-}" "${HG_NETWORK_WAN_IPV4:-}" \
+        "${HG_NETWORK_WAN_GATEWAY:-}" | sha256sum | awk '{print $1}')"
+    [ "${#HG_OBS_CONTEXT}" -eq 64 ] || HG_OBS_VALID=false
+    [ "${#HG_OBS_CONFIG_BEFORE}" -eq 64 ] || HG_OBS_VALID=false
+    case "$HG_OBS_CONTEXT:$HG_OBS_CONFIG_BEFORE" in *[!a-f0-9:]*) HG_OBS_VALID=false ;; esac
+}
+
+hg_health_sample_json() {
+    local hs_name="$1" hs_source=live_probe hs_checked="$HG_OBS_FINISH"
+    local hs_id="$HG_OBS_BOOT:$HG_OBS_INCARNATION:$HG_OBS_SEQUENCE:$1"
+    local hs_valid="$HG_OBS_VALID" hs_epoch='' hs_attempts=0 hs_age=''
+    case "$hs_name" in
+        wan)
+            if [ "${HG_NETWORK_WAN_STATE:-UNKNOWN}" = OK ]; then
+                hs_source="${HG_NETWORK_DIRECT_SOURCE:-unknown}"
+                hs_epoch="${HG_NETWORK_DIRECT_CHECKED_AT:-}"
+                hs_attempts="${HG_NETWORK_DIRECT_PROBE_ATTEMPTS:-0}"
+            fi
+            ;;
+        main)
+            hs_source="${HG_VPN_EGRESS_SOURCE:-unknown}"
+            hs_epoch="${HG_VPN_EGRESS_CHECKED_AT:-}"
+            hs_attempts="${HG_VPN_EGRESS_PROBE_ATTEMPTS:-0}"
+            case "$HG_HEALTH_MAIN_REASON" in main_config_down|main_xray_down) hs_source=live_probe ;; esac
+            ;;
+        torrent)
+            hs_source="${HG_TORRENT_EGRESS_SOURCE:-unknown}"
+            hs_epoch="${HG_TORRENT_EGRESS_CHECKED_AT:-}"
+            hs_attempts="${HG_TORRENT_EGRESS_PROBE_ATTEMPTS:-0}"
+            case "$HG_HEALTH_TORRENT_REASON" in torrent_config_down|torrent_xray_down) hs_source=live_probe ;; esac
+            ;;
+    esac
+    # A new failed attempt remains a new observation even if an old positive IP
+    # is retained for display by the adapter. Display cache is never its evidence.
+    if [ "$hs_attempts" -gt 0 ] 2>/dev/null; then hs_source=live_probe; fi
+    case "$hs_source" in
+        cache)
+            hs_age="$(hg_health_age_seconds "$hs_epoch")"
+            case "$hs_age" in ''|*[!0-9]*) hs_valid=false ;; *)
+                [ "$hs_age" -le 120 ] || hs_valid=false
+                hs_checked=$((HG_OBS_FINISH - hs_age)) ;;
+            esac
+            hs_id="$HG_OBS_BOOT:$HG_OBS_CONTEXT:$hs_name:cache:$hs_epoch"
+            ;;
+        live_probe) ;;
+        *) hs_valid=false ;;
+    esac
+    printf '      "sample": {"id":%s,"context":%s,"boot_id":%s,"checked_uptime":%s,"expires_uptime":%s,"source":%s,"valid":%s}\n' \
+        "$(hg_json_string "$hs_id")" "$(hg_json_string "$HG_OBS_CONTEXT")" \
+        "$(hg_json_string "$HG_OBS_BOOT")" "$hs_checked" "$((hs_checked + 120))" \
+        "$(hg_json_string "$hs_source")" "$hs_valid"
+}
+
 hg_health_collect() {
     if ! command -v hg_status_collect >/dev/null 2>&1; then
         hg_load_module status >/dev/null 2>&1 || return "$HG_EXIT_SOFTWARE"
     fi
 
+    hg_health_observation_begin
+    if [ "${HG_MONITOR_ACTIVE:-0}" = 1 ]; then
+        # The independent minute worker must make new probes; dashboard reads
+        # keep their existing bounded cache behavior.
+        export HG_EGRESS_CACHE_TTL=0 HG_MAIN_EGRESS_CACHE_TTL=0 HG_TORRENT_EGRESS_CACHE_TTL=0
+    fi
     hg_status_collect
+    hg_health_observation_finish
 
     # Берём "now" после hg_status_collect: внешние probes выполняются внутри
     # status collect и их checked_at может быть позже HG_STATUS_TIME_EPOCH.
@@ -198,6 +301,30 @@ hg_health_collect() {
     HG_HEALTH_REDMI_STATE="$(hg_health_normalize_state "${HG_REDMI_STATE:-UNKNOWN}")"
     HG_HEALTH_ASATA_STATE="$(hg_health_normalize_state "${HG_ASATA_STATE:-UNKNOWN}")"
     HG_HEALTH_TAILSCALE_STATE="$(hg_health_normalize_state "${HG_TAILSCALE_STATE:-UNKNOWN}")"
+
+    if [ "${HG_MONITOR_ACTIVE:-0}" = 1 ]; then
+        if [ "$HG_HEALTH_WAN_STATE" = OK ] && [ "${HG_NETWORK_DIRECT_STATE:-UNKNOWN}" != OK ]; then
+            if [ "${HG_NETWORK_DIRECT_PROBE_ATTEMPTS:-0}" -gt 0 ]; then
+                HG_HEALTH_WAN_STATE=DEGRADED
+            else
+                HG_HEALTH_WAN_STATE=UNKNOWN
+            fi
+        fi
+        # No attempted external check is missing evidence, never a confirmed
+        # outage. Local config/process failures retain their own DOWN scope.
+        if [ "$HG_HEALTH_MAIN_STATE" = DEGRADED ] &&
+           [ "${HG_VPN_EGRESS_STATE:-UNKNOWN}" = UNKNOWN ] &&
+           [ "${HG_VPN_EGRESS_PROBE_ATTEMPTS:-0}" = 0 ]; then
+            HG_HEALTH_MAIN_STATE=UNKNOWN
+        fi
+        if [ "$HG_HEALTH_REDMI_STATE" = DEGRADED ] &&
+           [ "${HG_REDMI_DNS_STATE:-UNKNOWN}" = UNKNOWN ] &&
+           [ "${HG_REDMI_KILLSWITCH_STATE:-UNKNOWN}" != DOWN ] &&
+           [ "${HG_REDMI_POLICY_STATE:-UNKNOWN}" != DOWN ] &&
+           [ "${HG_REDMI_XRAY_STATE:-UNKNOWN}" != DOWN ]; then
+            HG_HEALTH_REDMI_STATE=UNKNOWN
+        fi
+    fi
 
     if [ -r "${HG_ACTION_STATE_DIR:-/etc/home-gateway/state}/actions.json" ] &&
        [ -r "${HG_LIBDIR}/actions.uc" ] &&
@@ -343,7 +470,8 @@ hg_health_json_component() {
     printf '    "%s": {\n' "$name"
     printf '      "state": %s,\n' "$(hg_json_string "$state")"
     printf '      "role": %s,\n' "$(hg_json_string "$role")"
-    printf '      "reason": %s\n' "$(hg_json_string "$reason")"
+    printf '      "reason": %s,\n' "$(hg_json_string "$reason")"
+    hg_health_sample_json "$name"
 
     if [ "$comma" = 'true' ]; then
         printf '    },\n'
@@ -398,6 +526,10 @@ hg_health_print_json() {
     printf '    "epoch": %s,\n' "$(hg_json_number_or_null "$HG_HEALTH_GENERATED_EPOCH")"
     printf '    "local": %s\n' "$(hg_json_string "${HG_STATUS_TIME_LOCAL:-unknown}")"
     printf '  },\n'
+    printf '  "observation": {"schema_version":1,"boot_id":%s,"incarnation":%s,"sequence":%s,"started_uptime":%s,"finished_uptime":%s,"context":%s,"valid":%s,"wall_time_trusted":%s,"wall_time_quality":"unconfirmed"},\n' \
+        "$(hg_json_string "$HG_OBS_BOOT")" "$(hg_json_string "$HG_OBS_INCARNATION")" \
+        "$HG_OBS_SEQUENCE" "$HG_OBS_START" "$HG_OBS_FINISH" "$(hg_json_string "$HG_OBS_CONTEXT")" \
+        "$HG_OBS_VALID" "$(if [ "${HG_MONITOR_TIME_TRUSTED:-0}" = 1 ]; then printf true; else printf false; fi)"
     printf '  "overall_state": %s,\n' "$(hg_json_string "$HG_HEALTH_OVERALL_STATE")"
     printf '  "attention_count": %s,\n' "$HG_HEALTH_ATTENTION_COUNT"
     printf '  "counts": {\n'
