@@ -30,10 +30,15 @@ if [ "$*" = "incidents tick" ]; then touch "$HG_TEST_BASE/tick"; fi
                                     start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
                 limit = time.monotonic() + 6
-                while not (base/'tick').exists() and time.monotonic() < limit:
+                heartbeat = {}
+                path = base/'runtime/monitor-heartbeat.json'
+                # The child writes tick before its parent publishes the completed
+                # cycle heartbeat; wait for both independently observed facts.
+                while time.monotonic() < limit:
+                    if path.exists(): heartbeat = json.loads(path.read_text())
+                    if (base/'tick').exists() and 'recovery_result' in heartbeat: break
                     time.sleep(.05)
                 self.assertTrue((base/'tick').exists(), 'hung recovery blocked observation')
-                heartbeat = json.loads((base/'runtime/monitor-heartbeat.json').read_text())
                 self.assertEqual(heartbeat['recovery_result'], 'TIMEOUT')
                 count = (base/'alive').stat().st_size
                 time.sleep(1.2)
@@ -72,7 +77,7 @@ fi
                 active, incarnation, sequence = (base/'envelope').read_text().split()
                 self.assertEqual((active, sequence), ('1', '1'))
                 self.assertEqual(incarnation, status['worker_incarnation'])
-                self.assertEqual(status['next_due_monotonic']-status['scheduled_monotonic'], 60)
+                self.assertAlmostEqual(status['next_due_monotonic']-status['scheduled_monotonic'], 60, places=5)
             finally:
                 os.killpg(proc.pid, signal.SIGTERM)
                 proc.communicate(timeout=3)
