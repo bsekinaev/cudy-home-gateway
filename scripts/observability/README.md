@@ -5,9 +5,10 @@
 `%USERPROFILE%/CUDY-Update-20261119-fb8d9e3/owner-session.json`.
 Файл сеанса не меняется; этапы установщика не вызываются.
 
-В исправлении r2 передача использует встроенный POSIX `printf`, без applet
-`base64`. Команда проверена через настоящий native argument boundary Windows
-PowerShell 5.1 и исполнена на стенде с недоступным `base64`.
+В исправлении r3 скрипт передаётся через стандартный ввод, а удалённая команда
+содержит только `sh -s -- <профиль>`. Не нужны `base64` и длинная exec-команда.
+Проверено через Windows PowerShell 5.1 и настоящий OpenSSH/Dropbear в одноразовом
+локальном контейнере: старая команда отклонена, новая получила полный отчёт.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check-dns.ps1
@@ -37,7 +38,14 @@ ucode и UDP resolver только на loopback в контейнере с `--n
 5.1 и текущий PowerShell без реального соединения.
 `test_transport.ps1 -CommandFile <путь>` захватывает команду через локальный
 подставной `ssh.exe`; этот файл можно передать Linux-тесту через
-`HG_DNS_TRANSPORT_COMMAND_FILE` для проверки всей цепочки без настоящего SSH.
+`HG_DNS_TRANSPORT_COMMAND_FILE` вместе с соседним `.stdin` для проверки команды
+и потока данных без настоящего SSH.
+
+`test_dropbear_transport.py` — отдельная opt-in проверка Windows OpenSSH →
+одноразовый Dropbear, только `127.0.0.1`. Переменная `HG_DNS_DROPBEAR_IMAGE`
+задаёт локальный образ с dropbear/dropbearkey. Проверка генерирует отдельные
+ключи и known_hosts, не читает настройки SSH или сеанс владельца и удаляет
+свой контейнер после проверки. В обычной Linux CI она явно пропускается.
 
 Внутренние `HG_DNS_PREFLIGHT_CONFIG` и `HG_DNS_TEST_ADAPTER` используются тестами;
 при обычном owner-запуске они не задаются.

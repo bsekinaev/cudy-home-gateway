@@ -23,13 +23,15 @@ class PreflightTests(unittest.TestCase):
             captured = os.environ.get('HG_DNS_TRANSPORT_COMMAND_FILE')
             if captured:
                 command = Path(captured).read_text()
+                payload = Path(captured + '.stdin').read_bytes().decode('utf-8')
             else:
-                encoded = ''.join('\\0%03o' % b for b in SCRIPT.read_bytes())
-                command = "printf '%b' '" + encoded + "' | sh -s -- 'acl_A2dNs'"
+                command = 'sh -s -- acl_A2dNs'
+                payload = SCRIPT.read_text()
+            self.assertLess(len(command), 128)
             result = subprocess.run([real_busybox, 'ash', '-c', command],
                 env=dict(os.environ, PATH=temporary + ':' + os.environ['PATH'],
                          HG_DNS_PREFLIGHT_CONFIG='/missing'),
-                capture_output=True, text=True, timeout=8)
+                input=payload, capture_output=True, text=True, timeout=8)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(result.stdout.startswith('HG_DNS_DISCOVERY_V1\n'))
             self.assertEqual(len(result.stdout.splitlines()), 9)

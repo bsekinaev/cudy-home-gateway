@@ -6,12 +6,14 @@ $sessionFile=Join-Path $root 'session.json'
 $reportFile=Join-Path $root 'report.txt'
 $global:HGDiscoveryTestCalls=0
 $global:HGDiscoveryTestArgs=@()
+$global:HGDiscoveryTestInput=""
 $global:HGDiscoveryTestReply=@('HG_DNS_DISCOVERY_V1','profile=acl_A2dNs',
     'busybox_version=1.37.0','nslookup_A=supported','timeout_kill=supported',
     'busybox_awk=supported','router_dns_port=53','runtime_dns=[]','network_changes=none')
 function global:ssh {
     $global:HGDiscoveryTestCalls++
     $global:HGDiscoveryTestArgs=@($args)
+    $global:HGDiscoveryTestInput=@($input) -join ""
     $global:LASTEXITCODE=0
     $global:HGDiscoveryTestReply
 }
@@ -23,18 +25,9 @@ try {
     if ((Get-Content -LiteralPath $reportFile)[0] -cne 'HG_DNS_DISCOVERY_V1') { throw 'Report missing' }
     if ($global:HGDiscoveryTestArgs -notcontains 'root@fixture.invalid') { throw 'Target identity lost' }
     $remote=[string]$global:HGDiscoveryTestArgs[-1]
-    if ($remote -notmatch "^printf '%b' '((?:\\0[0-7]{3})+)' \| sh -s -- 'acl_A2dNs'$") {
-        throw 'Unexpected remote command'
-    }
-    $payload=$Matches[1]
-    $bytes=[byte[]]@(foreach ($octet in [regex]::Matches($payload,'\\0([0-7]{3})')) {
-        [Convert]::ToByte($octet.Groups[1].Value,8)
-    })
-    $decoded=[Text.Encoding]::UTF8.GetString($bytes)
-    if (!$decoded.StartsWith('#!/bin/sh') -or $decoded.Contains("`r")) { throw 'Bad payload bytes' }
+    if ($remote -cne 'sh -s -- acl_A2dNs') { throw 'Expected short remote command' }
     $expected=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'router-dns-preflight.sh')).Replace("`r`n","`n")
-    if ($decoded -cne $expected) { throw 'Payload differs from reviewed script' }
-    if ($remote.Length -gt 28000) { throw 'Remote command exceeds Windows transport budget' }
+    if ($global:HGDiscoveryTestInput -cne $expected) { throw 'Stdin payload differs from script' }
     @{format='HG_OWNER_SERIES_SESSION_V1';target='root@bad;touch';port=22} |
         ConvertTo-Json | Set-Content -LiteralPath $sessionFile -Encoding UTF8
     $refused=$false

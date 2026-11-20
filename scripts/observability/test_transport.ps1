@@ -15,7 +15,12 @@ using System.IO;
 using System.Text;
 public class CaptureSSH {
     public static void Main(string[] args) {
-        File.WriteAllText(Environment.GetEnvironmentVariable("HG_DNS_TEST_COMMAND_FILE"), args[args.Length-1], new UTF8Encoding(false));
+        string path = Environment.GetEnvironmentVariable("HG_DNS_TEST_COMMAND_FILE");
+        string command = args[args.Length-1];
+        File.WriteAllText(path, command, new UTF8Encoding(false));
+        if (command.Length > 9000) { Console.Error.WriteLine("fixture: exec command exceeds Dropbear limit"); Environment.Exit(255); }
+        using (var input = Console.OpenStandardInput())
+        using (var file = File.Create(path + ".stdin")) { input.CopyTo(file); }
         Console.WriteLine("HG_DNS_DISCOVERY_V1\nprofile=acl_A2dNs\nbusybox_version=1.37.0\nnslookup_A=supported\ntimeout_kill=supported\nbusybox_awk=supported\nrouter_dns_port=53\nruntime_dns=[]\nnetwork_changes=none");
     }
 }
@@ -26,14 +31,11 @@ public class CaptureSSH {
         ConvertTo-Json | Set-Content -LiteralPath $sessionFile -Encoding UTF8
     & (Join-Path $PSScriptRoot 'check-dns.ps1') -SessionFile $sessionFile -ReportFile $reportFile
     $remote=[IO.File]::ReadAllText($CommandFile)
-    if ($remote -notmatch "^printf '%b' '((?:\\0[0-7]{3})+)' \| sh -s -- 'acl_A2dNs'$") {
-        throw 'Native argument transport corrupted the command'
-    }
-    $bytes=[byte[]]@(foreach ($octet in [regex]::Matches($Matches[1],'\\0([0-7]{3})')) {
-        [Convert]::ToByte($octet.Groups[1].Value,8)
-    })
+    if ($remote -cne 'sh -s -- acl_A2dNs') { throw 'Native transport must send a short command' }
+    $payload=[IO.File]::ReadAllText($CommandFile+'.stdin')
     $expected=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'router-dns-preflight.sh')).Replace("`r`n","`n")
-    if ([Text.Encoding]::UTF8.GetString($bytes) -cne $expected) { throw 'Native payload differs from script' }
+    if ($payload.Contains("`r") -and $payload.TrimEnd("`r","`n").Contains("`r")) { throw 'CR inside shell payload' }
+    if ($payload.TrimEnd("`r","`n") -cne $expected.TrimEnd("`n")) { throw 'Native stdin differs from script' }
     Write-Host 'DNS_NATIVE_TRANSPORT_TEST=PASS (fake ssh.exe; no network)'
 } finally {
     $env:PATH=$previousPath
