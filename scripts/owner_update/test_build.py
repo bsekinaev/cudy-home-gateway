@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import tarfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -11,6 +12,17 @@ from build_kit import BASELINE, DELTA, PATHS, ROOT, build, content, validate_acc
 
 
 class OwnerUpdateBuildTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # V1's positive packaging tests retain its historical Telegram-only
+        # runtime scope; current backend observations are accepted by V2 tests.
+        sys.path.insert(0, str(ROOT / 'scripts/openwrt'))
+        import run_vm
+        cls.temporary = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.temporary.cleanup)
+        commit = git(ROOT, 'rev-parse', 'HEAD').decode().strip()
+        cls.fixture, _ = run_vm.owner_update_fixture(commit, Path(cls.temporary.name))
+
     def test_selected_ref_must_match_checkout(self):
         with self.assertRaisesRegex(ValueError, 'SOURCE_CHECKOUT_MISMATCH'):
             content(ROOT, BASELINE)
@@ -33,7 +45,7 @@ class OwnerUpdateBuildTests(unittest.TestCase):
                 content(ROOT, 'HEAD')
 
     def test_exact_inventory_and_single_runtime_delta(self):
-        commit, files, manifest = content(ROOT, 'HEAD')
+        commit, files, manifest = content(self.fixture, 'HEAD')
         self.assertEqual(manifest['changed'], [DELTA])
         self.assertEqual(manifest['baseline_commit'], BASELINE)
         self.assertEqual(manifest['source_commit'], commit)
@@ -45,13 +57,13 @@ class OwnerUpdateBuildTests(unittest.TestCase):
         self.assertEqual(len(manifest['controls']), 14)
 
     def test_default_is_vm_and_owner_requires_acceptance(self):
-        _, _, manifest = content(ROOT, 'HEAD')
+        _, _, manifest = content(self.fixture, 'HEAD')
         self.assertEqual(manifest['profile'], 'VM_ONLY')
         self.assertIs(manifest['production_apply'], False)
         with self.assertRaisesRegex(ValueError, 'OWNER_ACCEPTANCE_REQUIRED'):
-            content(ROOT, 'HEAD', 'owner')
+            content(self.fixture, 'HEAD', 'owner')
         with self.assertRaisesRegex(ValueError, 'OWNER_ACCEPTANCE_CI_REVIEW_SOURCE'):
-            content(ROOT, 'HEAD', 'owner', b'{}')
+            content(self.fixture, 'HEAD', 'owner', b'{}')
 
     def test_zero_change_cannot_be_relabelled_update(self):
         commit = git(ROOT, 'rev-parse', 'HEAD').decode().strip()
@@ -72,15 +84,15 @@ class OwnerUpdateBuildTests(unittest.TestCase):
 
     def test_immutable_reproducible_bundle(self):
         with tempfile.TemporaryDirectory() as d:
-            a = build(ROOT, 'HEAD', Path(d) / 'a')
-            b = build(ROOT, 'HEAD', Path(d) / 'b')
+            a = build(self.fixture, 'HEAD', Path(d) / 'a')
+            b = build(self.fixture, 'HEAD', Path(d) / 'b')
             self.assertEqual(a.read_bytes(), b.read_bytes())
             with tarfile.open(a) as archive:
                 self.assertTrue(all('\\' not in m.name for m in archive))
             manifest = json.loads((a.parent / 'manifest.json').read_bytes())
             self.assertFalse(manifest['production_apply'])
             with self.assertRaises(FileExistsError):
-                build(ROOT, 'HEAD', a.parent)
+                build(self.fixture, 'HEAD', a.parent)
 
 
 if __name__ == '__main__':
