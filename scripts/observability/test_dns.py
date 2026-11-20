@@ -92,12 +92,28 @@ class DNSProbeTests(unittest.TestCase):
 
     def test_invalid_domain_is_unknown_without_query(self):
         server = self.resolver('ok')
-        for domain in ('-debug', 'name;true', '', 'bad name'):
+        for domain in ('-debug', 'name;true', '', 'bad name', 'a..b',
+                       'a' * 64 + '.invalid', '.invalid', 'bad-.invalid'):
             self.assertEqual(self.probe(server.port, domain), 'UNKNOWN|invalid_domain')
         self.assertEqual(server.queries, [])
 
     def test_missing_tool_is_unknown(self):
         self.assertEqual(self.probe(53, prefix='PATH=/nonexistent'), 'UNKNOWN|tool_unavailable')
+
+    def test_missing_parser_applet_is_unknown(self):
+        prefix = '''busybox() {
+if [ "$1" = --list ]; then printf 'nslookup\\ntimeout\\n'; else command busybox "$@"; fi
+}'''
+        self.assertEqual(self.probe(53, prefix=prefix), 'UNKNOWN|tool_unavailable')
+
+    def test_small_nslookup_is_unknown_without_network_query(self):
+        server = self.resolver('ok')
+        prefix = '''busybox() {
+if [ "$1" = nslookup ]; then printf 'Usage: nslookup HOST [SERVER]\\n' >&2; return 1; fi
+command busybox "$@"
+}'''
+        self.assertEqual(self.probe(server.port, prefix=prefix), 'UNKNOWN|tool_unavailable')
+        self.assertEqual(server.queries, [])
 
     def test_collection_uses_configured_port(self):
         server = self.resolver('ok')

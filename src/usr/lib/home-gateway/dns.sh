@@ -2,7 +2,7 @@
 # Read-only DNS и AdBlock-Fast статус CUDY Home Gateway.
 
 hg_dns_probe() {
-    local domain="${1:-}" port="${2:-}" output
+    local domain="${1:-}" port="${2:-}" output name label
     HG_DNS_PROBE_STATE='UNKNOWN'
     HG_DNS_PROBE_REASON='invalid_endpoint'
     case "$port" in ''|0*|*[!0-9]*) return 0 ;; esac
@@ -11,17 +11,27 @@ hg_dns_probe() {
     HG_DNS_PROBE_REASON='invalid_domain'
     case "$domain" in ''|-*|*[!a-zA-Z0-9.-]*) return 0 ;; esac
     [ "${#domain}" -le 253 ] || return 0
+    name="${domain%.}"
+    while :; do
+        label="${name%%.*}"
+        [ -n "$label" ] && [ "${#label}" -le 63 ] || return 0
+        case "$label" in -*|*-) return 0 ;; esac
+        case "$name" in *.*) name="${name#*.}" ;; *) break ;; esac
+    done
 
     HG_DNS_PROBE_REASON='tool_unavailable'
     command -v busybox >/dev/null 2>&1 || return 0
     busybox --list 2>/dev/null | grep -qx nslookup || return 0
     busybox --list 2>/dev/null | grep -qx timeout || return 0
+    busybox --list 2>/dev/null | grep -qx awk || return 0
+    busybox nslookup --help 2>&1 | grep -q -- '-type=' || return 0
+    busybox timeout --help 2>&1 | grep -q -- '-k ' || return 0
 
     HG_DNS_PROBE_STATE='DOWN'
     HG_DNS_PROBE_REASON='query_failed'
     output="$(busybox timeout -k 1 3 busybox nslookup -type=A "$domain" "127.0.0.1:$port" 2>/dev/null)" || return 0
     # Ignore the resolver's own Address line: only an A answer after Name counts.
-    if printf '%s\n' "$output" | awk '
+    if printf '%s\n' "$output" | busybox awk '
         /^Name:/ { answer = 1; next }
         answer && /^Address([[:space:]][0-9]+)?:[[:space:]]/ {
             ip = $NF; n = split(ip, octets, "."); valid = (n == 4)
