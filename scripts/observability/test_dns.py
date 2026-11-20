@@ -10,7 +10,7 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-DNS = ROOT / 'src/usr/lib/home-gateway/dns.sh'
+DNS = Path(os.environ.get('HG_DNS_TEST_ADAPTER', ROOT / 'src/usr/lib/home-gateway/dns.sh'))
 BUSYBOX = os.environ.get('HG_TEST_BUSYBOX', 'busybox')
 
 
@@ -98,6 +98,21 @@ class DNSProbeTests(unittest.TestCase):
 
     def test_missing_tool_is_unknown(self):
         self.assertEqual(self.probe(53, prefix='PATH=/nonexistent'), 'UNKNOWN|tool_unavailable')
+
+    def test_collection_uses_configured_port(self):
+        server = self.resolver('ok')
+        command = f'''
+. {shlex.quote(str(DNS))}
+ps() {{ printf '/usr/sbin/dnsmasq\\n'; }}
+uci() {{ case "$*" in *dnsmasq*port*) printf '%s' {server.port} ;; esac; }}
+hg_dns_collect
+printf '%s|%s|%s\\n' "$HG_DNS_STATE" "$HG_DNS_RESOLUTION_STATE" "$HG_DNS_PORT"
+'''
+        result = subprocess.run([BUSYBOX, 'ash', '-c', command], text=True,
+                                capture_output=True, timeout=8)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), f'OK|OK|{server.port}')
+        self.assertTrue(server.queries)
 
 
 if __name__ == '__main__':

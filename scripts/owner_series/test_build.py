@@ -16,6 +16,7 @@ from build_kit import build, content, validate_series
 
 ROOT = Path(__file__).resolve().parents[2]
 ACCEPTED = 'd2039b6c62da3aa458f720af1c46fb619aee48dd'
+OBSERVER_FIXTURE = 'fb8d9e3b021db592e369290df9753e65cead484d'
 
 
 def git(repo, *args):
@@ -44,6 +45,9 @@ class BuildTests(unittest.TestCase):
         git(cls.repo, 'config', 'user.name', 'Packaging Fixture')
         git(cls.repo, 'config', 'user.email', 'fixture@example.invalid')
         git(cls.repo, 'config', 'core.autocrlf', 'false')
+        # Keep the packaging fixture's known single-file delta independent of
+        # subsequent legitimate observer changes in the checkout under test.
+        git(cls.repo, 'restore', '--source', OBSERVER_FIXTURE, '--staged', '--worktree', 'src')
         # Builder dependencies are source-bound even during pre-commit TDD.
         for name in ('archive.py', 'parent.py', 'build_kit.py'):
             source = ROOT / 'scripts/owner_series' / name
