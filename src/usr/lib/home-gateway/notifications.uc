@@ -505,11 +505,13 @@ if (MODE == 'loop') {
     let loop_lock = fs.open(RUNTIME_DIR + '/notifications-loop.lock', 'ae');
     if (!loop_lock || loop_lock.lock('xn') == null) exit(73);
     while (true) {
-        let policy = load_policy();
-        if (policy.enabled) {
-            if (iteration('recover') == 0 && gateway([ 'incidents', 'tick' ]).code == 0)
-                iteration('dispatch');
-        }
+        // Policy controls delivery, never observation. Run queue work in child
+        // CLI processes: corrupt policy/queue must not terminate this worker.
+        // Recovery precedes tick because an interrupted compaction can hold the
+        // incident journal, but a failed recovery must still allow an attempt.
+        gateway([ 'notifications', 'recover' ]);
+        if (gateway([ 'incidents', 'tick' ]).code == 0)
+            gateway([ 'notifications', 'dispatch' ]);
         command([ '/bin/sleep', '30' ]);
     }
 }

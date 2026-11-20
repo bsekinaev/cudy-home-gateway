@@ -514,5 +514,85 @@ sys.exit(item.get('code', 0))
         self.assertFalse((self.base / 'state/notification-compaction.json').exists())
 
 
+class ObservationLoopTests(unittest.TestCase):
+    """Exercise the actual worker boundary, without a production router/network."""
+
+    def run_worker(self, policy, tick_code=0, corrupt_queue=False, hold_lock=False, corrupt_policy=False):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            state, runtime = base / 'state', base / 'runtime'
+            state.mkdir(); runtime.mkdir()
+            (state / 'notification-policy.json').write_text(json.dumps(policy))
+            if corrupt_policy:
+                (state / 'notification-policy.json').write_text('broken json\n')
+            if corrupt_queue:
+                (state / 'notifications.jsonl').write_text('broken json\n')
+            target = base / 'gateway'
+            target.write_text('#!/bin/sh\n'
+                              'echo "$*" >> "$HG_LOOP_CALLS"\n'
+                              'if [ "$1 $2" = "incidents tick" ]; then exit '
+                              + str(tick_code) + '; fi\n'
+                              'if [ "$1" = notifications ]; then exec ucode '
+                              '"$HG_LOOP_ENGINE" "$0" "$2"; fi\nexit 0\n')
+            calls = base / 'calls'
+            env = dict(os.environ, HG_NOTIFICATION_STATE_DIR=str(state),
+                       HG_NOTIFICATION_RUNTIME_DIR=str(runtime),
+                       HG_NOTIFICATION_SECRETS_DIR=str(base / 'secrets'),
+                       HG_LOOP_CALLS=str(calls), HG_LOOP_ENGINE=str(ENGINE))
+            lock = (runtime / 'notifications-loop.lock').open('a')
+            if hold_lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            worker = subprocess.Popen(['ucode', str(ENGINE), str(target), 'loop'],
+                                      env=env, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, start_new_session=True)
+            try:
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if (calls.exists() and 'incidents tick' in calls.read_text()) or worker.poll() is not None:
+                        break
+                    time.sleep(.02)
+                if hold_lock:
+                    self.assertEqual(worker.wait(timeout=2), 73)
+                    self.assertFalse(calls.exists())
+                else:
+                    self.assertTrue(calls.exists(), 'delivery policy stopped observation')
+                    self.assertIn('incidents tick', calls.read_text().splitlines())
+                    time.sleep(.15)
+                    self.assertIsNone(worker.poll(), 'delivery failure terminated observer')
+                    if tick_code:
+                        time.sleep(.1)
+                        self.assertNotIn('notifications dispatch', calls.read_text().splitlines())
+            finally:
+                if worker.poll() is None:
+                    os.killpg(worker.pid, signal.SIGTERM)
+                worker.communicate(timeout=3)
+                lock.close()
+
+    def policy(self, enabled=False, **extra):
+        return dict(schema_version=1, enabled=enabled, mute_until=0,
+                    delivery_not_before=0, categories={}, **extra)
+
+    def test_disabled_delivery_keeps_observing(self):
+        self.run_worker(self.policy())
+
+    def test_muted_and_categories_off_keep_observing(self):
+        p = self.policy(enabled=True)
+        p['mute_until'] = int(time.time()) + 3600
+        p['categories'] = {key: False for key in ('wan', 'dns', 'main', 'redmi')}
+        self.run_worker(p)
+
+    def test_corrupt_queue_does_not_prevent_first_measurement(self):
+        self.run_worker(self.policy(enabled=True), corrupt_queue=True)
+
+    def test_corrupt_delivery_policy_does_not_terminate_observer(self):
+        self.run_worker(self.policy(enabled=True), corrupt_policy=True)
+
+    def test_failed_measurement_is_not_followed_by_dispatch(self):
+        self.run_worker(self.policy(enabled=True), tick_code=1)
+
+    def test_second_worker_is_refused(self):
+        self.run_worker(self.policy(), hold_lock=True)
+
+
 if __name__ == '__main__':
     unittest.main()
