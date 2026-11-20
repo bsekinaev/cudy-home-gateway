@@ -56,15 +56,19 @@ def git(*args):
 def owner_update_fixture(commit, workspace):
     """Exercise current V1 controllers with their unchanged Telegram-only scope.
 
-    V2 observer acceptance separately uses the real candidate without this fixture.
+    V3 monitor acceptance separately uses the real candidate without this fixture.
     Never broaden the historical V1 builder to accept backend changes.
     """
     fixture = workspace / 'v1-regression-source'
     subprocess.run(['git', '-c', 'core.autocrlf=false', 'clone', '--quiet', '--shared',
                     '--no-checkout', str(ROOT), str(fixture)], check=True)
     subprocess.run(['git', '-C', str(fixture), 'checkout', '--quiet', '--detach', commit], check=True)
-    paths = ['src/usr/lib/home-gateway/' + name for name in
-             ('dns.sh', 'redmi.sh', 'health.sh', 'status.sh')]
+    # V1 is intentionally Telegram-only. Pin every other runtime file while
+    # retaining the current controllers and current poller for regression.
+    paths = [p.decode() for p in git('ls-tree', '-r', '--name-only',
+        '62592457237e7f026786c086d1ca6fdd4b6c095d', 'src').splitlines()
+        if p != b'src/usr/lib/home-gateway/telegram-poller.uc']
+    require(len(paths) == 19, 'V1_FIXTURE_INVENTORY')
     subprocess.run(['git', '-C', str(fixture), 'restore', '--source',
                     '62592457237e7f026786c086d1ca6fdd4b6c095d', '--staged', '--worktree', '--', *paths], check=True)
     stamp = str(int(git('show', '-s', '--format=%ct', commit)) + 1) + ' +0000'
@@ -72,7 +76,7 @@ def owner_update_fixture(commit, workspace):
                GIT_AUTHOR_EMAIL='fixture@example.invalid', GIT_COMMITTER_EMAIL='fixture@example.invalid',
                GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp)
     subprocess.run(['git', '-C', str(fixture), 'commit', '--quiet', '--allow-empty',
-                    '-m', 'VM_ONLY V1 Telegram regression with pinned backend observers'], env=env, check=True)
+                    '-m', 'VM_ONLY V1 Telegram regression with nineteen pinned runtime files'], env=env, check=True)
     source = subprocess.check_output(['git', '-C', str(fixture), 'rev-parse', 'HEAD']).decode().strip()
     (workspace / 'owner-update-fixture.json').write_text(json.dumps(dict(
         real_candidate_commit=commit, fixture_commit=source,
