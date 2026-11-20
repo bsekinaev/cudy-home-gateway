@@ -42,7 +42,7 @@ class LauncherTests(unittest.TestCase):
   r,stage,calls,payload=self.invoke(fail_verify=True); self.assertNotEqual(r.returncode,0); self.assertEqual(stage,'Verify'); self.assertIsNone(calls)
  def test_modified_owner_script_refused_before_verify(self):
   r,stage,calls,payload=self.invoke(tampered=True); self.assertNotEqual(r.returncode,0); self.assertIsNone(stage); self.assertIsNone(calls)
-@unittest.skipUnless(shutil.which('sh'),'POSIX shell required')
+@unittest.skipUnless(os.name != 'nt' and shutil.which('sh'),'POSIX filesystem required; Windows transport is tested separately')
 class RemoteGuardTests(unittest.TestCase):
  def test_wrong_source_pending_operation_and_path_escape_cannot_enable(self):
   template=TEMPLATE.read_text(encoding='utf-8-sig'); code=template.split("$remote=@'\n",1)[1].split("\n'@",1)[0].replace('@@SOURCE@@','b'*40)
