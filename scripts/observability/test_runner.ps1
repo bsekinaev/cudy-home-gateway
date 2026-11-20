@@ -23,11 +23,18 @@ try {
     if ((Get-Content -LiteralPath $reportFile)[0] -cne 'HG_DNS_DISCOVERY_V1') { throw 'Report missing' }
     if ($global:HGDiscoveryTestArgs -notcontains 'root@fixture.invalid') { throw 'Target identity lost' }
     $remote=[string]$global:HGDiscoveryTestArgs[-1]
-    if ($remote -notmatch "^printf '%s' '([A-Za-z0-9+/=]+)' \| busybox base64 -d \| sh -s -- 'acl_A2dNs'$") {
+    if ($remote -notmatch "^printf '%b' '((?:\\0[0-7]{3})+)' \| sh -s -- 'acl_A2dNs'$") {
         throw 'Unexpected remote command'
     }
-    $decoded=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Matches[1]))
+    $payload=$Matches[1]
+    $bytes=[byte[]]@(foreach ($octet in [regex]::Matches($payload,'\\0([0-7]{3})')) {
+        [Convert]::ToByte($octet.Groups[1].Value,8)
+    })
+    $decoded=[Text.Encoding]::UTF8.GetString($bytes)
     if (!$decoded.StartsWith('#!/bin/sh') -or $decoded.Contains("`r")) { throw 'Bad payload bytes' }
+    $expected=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'router-dns-preflight.sh')).Replace("`r`n","`n")
+    if ($decoded -cne $expected) { throw 'Payload differs from reviewed script' }
+    if ($remote.Length -gt 28000) { throw 'Remote command exceeds Windows transport budget' }
     @{format='HG_OWNER_SERIES_SESSION_V1';target='root@bad;touch';port=22} |
         ConvertTo-Json | Set-Content -LiteralPath $sessionFile -Encoding UTF8
     $refused=$false

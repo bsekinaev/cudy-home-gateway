@@ -16,9 +16,12 @@ if ($session.format -cne 'HG_OWNER_SERIES_SESSION_V1' -or
 }
 $scriptPath=Join-Path $PSScriptRoot 'router-dns-preflight.sh'
 $text=[IO.File]::ReadAllText($scriptPath).Replace("`r`n","`n")
-$encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text))
-# Base64 and the validated profile contain no shell control characters.
-$remote="printf '%s' '$encoded' | busybox base64 -d | sh -s -- '$Profile'"
+# POSIX shell printf is sufficient; target BusyBox need not include base64.
+$encoded=(@([Text.Encoding]::UTF8.GetBytes($text) | ForEach-Object {
+    '\0'+[Convert]::ToString($_,8).PadLeft(3,'0')
+}) -join '')
+$remote="printf '%b' '$encoded' | sh -s -- '$Profile'"
+if ($remote.Length -gt 28000) { throw 'Discovery script exceeds Windows transport budget.' }
 Write-Host 'Reading DNS capabilities and REDMI endpoint; network settings stay unchanged.'
 $report=@(& ssh -T -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -p $session.port $session.target $remote)
 if ($LASTEXITCODE -ne 0) { throw 'SSH discovery failed. No updater stage was invoked.' }

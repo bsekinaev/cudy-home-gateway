@@ -1,6 +1,8 @@
 """Discovery output must never disclose unrelated generated configuration."""
 import json
 import os
+import shlex
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -11,6 +13,28 @@ SCRIPT = ROOT / 'scripts/observability/router-dns-preflight.sh'
 
 
 class PreflightTests(unittest.TestCase):
+    def test_shell_transport_without_base64(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            real_busybox = shutil.which('busybox')
+            wrapper = Path(temporary) / 'busybox'
+            wrapper.write_text('#!/bin/sh\n[ "$1" != base64 ] || exit 99\nexec '
+                               + shlex.quote(real_busybox) + ' "$@"\n')
+            wrapper.chmod(0o755)
+            captured = os.environ.get('HG_DNS_TRANSPORT_COMMAND_FILE')
+            if captured:
+                command = Path(captured).read_text()
+            else:
+                encoded = ''.join('\\0%03o' % b for b in SCRIPT.read_bytes())
+                command = "printf '%b' '" + encoded + "' | sh -s -- 'acl_A2dNs'"
+            result = subprocess.run([real_busybox, 'ash', '-c', command],
+                env=dict(os.environ, PATH=temporary + ':' + os.environ['PATH'],
+                         HG_DNS_PREFLIGHT_CONFIG='/missing'),
+                capture_output=True, text=True, timeout=8)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(result.stdout.startswith('HG_DNS_DISCOVERY_V1\n'))
+            self.assertEqual(len(result.stdout.splitlines()), 9)
+            self.assertIn('network_changes=none', result.stdout)
+
     def test_disabled_and_invalid_router_ports_are_labelled(self):
         with tempfile.TemporaryDirectory() as temporary:
             uci = Path(temporary) / 'uci'

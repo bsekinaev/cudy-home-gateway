@@ -5,6 +5,10 @@
 `%USERPROFILE%/CUDY-Update-20261119-fb8d9e3/owner-session.json`.
 Файл сеанса не меняется; этапы установщика не вызываются.
 
+В исправлении r2 передача использует встроенный POSIX `printf`, без applet
+`base64`. Команда проверена через настоящий native argument boundary Windows
+PowerShell 5.1 и исполнена на стенде с недоступным `base64`.
+
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\check-dns.ps1
 ```
@@ -31,6 +35,9 @@ runtime — полезный результат исследования, а н�
 ucode и UDP resolver только на loopback в контейнере с `--network none`.
 `test_runner.ps1` заменяет SSH локальной функцией и проверяет Windows PowerShell
 5.1 и текущий PowerShell без реального соединения.
+`test_transport.ps1 -CommandFile <путь>` захватывает команду через локальный
+подставной `ssh.exe`; этот файл можно передать Linux-тесту через
+`HG_DNS_TRANSPORT_COMMAND_FILE` для проверки всей цепочки без настоящего SSH.
 
 Внутренние `HG_DNS_PREFLIGHT_CONFIG` и `HG_DNS_TEST_ADAPTER` используются тестами;
 при обычном owner-запуске они не задаются.
