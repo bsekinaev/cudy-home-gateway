@@ -216,7 +216,7 @@ class MonitorHistoryTests(unittest.TestCase):
         for t in (10, 20, 30): self.tick(t, epoch=1800000000-t)
         for t in (40, 50): self.tick(t, 'OK', epoch=1800000000-t)
         opened, recovered = self.journal()
-        self.assertRegex(opened['incident_id'], r'^main-[a-f0-9]{32}-[a-f0-9]{32}-[0-9]{1,20}$')
+        self.assertRegex(opened['incident_id'], r'^main-8[0-9]{148}$')
         self.assertEqual(opened['opened_uptime'], 10)
         self.assertEqual(recovered['observed_duration_seconds'], 40)
         self.assertIsNone(recovered['duration_seconds'])

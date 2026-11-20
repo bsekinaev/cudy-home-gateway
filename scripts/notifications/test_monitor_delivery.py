@@ -17,7 +17,7 @@ class MonitorDeliveryTests(unittest.TestCase):
         self.env['HG_MONITOR_ACTIVE'] = '1'
 
     def modern_event(self, kind='OPEN', at=100, component='main', **fields):
-        event = self.event(kind, at, component, component + '-' + 'a'*32 + '-' + 'b'*32 + '-1')
+        event = self.event(kind, at, component, component + '-8' + '10'*32 + '11'*32 + str(1).zfill(20))
         event.update(fields)
         return event
 
@@ -100,5 +100,12 @@ class MonitorDeliveryTests(unittest.TestCase):
         self.run_cli('dispatch')
         self.assertEqual([x['status'] for x in self.queue()],['COALESCED','COALESCED'])
         self.assertEqual(self.calls(),[])
+
+    def test_chat_code_is_short_but_full_compatible_id_is_retained(self):
+        self.monitor(); event=self.modern_event(); self.journal([event]); self.run_cli('dispatch')
+        text=self.calls()[0]['payload']['text']
+        self.assertNotIn(event['incident_id'],text)
+        self.assertIn('main-aaaaaaaa-bbbbbbbb-1-OPEN-100',text)
+        self.assertEqual(self.queue()[0]['incident_id'],event['incident_id'])
 
 if __name__ == '__main__': unittest.main()

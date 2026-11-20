@@ -105,7 +105,7 @@ function contains(values, value) {
 }
 function valid_event(event) {
     return event.schema_version == 1 && type(event.incident_id) == 'string' &&
-        match(event.incident_id, /^(wan|dns|main|torrent|redmi|asata|tailscale)-([0-9]+|[a-f0-9]{32}-[a-f0-9]{32}-[0-9]{1,20})$/) != null &&
+        match(event.incident_id, /^(wan|dns|main|torrent|redmi|asata|tailscale)-[0-9]+$/) != null &&
         contains(COMPONENTS, event.component) &&
         contains([ 'OPEN', 'STATE_CHANGED', 'RECOVERED' ], event.event) &&
         type(event.at) == 'int' && event.at >= 0;
@@ -302,8 +302,9 @@ function sync_queue(items) {
             observed_duration_seconds: event.observed_duration_seconds ?? null,
             context_changed: event.context_changed == true,
             wall_time_trusted: type(event.wall_time_trusted) == 'bool' ? event.wall_time_trusted : null,
+            observation_bound: match(event.incident_id, /-8[0-9]{148}$/) != null,
             duration_unknown: event.duration_unknown == true ||
-                (match(event.incident_id, /-[a-f0-9]{32}-[a-f0-9]{32}-[0-9]{1,20}$/) != null && event.observed_duration_seconds == null),
+                (match(event.incident_id, /-8[0-9]{148}$/) != null && event.observed_duration_seconds == null),
             created_at: event.at, opened_at: event.opened_at ?? opened_at[event.incident_id] ?? event.at, status: 'PENDING', attempts: 0, next_attempt_at: 0
         });
         known[id] = true;
@@ -328,7 +329,7 @@ function sync_queue(items) {
         let opened = opened_at[recovery.incident_id] ?? recovery.opened_at ?? recovery.created_at;
         for (let item in items) {
             if (item.incident_id != recovery.incident_id || item == recovery ||
-                (match(recovery.incident_id, /-[a-f0-9]{32}-[a-f0-9]{32}-[0-9]{1,20}$/) == null && item.created_at > recovery.created_at))
+                (match(recovery.incident_id, /-8[0-9]{148}$/) == null && item.created_at > recovery.created_at))
                 continue;
             if (item.event == 'OPEN')
                 opened = item.opened_at ?? item.created_at;
@@ -353,6 +354,25 @@ function sync_queue(items) {
     }
     return !changed || save_queue(items);
 }
+// Compact chat code only; persistent IDs retain the complete legacy-compatible
+// decimal encoding. No identifier is shortened in the journal or delivery dedup.
+function incident_chat_code(id) {
+    let m=match(id,/^(wan|dns|main|torrent|redmi|asata|tailscale)-8([0-9]{64})([0-9]{64})([0-9]{20})$/);
+    if(m==null) return id;
+    let pairs=['00','01','02','03','04','05','06','07','08','09','10','11','12','13','14','15'];
+    let parts=[];
+    for(let value in [m[2],m[3]]) {
+        let hex='';
+        for(let i=0;i<8;i++) {
+            let n=index(pairs,substr(value,i*2,2));
+            if(n<0) return id;
+            hex+=substr('0123456789abcdef',n,1);
+        }
+        push(parts,hex);
+    }
+    return `${m[1]}-${parts[0]}-${parts[1]}-${replace(m[4],/^0+/,'') || '0'}`;
+}
+
 function delivery(item, proxy, chat) {
     // Raw reasons may contain secrets; display only bounded local labels/IDs.
     let labels={wan:'Интернет (WAN)',dns:'DNS',main:'Основной VPN',redmi:'REDMI',
@@ -375,7 +395,8 @@ function delivery(item, proxy, chat) {
             : `\nИнтервал между наблюдениями: ${item.duration_seconds} с.`;
     }
     text+=`\nЗадержка доставки: ${max(0,time()-item.created_at)} с.`;
-    text+=`\nСобытие: ${item.notification_id}`;
+    let chat_code=incident_chat_code(item.incident_id);
+    text+=`\nСобытие: ${chat_code==item.incident_id ? item.notification_id : `${chat_code}-${item.event}-${item.created_at}`}`;
     let path = RUNTIME_DIR + '/notification-payload.json';
     let file = fs.open(path, 'w');
     if (!file || !fs.chmod(path, 0600))

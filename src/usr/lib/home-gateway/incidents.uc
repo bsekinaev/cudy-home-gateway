@@ -343,6 +343,25 @@ function append_events(events) {
     return true;
 }
 
+// Compact chat code only; persistent IDs retain the complete legacy-compatible
+// decimal encoding. No identifier is shortened in the journal or delivery dedup.
+function incident_chat_code(id) {
+    let m=match(id,/^(wan|dns|main|torrent|redmi|asata|tailscale)-8([0-9]{64})([0-9]{64})([0-9]{20})$/);
+    if(m==null) return id;
+    let pairs=['00','01','02','03','04','05','06','07','08','09','10','11','12','13','14','15'];
+    let parts=[];
+    for(let value in [m[2],m[3]]) {
+        let hex='';
+        for(let i=0;i<8;i++) {
+            let n=index(pairs,substr(value,i*2,2));
+            if(n<0) return id;
+            hex+=substr('0123456789abcdef',n,1);
+        }
+        push(parts,hex);
+    }
+    return `${m[1]}-${parts[0]}-${parts[1]}-${replace(m[4],/^0+/,'') || '0'}`;
+}
+
 function new_event(kind, component, role, incident_id, state, reason, now) {
     return {
         schema_version: 1,
@@ -396,9 +415,18 @@ function process_component(spec, observation, now, runtime, active, events) {
         let e = runtime.observation;
         let incident_id = `${name}-${opened_at}`;
         if (e?.boot_id != null && e?.incarnation != null) {
-            let boot = substr(replace(e.boot_id, /[^a-zA-Z0-9]/g, ''), 0, 32);
-            let incarnation = substr(replace(e.incarnation, /[^a-zA-Z0-9]/g, ''), 0, 32);
-            incident_id = `${name}-${boot}-${incarnation}-${int(e.sequence ?? 0)}`;
+            let boot = replace(e.boot_id, /-/g, '');
+            let incarnation = replace(e.incarnation, /-/g, '');
+            if(match(boot,/^[a-f0-9]{32}$/)==null || match(incarnation,/^[a-f0-9]{32}$/)==null ||
+                type(e.sequence)!='int' || e.sequence<0) {
+                reset_candidate(runtime,name,'UNKNOWN','invalid_sample_identity',now); return;
+            }
+            // Fixed-width decimal encoding preserves all UUID bits while keeping
+            // the installed baseline's component-[0-9]+ journal/queue grammar.
+            let digits='8';
+            for(let value in [boot,incarnation]) for(let i=0;i<32;i++)
+                digits+=sprintf('%02d',index('0123456789abcdef',substr(value,i,1)));
+            incident_id = `${name}-${digits}${sprintf('%020d',e.sequence)}`;
         }
         let event = new_event('OPEN', name, role, incident_id, state, reason, now);
 
@@ -798,7 +826,7 @@ function history_summary(human) {
     for(let i=max(0,length(result.events)-8); i<length(result.events); i++) {
         let event=result.events[i];
         let kind=event.event=='OPEN'?'сбой':event.event=='RECOVERED'?'восстановление':'изменение';
-        print(`${event.component}: ${kind}; ID ${event.incident_id}\n`);
+        print(`${event.component}: ${kind}; ID ${incident_chat_code(event.incident_id)}\n`);
     }
     if (result.truncated) print('Полнота сокращена лимитом хранения или ошибкой записи\n');
     return 0;
