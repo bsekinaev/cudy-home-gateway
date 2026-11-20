@@ -232,7 +232,11 @@ crash_case() {
  /usr/bin/ucode "$update/inspect.uc" "$update" "$(cat "$LAB/update-pin")" journal || return 1
 # HGVM_OBSERVER_END
 # HGVM_MONITOR_BEGIN
- stage "$LAB/baseline" verify "$(cat "$LAB/baseline-operation")" || return 1
+ # Verify the latest receipt, whose history includes all completed operations.
+ # The original baseline receipt predates later sealed generations and cannot
+ # authenticate the current history inventory. Check baseline bytes separately.
+ stage "$LAB/a" verify "$(cat /etc/home-gateway-owner-series/latest)" || return 1
+ (cd / && sha256sum -c "$LAB/baseline/candidate.sha256") || return 1
 # HGVM_MONITOR_END
  sha256sum -c "$LAB/v1-history" && sha256sum -c "$LAB/client-state"
 }
