@@ -32,12 +32,13 @@ class MonitorHistoryTests(unittest.TestCase):
 
     def tick(self, uptime, state='DOWN', identity=None, boot='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', context='ctx1',
              valid=True, expires=None, incarnation='cccccccc-cccc-cccc-cccc-cccccccccccc', trusted=True, epoch=None):
+        self.sequence=getattr(self,'sequence',0)+1
         sample = dict(id=identity or f'{boot}:{uptime}', boot_id=boot, context=context,
                       checked_uptime=uptime, expires_uptime=expires if expires is not None else uptime + 60,
                       valid=valid, source='fixture')
         health = dict(schema_version=1, generated_at={'epoch': epoch or 1800000000 + uptime},
                       observation=dict(schema_version=1, boot_id=boot, context=context,
-                                       incarnation=incarnation, sequence=uptime,
+                                       incarnation=incarnation, sequence=self.sequence,
                                        started_uptime=uptime, finished_uptime=uptime,
                                        wall_time_trusted=trusted),
                       components={'main': dict(state=state, reason='fixture', sample=sample)})
@@ -159,7 +160,7 @@ class MonitorHistoryTests(unittest.TestCase):
         original = self.call
         def call(mode, *args, **kwargs):
             p = original(mode, *args, ok=False)
-            self.assertEqual(p.returncode, 70, p.stderr)
+            self.assertEqual(p.returncode, 75, p.stderr)
             return p
         self.call = call
         try:
@@ -285,6 +286,23 @@ class MonitorHistoryTests(unittest.TestCase):
         self.assertEqual(data['incident_counts']['opened'],1)
         self.assertEqual(data['incident_counts']['recovered'],1)
         self.assertEqual(data['events'][-1]['observed_duration_seconds'],40)
+
+    def test_missing_observation_breaks_confirmation_and_marks_history_gap(self):
+        self.tick(10)
+        self.sequence+=1  # Worker attempted a cycle which produced no health result.
+        self.tick(30)
+        self.tick(40)
+        self.assertEqual(self.status()['active_count'],0)
+        self.tick(50)
+        self.assertEqual(self.status()['active_count'],1)
+        self.assertGreaterEqual(self.summary()['observation_gaps'],1)
+
+    def test_replayed_complete_frame_is_ignored_without_reset_or_false_gap(self):
+        self.tick(10)
+        self.call('tick')
+        self.tick(20); self.tick(30)
+        self.assertEqual(self.status()['active_count'],1)
+        self.assertEqual(self.summary()['observation_gaps'],0)
 
 if __name__ == '__main__':
     unittest.main()

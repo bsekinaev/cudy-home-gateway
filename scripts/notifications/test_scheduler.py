@@ -117,4 +117,17 @@ fi
                 if proc.poll() is None:
                     os.killpg(proc.pid, signal.SIGKILL)
                     proc.communicate(timeout=3)
+    def test_committed_observation_with_history_failure_still_dispatches(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base=Path(folder); target=base/'gateway'
+            target.write_text('#!/bin/sh\nif [ "$*" = "incidents tick" ]; then exit 75; fi\nif [ "$*" = "notifications dispatch" ]; then touch "$HG_TEST_BASE/dispatched"; fi\n')
+            env=dict(os.environ,HG_TEST_BASE=folder,HG_NOTIFICATION_RUNTIME_DIR=folder+'/runtime',HG_NOTIFICATION_STATE_DIR=folder+'/state')
+            proc=subprocess.Popen(['ucode',str(ENGINE),str(target),'loop'],env=env,start_new_session=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            try:
+                until=time.monotonic()+3
+                while not (base/'dispatched').exists() and time.monotonic()<until: time.sleep(.02)
+                self.assertTrue((base/'dispatched').exists(),'history failure blocked committed incident delivery')
+            finally:
+                os.killpg(proc.pid,signal.SIGTERM); proc.communicate(timeout=3)
+
 if __name__ == '__main__': unittest.main()

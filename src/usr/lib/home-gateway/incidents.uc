@@ -644,14 +644,17 @@ function record_history(health, epoch, events) {
     let h = load_history();
     if(journal_tail_repaired) { h.truncated=true; h.journal_tail_repaired=true; }
     let p = h.last;
-    let c = { boot_id: e.boot_id, context: e.context, uptime: e.finished_uptime,
+    let c = { boot_id: e.boot_id, context: e.context, incarnation:e.incarnation, sequence:e.sequence, uptime: e.finished_uptime,
         epoch: epoch >= 1700000000 ? epoch : null, trusted: e.wall_time_trusted == true, components: {} };
+    if(p?.boot_id==c.boot_id && p?.incarnation==c.incarnation && p?.sequence==c.sequence &&
+        p?.uptime==c.uptime) return true;
     for (let spec in COMPONENTS) {
         let a = health.components?.[spec.name];
         c.components[spec.name] = valid_sample(a, e) ? { state: a.state, expires: a.sample.expires_uptime } :
             { state: 'UNKNOWN', expires: c.uptime };
     }
-    if (p?.boot_id == c.boot_id && p?.context == c.context && type(p?.uptime) == 'int' && c.uptime > p.uptime) {
+    if (p?.boot_id == c.boot_id && p?.context == c.context && p?.incarnation==c.incarnation &&
+        p?.sequence+1==c.sequence && !e.gap_before && type(p?.uptime) == 'int' && c.uptime > p.uptime) {
         let duration = c.uptime - p.uptime;
         let r = { boot_id: c.boot_id, end_uptime: c.uptime, start_epoch: p.epoch, end_epoch: c.epoch,
             seconds: duration, components: {} };
@@ -702,8 +705,11 @@ function record_history(health, epoch, events) {
             }
         }
     }
-    else if (p != null && (p.boot_id != c.boot_id || p.context != c.context))
-        push(h.records, { gap: true, boot_id: c.boot_id, end_epoch: c.epoch, end_uptime: c.uptime });
+    else if (p != null && (p.boot_id != c.boot_id || p.context != c.context ||
+        p.incarnation!=c.incarnation || p.sequence+1!=c.sequence || e.gap_before))
+        push(h.records, { gap: true, gap_reason:p.boot_id!=c.boot_id?'boot':
+            p.context!=c.context?'context':p.incarnation!=c.incarnation?'worker':'missing_observation',
+            boot_id: c.boot_id, end_epoch: c.epoch, end_uptime: c.uptime });
     for (let event in events ?? []) push(h.events, {
         event:event.event, component:event.component, incident_id:event.incident_id,
         at:event.at, observed_boot_id:event.observed_boot_id, observed_uptime:event.observed_uptime,
@@ -779,7 +785,7 @@ function history_summary(human) {
         latest_sample: h.last == null ? null : { epoch: h.last.epoch, uptime: h.last.uptime, boot_id: h.last.boot_id },
         snapshot_age_seconds: age, wall_time_trusted: h.last?.trusted == true,
         wall_time_quality: h.last?.trusted ? 'trusted' : (h.last?.epoch != null ? 'unconfirmed' : 'unknown'),
-        reboot_gaps: 0, components: {}, daily: h.daily, events: [],
+        reboot_gaps: 0, observation_gaps:0, components: {}, daily: h.daily, events: [],
         incident_counts:{opened:0,recovered:0,changed:0} };
     for (let event in h.events) {
         let age=event.observed_boot_id==clock.boot_id && type(event.observed_uptime)=='int'
@@ -797,7 +803,7 @@ function history_summary(human) {
         if (r.boot_id != clock.boot_id && clock.epoch >= 1700000000 && r.end_epoch != null)
             age = clock.epoch-r.end_epoch;
         if (age == null || age < 0 || age >= span) continue;
-        if (r.gap) { result.reboot_gaps++; continue; }
+        if (r.gap) { result.observation_gaps++; if(r.gap_reason=='boot') result.reboot_gaps++; continue; }
         let kept_seconds = min(r.seconds, span-age);
         let removed = r.seconds-kept_seconds;
         for (let spec in COMPONENTS) {
@@ -817,7 +823,7 @@ function history_summary(human) {
     }
     if (!human) { print(result, '\n'); return 0; }
     print(`Окно до момента запроса; возраст последнего наблюдения: ${age == null ? 'неизвестен' : `${int(age)}с`}\n`);
-    print(`История: ${period == 'week' ? 'неделя' : 'сутки'}; часы: ${result.wall_time_quality}; разрывы: ${result.reboot_gaps}\n`);
+    print(`История: ${period == 'week' ? 'неделя' : 'сутки'}; часы: ${result.wall_time_quality}; разрывы: ${result.observation_gaps}\n`);
     for (let spec in COMPONENTS) {
         let t = result.components[spec.name];
         print(`${spec.label}: OK ${int(t.ok_seconds)}с; DOWN ${int(t.down_seconds)}с; DEGRADED ${int(t.degraded_seconds)}с; покрытие ${int(t.covered_seconds)}с; UNKNOWN ${int(t.unknown_seconds)}с; нет наблюдений ${int(t.unobserved_seconds)}с\n`);
@@ -869,7 +875,11 @@ function tick() {
     let e = health?.observation;
     if (e != null) {
         let p = runtime.observation;
-        if (p?.boot_id != e.boot_id || p?.context != e.context ||
+        let missing=p!=null && p.boot_id==e.boot_id && p.incarnation==e.incarnation &&
+            type(p.sequence)=='int' && type(e.sequence)=='int' &&
+            (e.sequence>p.sequence+1 || e.sequence<p.sequence);
+        if(missing) e.gap_before=true;
+        if (missing || p?.boot_id != e.boot_id || p?.context != e.context ||
             (getenv('HG_MONITOR_INCARNATION') != null && p?.incarnation != e.incarnation)) runtime.candidates = {};
         runtime.observation = e;
     }
@@ -910,7 +920,10 @@ function tick() {
         print(`incidents: ${event.event} ${event.component} ${event.state} ${event.reason}\n`);
 
     lock.close();
-    return history_ok ? 0 : 70;
+    // Measurement and confirmed event/runtime commits already succeeded.
+    // A history checkpoint failure must not suppress delivery of those events.
+    if(!history_ok) warn('incidents: history degraded; observations committed\n');
+    return history_ok ? 0 : 75;
 }
 
 function show_human() {

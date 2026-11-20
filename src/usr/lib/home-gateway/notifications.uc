@@ -633,6 +633,7 @@ if (MODE == 'loop') {
         if (late >= 60) {
             let skipped = int(late / 60);
             missed += skipped;
+            sequence += skipped;
             due += skipped * 60;
         }
         let scheduled = due;
@@ -650,11 +651,11 @@ if (MODE == 'loop') {
             `HG_MONITOR_INCARNATION=${incarnation}`, `HG_MONITOR_SEQUENCE=${++sequence}`,
             '/bin/sh', GATEWAY, 'incidents', 'tick' ], 36);
         status.sequence = sequence;
-        status.observation_result = observed == 124 ? 'TIMEOUT' : observed == 0 ? 'OK' : 'FAILED';
+        status.observation_result = observed == 124 ? 'TIMEOUT' : observed == 0 ? 'OK' : observed == 75 ? 'HISTORY_DEGRADED' : 'FAILED';
         status.finished_monotonic = monotonic();
         status.state = 'WAITING';
         status.delivery_result = 'SKIPPED';
-        if (observed == 0 && monotonic() + 15 < due)
+        if ((observed == 0 || observed == 75) && monotonic() + 15 < due)
             status.delivery_result = bounded([ '/usr/bin/env', 'HG_MONITOR_ACTIVE=1',
                 '/bin/sh', GATEWAY, 'notifications', 'dispatch' ], 15) == 124 ? 'TIMEOUT' : 'FINISHED';
         status.updated_at = time();
