@@ -30,11 +30,12 @@ class LauncherTests(unittest.TestCase):
 class RemoteGuardTests(unittest.TestCase):
  def test_wrong_source_pending_operation_and_path_escape_cannot_enable(self):
   template=TEMPLATE.read_text(encoding='utf-8-sig'); code=template.split("$remote=@'\n",1)[1].split("\n'@",1)[0].replace('@@SOURCE@@','b'*40)
-  for case in ('valid','wrong_source','pending','escape'):
+  for case in ('valid','wrong_source','pending','dangling','escape'):
    with self.subTest(case=case), tempfile.TemporaryDirectory() as d:
     b=Path(d); deploy=b/'deploy'; deploy.mkdir(); (deploy/'tx.123').mkdir(); (deploy/'latest').write_text('tx.123' if case!='escape' else 'tx...escape')
     (deploy/'tx.123/commit').write_text('c'*40 if case=='wrong_source' else 'b'*40)
     if case=='pending':(b/'lock').touch()
+    if case=='dangling':(b/'lock').symlink_to(b/'absent')
     gateway=b/'gateway'; marker=b/'enabled'; gateway.write_text('#!/bin/sh\ntouch '+str(marker)+'\n'); gateway.chmod(0o755)
     script=code.replace('/etc/home-gateway-deploy',str(deploy)).replace('/tmp/home-gateway-deploy.lock',str(b/'lock')).replace('/usr/bin/gateway',str(gateway))
     r=subprocess.run(['sh','-c',script],capture_output=True,text=True,timeout=3)

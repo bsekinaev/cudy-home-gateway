@@ -38,7 +38,8 @@ try {
         if(!$?) { throw 'Сначала требуется успешная отдельная проверка установки.' }
         $remote=@'
 set -eu
-[ ! -e /tmp/home-gateway-deploy.lock ] && [ ! -L /tmp/home-gateway-deploy.lock ]
+[ ! -e /tmp/home-gateway-deploy.lock ] || exit 70
+[ ! -L /tmp/home-gateway-deploy.lock ] || exit 70
 operation=$(cat /etc/home-gateway-deploy/latest)
 case "$operation" in tx.*) ;; *) exit 70 ;; esac
 case "$operation" in *[!A-Za-z0-9.]*|*..*) exit 70 ;; esac
