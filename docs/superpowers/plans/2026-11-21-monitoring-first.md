@@ -49,22 +49,26 @@ component tests и VM budget scenario.
 **Interfaces:** Уникальные boot/incarnation/sequence samples, uptime timestamps,
 context identity; cached evidence сохраняет ID; 3 новых сбоя / 2 успеха.
 
-- [ ] В тестах закрепить повтор кэша, stale, UNKNOWN, restart, context switch.
-- [ ] Ограничить весь цикл измерений и слот доставки; измерить полный бюджет,
-  включая MAIN/fallback/429/backlog, и подтвердить либо явно пересмотреть цель 2–4 минуты.
-- [ ] Не выдавать этот этап завершённым после одного исправления enabled gating.
+- [x] В тестах закреплены повтор кэша, stale, UNKNOWN, restart, context switch и пропущенные циклы.
+- [x] Ограничены recovery/наблюдение/доставка: 3/36/15 с, одно сообщение за слот.
+  Проверены deadlines и потомки процессов; 429/backlog сохраняют паузу.
+  Цель 2–4 минуты явно остаётся ориентиром, без гарантии для CUDY.
+- [x] Независимый scheduler и свежесть проверены отдельно от enabled gating.
+  Readiness владельца: полный нормальный health-цикл на CUDY 4,34 с; soak ещё предстоит.
 
 ### Task 3: Early history and query summaries
 
-**Files:** history module (явный новый inventory), gateway, notifications worker,
+**Files:** история внутри существующего incidents.uc, gateway, notifications worker,
 telegram-poller.uc, tests хранения и восстановления.
 **Interfaces:** Ограниченные samples/события, 7/30 суток, flush <=15 минут;
 coverage/gaps/unknown отдельно от uptime. Summary только по запросу.
 
-- [ ] RED/GREEN для ротации, частичной записи, заполнения, часов и reboot gaps.
-- [ ] Сохранение подтверждённых событий отдельно; предел размера согласовать
-  по фактическому RAM/flash/atomic-write budget, не назначать 8 MiB без замера.
-- [ ] Telegram сводка за сутки/неделю и инциденты с покрытием и задержкой доставки.
+- [x] RED/GREEN для ротации, частичной записи, заполнения, часов и reboot gaps.
+- [x] Подтверждённые события сохраняются отдельно; снимок ограничен 2 MiB,
+  дневные агрегаты 512 KiB. Отказ checkpoint явно помечается, доставка
+  сохранённых событий продолжается. Лимит файла не выдаётся за измерение RAM.
+- [x] Telegram сводка за сутки/неделю, покрытие и пропуски; наблюдаемое время
+  и задержка в уведомлении. Неподтверждённые часы обозначаются явно.
 
 ### Task 4: Delivery and release
 
@@ -73,8 +77,19 @@ VM scenarios, Windows runner tests, README/release docs.
 **Interfaces:** Прямая установка от 62b5c4a; scope WAN/DNS/MAIN/REDMI;
 после полного offline отчёт с ID и наблюдаемыми границами, без лавины OPEN.
 
-- [ ] Проверить grouping/catch-up/OFF/mute/429 и сохранение Kill Switch проблемы.
-- [ ] Расширить только необходимый package scope, с явным handling новых файлов
-  и rollback/recover; старые V1/V2 пакеты остаются в прежнем контракте.
+- [x] Проверены catch-up/OFF/mute/429 и сохранение Kill Switch проблемы.
+  Категории остаются отдельными; причинная группировка WAN не заявляется.
+- [x] Явный HG_OWNER_MONITOR_V3: восемь существующих файлов, 20 runtime /
+  14 control путей. История встроена в incidents.uc, новых runtime путей нет.
+  V1/V2 ограничения сохранены; совместимость новых данных со старым runtime
+  проверена исполнением точных модулей baseline62.
 - [ ] Exact-source CI/native crash/reboot gates, review, owner installer;
   отдельные owner Preflight/Apply/Verify, затем естественное наблюдение 24–72 часа.
+
+## Состояние финальной приёмки
+
+Реализация и независимый review завершены; полный локальный CI прошёл на7372e63.
+После него исправлены две нестабильности scheduler-тестов: ожидание завершённого
+heartbeat и допуск дробного представления секунд; 5 процессных тестов прошли.
+Финальные native/CI gates, owner-пакет и установка пока не завершены.
+Readiness владельца уже получен — повторно просить его не нужно.
