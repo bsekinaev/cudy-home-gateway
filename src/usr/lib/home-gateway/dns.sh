@@ -21,17 +21,17 @@ hg_dns_probe() {
 
     HG_DNS_PROBE_REASON='tool_unavailable'
     command -v busybox >/dev/null 2>&1 || return 0
-    busybox --list 2>/dev/null | grep -qx nslookup || return 0
-    busybox --list 2>/dev/null | grep -qx timeout || return 0
-    busybox --list 2>/dev/null | grep -qx awk || return 0
     busybox nslookup --help 2>&1 | grep -q -- '-type=' || return 0
-    busybox timeout --help 2>&1 | grep -q -- '-k ' || return 0
+    command -v timeout >/dev/null 2>&1 || return 0
+    command -v awk >/dev/null 2>&1 || return 0
+    timeout --help 2>&1 | grep -q -- '-k' || return 0
+    awk 'BEGIN { exit 0 }' </dev/null 2>/dev/null || return 0
 
     HG_DNS_PROBE_STATE='DOWN'
     HG_DNS_PROBE_REASON='query_failed'
-    output="$(busybox timeout -k 1 3 busybox nslookup -type=A "$domain" "127.0.0.1:$port" 2>/dev/null)" || return 0
+    output="$(timeout -k 1 3 busybox nslookup -type=A "$domain" "127.0.0.1:$port" 2>/dev/null)" || return 0
     # Ignore the resolver's own Address line: only an A answer after Name counts.
-    if printf '%s\n' "$output" | busybox awk '
+    if printf '%s\n' "$output" | awk '
         /^Name:/ { answer = 1; next }
         answer && /^Address([[:space:]][0-9]+)?:[[:space:]]/ {
             ip = $NF; n = split(ip, octets, "."); valid = (n == 4)

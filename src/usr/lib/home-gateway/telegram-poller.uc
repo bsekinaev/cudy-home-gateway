@@ -277,6 +277,23 @@ function status_egress(evidence, local_state, now, wan_state) {
 	return `${label} · ${age} с назад · IP ${evidence.ipv4}`;
 }
 
+function status_profile_dns(evidence, process_state, now) {
+	if (process_state != 'OK' || type(evidence) != 'object' ||
+	    evidence.scope != 'profile_resolver' || evidence.source != 'live_probe')
+		return 'не проверен';
+	let stamp = evidence.checked_at;
+	if (type(stamp) != 'int' || stamp <= 0 || stamp > now)
+		return 'не проверен';
+	let age = now - stamp;
+	if (age > 120)
+		return `нет свежей проверки · ${age} с назад`;
+	if (evidence.state == 'DOWN')
+		return `проверка неуспешна · ${age} с назад`;
+	if (evidence.state == 'OK')
+		return `ответ получен · ${age} с назад`;
+	return 'не проверен';
+}
+
 function build_status() {
 	let response = run_gateway([ 'status', '--json' ]);
 
@@ -329,6 +346,7 @@ function build_status() {
 📱 REDMI
 Правила: ${status_state(data?.redmi?.routing_policy?.state)} · Xray: ${status_state(data?.redmi?.xray_process)}
 Kill Switch: ${status_state(data?.redmi?.kill_switch?.state)}
+DNS профиля: ${status_profile_dns(data?.redmi?.dns, status_state(data?.redmi?.xray_process), now)}
 Интернет REDMI: не проверен
 
 🖥 ASATA (устройство/правила): ${status_state(data?.asata?.state)}

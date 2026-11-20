@@ -122,6 +122,10 @@ hg_health_reason_redmi() {
         printf 'redmi_policy_down'
     elif [ "${HG_REDMI_XRAY_STATE:-UNKNOWN}" = 'DOWN' ]; then
         printf 'redmi_xray_down'
+    elif [ "${HG_REDMI_DNS_STATE:-UNKNOWN}" = 'DOWN' ]; then
+        printf 'redmi_dns_failed'
+    elif [ "${HG_REDMI_DNS_STATE:-UNKNOWN}" = 'UNKNOWN' ]; then
+        printf 'redmi_dns_unverified'
     else
         case "$HG_HEALTH_REDMI_STATE" in
             OK) printf 'redmi_ready' ;;

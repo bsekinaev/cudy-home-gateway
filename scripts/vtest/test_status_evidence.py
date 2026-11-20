@@ -139,6 +139,30 @@ else: sys.exit(97)
         self.assertIn('Выход MAIN: не проверен', text)
         self.assertIn('Интернет REDMI: не проверен', text)
 
+    def test_redmi_dns_answer_does_not_claim_client_internet(self):
+        data = self.fixture()
+        data['redmi']['dns'] = dict(state='OK', source='live_probe', scope='profile_resolver',
+                                    port=2004, checked_at=int(time.time())-2)
+        text = self.render(data)
+        self.assertIn('DNS профиля: ответ получен', text)
+        self.assertIn('Интернет REDMI: не проверен', text)
+
+    def test_redmi_dns_failure_is_distinct_from_unverified(self):
+        data = self.fixture()
+        data['redmi']['dns'] = dict(state='DOWN', source='live_probe', scope='profile_resolver',
+                                    port=2004, checked_at=int(time.time())-2)
+        self.assertIn('DNS профиля: проверка неуспешна', self.render(data))
+
+    def test_stale_or_wrong_scope_dns_not_shown_as_success(self):
+        for scope, age in [('profile_resolver', 500), ('router', 2)]:
+            (self.base / 'calls').unlink(missing_ok=True)
+            (self.base / 'runtime/telegram.offset').unlink(missing_ok=True)
+            data = self.fixture()
+            data['redmi']['dns'] = dict(state='OK', source='live_probe', scope=scope,
+                                        port=2004, checked_at=int(time.time())-age)
+            text = self.render(data)
+            self.assertNotIn('DNS профиля: ответ получен', text)
+
     def test_unbounded_node_name_and_invalid_ip_not_echoed(self):
         data = self.fixture()
         data['vpn']['main']['configured_node']['name'] = 'PRIVATE_LONG_VALUE' * 1000

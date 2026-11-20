@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from build_probe import build
 
 ROOT = Path(__file__).resolve().parents[2]
 IMAGE = os.environ.get('HG_DNS_DROPBEAR_IMAGE')
@@ -97,6 +98,13 @@ function global:ssh {
                 self.assertEqual(len(report), 9)
                 self.assertEqual(report[0], 'HG_DNS_DISCOVERY_V1')
                 self.assertEqual(report[-1], 'network_changes=none')
+                probe_dir = base / 'candidate-probe'
+                build(probe_dir)
+                candidate = invoke(probe_dir / 'check-redmi.ps1', 'candidate-report.txt')
+                self.assertEqual(candidate.returncode, 0, candidate.stdout + candidate.stderr)
+                candidate_report = (base / 'candidate-report.txt').read_text().splitlines()
+                self.assertEqual(candidate_report[0], 'HG_REDMI_DNS_TEST_V1')
+                self.assertEqual(json.loads(candidate_report[1])['client_internet'], 'unverified')
                 print('REAL_DROPBEAR: old command refused; stdin report received; loopback only')
             finally:
                 run([docker, 'rm', '-f', container])

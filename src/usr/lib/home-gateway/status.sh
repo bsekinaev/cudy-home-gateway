@@ -309,6 +309,7 @@ hg_status_print() {
     printf '  Xray:         %s\n' "${HG_REDMI_XRAY_STATE:-UNKNOWN}"
     printf '  Policy:       %s\n' "${HG_REDMI_POLICY_STATE:-UNKNOWN}"
     printf '  Kill-switch:  %s\n' "${HG_REDMI_KILLSWITCH_STATE:-UNKNOWN}"
+    printf '  Profile DNS:  %s (%s; port %s)\n' "${HG_REDMI_DNS_STATE:-UNKNOWN}" "${HG_REDMI_DNS_REASON:-unverified}" "${HG_REDMI_DNS_PORT:-n/a}"
     printf '  Egress:       %s (%s)\n' "$redmi_egress_label" "${HG_REDMI_EGRESS_STATE:-UNKNOWN}"
 
     case "${HG_ASATA_KEEPER_AUTOSTART:-unknown}" in
@@ -555,6 +556,14 @@ hg_status_print_json() {
     printf '    "kill_switch": {\n'
     printf '      "state": %s,\n' "$(hg_json_string "${HG_REDMI_KILLSWITCH_STATE:-UNKNOWN}")"
     printf '      "rules": %s\n' "$(hg_json_number_or_null "${HG_REDMI_KILLSWITCH_RULES:-}")"
+    printf '    },\n'
+    printf '    "dns": {\n'
+    printf '      "state": %s,\n' "$(hg_json_string "${HG_REDMI_DNS_STATE:-UNKNOWN}")"
+    printf '      "reason": %s,\n' "$(hg_json_string "${HG_REDMI_DNS_REASON:-unverified}")"
+    printf '      "scope": "profile_resolver",\n'
+    printf '      "port": %s,\n' "$(hg_json_number_or_null "${HG_REDMI_DNS_PORT:-}")"
+    printf '      "checked_at": %s,\n' "$(hg_json_number_or_null "${HG_REDMI_DNS_CHECKED_AT:-}")"
+    printf '      "source": %s\n' "$(hg_json_string "${HG_REDMI_DNS_SOURCE:-unverified}")"
     printf '    },\n'
     printf '    "egress": {\n'
     printf '      "state": %s,\n' "$(hg_json_string "${HG_REDMI_EGRESS_STATE:-UNKNOWN}")"

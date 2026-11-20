@@ -51,6 +51,124 @@ hg_redmi_process_running() {
     '
 }
 
+hg_redmi_dns_snapshot() {
+    # One bounded local task. No raw configuration leaves the parser.
+    timeout -k 1 3 sh -s -- \
+        "${HG_REDMI_RUNTIME_CONFIG:-/tmp/etc/passwall2/acl/${HG_REDMI_ACL_PROFILE}.json}" \
+        "${HG_REDMI_PROC_ROOT:-/proc}" "$HG_REDMI_ACL_PROFILE" <<'HG_REDMI_SNAPSHOT'
+config="$1"; proc="$2"; profile="$3"
+case "$profile" in ''|*[!a-zA-Z0-9_]*) exit 1 ;; esac
+[ -f "$config" ] || exit 1
+[ "$(uci -q get "passwall2.$profile.enabled" 2>/dev/null)" = 1 ] || exit 1
+node="$(uci -q get "passwall2.$profile.node" 2>/dev/null)" || exit 1
+case "$node" in ''|*[!a-zA-Z0-9_]*) exit 1 ;; esac
+[ "${#node}" -le 128 ] || exit 1
+before="$(sha256sum "$config" 2>/dev/null)" || exit 1
+identity="$(ucode -e '
+    import * as fs from "fs";
+    function read(path, limit) {
+        let st = fs.stat(path);
+        if (!st || st.type != "file" || st.size > limit) return null;
+        let f = fs.open(path, "r");
+        if (!f) return null;
+        let raw = f.read(limit + 1); f.close();
+        return type(raw) == "string" && length(raw) <= limit ? raw : null;
+    }
+    let raw = read(ARGV[0], 262144), c;
+    if (raw == null) exit(1);
+    try { c = json(raw); } catch (e) { exit(1); }
+    if (type(c) != "object" || type(c.inbounds) != "array") exit(1);
+    let endpoints = filter(c.inbounds, i => type(i) == "object" && i.tag == "dns-in");
+    if (length(endpoints) != 1) exit(1);
+    let endpoint = endpoints[0], port = endpoint.port;
+    if (endpoint.listen != "127.0.0.1" || type(port) != "int" || port < 1 || port > 65535) exit(1);
+    let networks;
+    if (endpoint.protocol == "tunnel") networks = endpoint.settings?.allowedNetwork;
+    else if (endpoint.protocol == "dokodemo-door") networks = endpoint.settings?.network;
+    else exit(1);
+    if (type(networks) != "string" || index(split(networks, ","), "udp") < 0) exit(1);
+    let proc = ARGV[1], sockets = [], udp = read(proc + "/net/udp", 262144);
+    if (udp == null) exit(1);
+    for (let line in split(udp, "\n")) {
+        let columns = split(trim(line), /[ \t]+/);
+        if (length(columns) > 9 && uc(columns[1]) == sprintf("0100007F:%04X", port)
+            && columns[3] == "07") push(sockets, columns[9]);
+    }
+    if (length(sockets) != 1 || !match(sockets[0], /^[0-9]+$/)) exit(1);
+    let commands = fs.glob(proc + "/[0-9]*/cmdline");
+    if (type(commands) != "array" || length(commands) > 1024) exit(1);
+    let candidates = [];
+    for (let path in commands) {
+        let cmd = read(path, 8192);
+        if (cmd == null) continue;
+        let args = split(cmd, "\x00"), config_matches = 0;
+        for (let n = 1; n < length(args); n++)
+            if (index([ "-c", "-config", "--config" ], args[n-1]) >= 0 && args[n] == ARGV[0]) config_matches++;
+        if (config_matches != 1) continue;
+        let pid = match(path, /\/([0-9]+)\/cmdline$/)?.[1];
+        if (!pid) continue;
+        let directory = proc + "/" + pid, exe = fs.readlink(directory + "/exe");
+        if (type(exe) != "string" || !match(exe, /\/xray$/)) continue;
+        push(candidates, pid);
+    }
+    if (length(candidates) != 1) exit(1);
+    let pid = candidates[0], directory = proc + "/" + pid;
+    let fds = fs.glob(directory + "/fd/*"), owned = false;
+    if (type(fds) != "array" || length(fds) > 1024) exit(1);
+    for (let fd in fds)
+        if (fs.readlink(fd) == "socket:[" + sockets[0] + "]") owned = true;
+    if (!owned) exit(1);
+    let stat = read(directory + "/stat", 4096);
+    if (stat == null) exit(1);
+    let fields = split(replace(trim(stat), /^.*\) /, ""), /[ \t]+/);
+    if (length(fields) <= 19 || !match(fields[19], /^[0-9]+$/)) exit(1);
+    print(port, "|", pid, "|", fields[19], "|", sockets[0]);
+' "$config" "$proc" 2>/dev/null)" || exit 1
+after="$(sha256sum "$config" 2>/dev/null)" || exit 1
+[ "$before" = "$after" ] || exit 1
+hash="${before%% *}"
+case "$hash" in ''|*[!0-9a-f]*) exit 1 ;; esac
+[ "${#hash}" = 64 ] || exit 1
+printf '%s|%s|%s\n' "$identity" "$hash" "$node"
+HG_REDMI_SNAPSHOT
+}
+
+hg_redmi_dns_collect() {
+    local before after tool
+    HG_REDMI_DNS_STATE='UNKNOWN'
+    HG_REDMI_DNS_REASON='profile_unavailable'
+    HG_REDMI_DNS_PORT=''
+    HG_REDMI_DNS_CHECKED_AT=''
+    HG_REDMI_DNS_SOURCE='unverified'
+    [ "${HG_REDMI_CONFIG_STATE:-UNKNOWN}" = OK ] &&
+        [ "${HG_REDMI_XRAY_STATE:-UNKNOWN}" = OK ] || return 0
+    HG_REDMI_DNS_REASON='tool_unavailable'
+    for tool in timeout ucode uci sha256sum; do
+        command -v "$tool" >/dev/null 2>&1 || return 0
+    done
+    timeout --help 2>&1 | grep -q -- '-k' || return 0
+    HG_REDMI_DNS_REASON='runtime_unverified'
+    before="$(hg_redmi_dns_snapshot 2>/dev/null)" || return 0
+    HG_REDMI_DNS_REASON='runtime_changed'
+    [ "${before##*|}" = "${HG_REDMI_NODE:-}" ] || return 0
+    HG_REDMI_DNS_PORT="${before%%|*}"
+    if ! command -v hg_dns_probe >/dev/null 2>&1; then
+        HG_REDMI_DNS_REASON='tool_unavailable'
+        return 0
+    fi
+    hg_dns_probe "${HG_DNS_PROBE_DOMAIN:-openwrt.org}" "$HG_REDMI_DNS_PORT"
+    after="$(hg_redmi_dns_snapshot 2>/dev/null)" || return 0
+    [ "$before" = "$after" ] || return 0
+    HG_REDMI_DNS_STATE="$HG_DNS_PROBE_STATE"
+    HG_REDMI_DNS_REASON="$HG_DNS_PROBE_REASON"
+    case "$HG_REDMI_DNS_STATE" in
+        OK|DOWN)
+            HG_REDMI_DNS_CHECKED_AT="$(date +%s 2>/dev/null)"
+            HG_REDMI_DNS_SOURCE='live_probe'
+            ;;
+    esac
+}
+
 hg_redmi_collect() {
     HG_REDMI_STATE='UNKNOWN'
     HG_REDMI_CONFIG_STATE='UNKNOWN'
@@ -70,6 +188,11 @@ hg_redmi_collect() {
     HG_REDMI_EGRESS_IPV4=''
     HG_REDMI_EGRESS_SOURCE='unverified'
 
+    HG_REDMI_DNS_STATE='UNKNOWN'
+    HG_REDMI_DNS_REASON='profile_unavailable'
+    HG_REDMI_DNS_PORT=''
+    HG_REDMI_DNS_CHECKED_AT=''
+    HG_REDMI_DNS_SOURCE='unverified'
     if ! command -v uci >/dev/null 2>&1; then
         return 0
     fi
@@ -177,4 +300,8 @@ hg_redmi_collect() {
             fi
             ;;
     esac
+    hg_redmi_dns_collect
+    if [ "$HG_REDMI_STATE" = OK ] && [ "$HG_REDMI_DNS_STATE" != OK ]; then
+        HG_REDMI_STATE='DEGRADED'
+    fi
 }

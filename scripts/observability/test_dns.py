@@ -100,11 +100,24 @@ class DNSProbeTests(unittest.TestCase):
     def test_missing_tool_is_unknown(self):
         self.assertEqual(self.probe(53, prefix='PATH=/nonexistent'), 'UNKNOWN|tool_unavailable')
 
-    def test_missing_parser_applet_is_unknown(self):
+    def test_partial_busybox_uses_standalone_timeout_and_awk(self):
+        server = self.resolver('ok')
         prefix = '''busybox() {
-if [ "$1" = --list ]; then printf 'nslookup\\ntimeout\\n'; else command busybox "$@"; fi
+case "$1" in --list) printf 'nslookup\\n';; awk|timeout) return 127;; *) command busybox "$@";; esac
 }'''
-        self.assertEqual(self.probe(53, prefix=prefix), 'UNKNOWN|tool_unavailable')
+        self.assertEqual(self.probe(server.port, prefix=prefix), 'OK|answer')
+
+    def test_broken_standalone_parser_is_unknown(self):
+        server = self.resolver('ok')
+        self.assertEqual(self.probe(server.port, prefix='awk() { return 127; }'),
+                         'UNKNOWN|tool_unavailable')
+        self.assertEqual(server.queries, [])
+
+    def test_unsupported_standalone_timeout_is_unknown(self):
+        server = self.resolver('ok')
+        self.assertEqual(self.probe(server.port, prefix='timeout() { return 127; }'),
+                         'UNKNOWN|tool_unavailable')
+        self.assertEqual(server.queries, [])
 
     def test_small_nslookup_is_unknown_without_network_query(self):
         server = self.resolver('ok')
