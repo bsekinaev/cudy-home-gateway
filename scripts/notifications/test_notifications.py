@@ -517,7 +517,7 @@ sys.exit(item.get('code', 0))
 class ObservationLoopTests(unittest.TestCase):
     """Exercise the actual worker boundary, without a production router/network."""
 
-    def run_worker(self, policy, tick_code=0, corrupt_queue=False, hold_lock=False, corrupt_policy=False):
+    def run_worker(self, policy, tick_code=0, corrupt_queue=False, hold_lock=False, corrupt_policy=False, ticks=1, recover_code=0):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             state, runtime = base / 'state', base / 'runtime'
@@ -532,6 +532,9 @@ class ObservationLoopTests(unittest.TestCase):
                               'echo "$*" >> "$HG_LOOP_CALLS"\n'
                               'if [ "$1 $2" = "incidents tick" ]; then exit '
                               + str(tick_code) + '; fi\n'
+                              'if [ "$1 $2" = "notifications recover" ] && [ '
+                              + str(recover_code) + ' -ne 0 ]; then exit '
+                              + str(recover_code) + '; fi\n'
                               'if [ "$1" = notifications ]; then exec ucode '
                               '"$HG_LOOP_ENGINE" "$0" "$2"; fi\nexit 0\n')
             calls = base / 'calls'
@@ -546,9 +549,9 @@ class ObservationLoopTests(unittest.TestCase):
                                       env=env, stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE, start_new_session=True)
             try:
-                deadline = time.monotonic() + 2
+                deadline = time.monotonic() + (34 if ticks > 1 else 2)
                 while time.monotonic() < deadline:
-                    if (calls.exists() and 'incidents tick' in calls.read_text()) or worker.poll() is not None:
+                    if (calls.exists() and calls.read_text().splitlines().count('incidents tick') >= ticks) or worker.poll() is not None:
                         break
                     time.sleep(.02)
                 if hold_lock:
@@ -556,9 +559,13 @@ class ObservationLoopTests(unittest.TestCase):
                     self.assertFalse(calls.exists())
                 else:
                     self.assertTrue(calls.exists(), 'delivery policy stopped observation')
-                    self.assertIn('incidents tick', calls.read_text().splitlines())
+                    self.assertGreaterEqual(calls.read_text().splitlines().count('incidents tick'), ticks)
                     time.sleep(.15)
                     self.assertIsNone(worker.poll(), 'delivery failure terminated observer')
+                    if not tick_code:
+                        self.assertEqual(calls.read_text().splitlines()[:3],
+                                         ['notifications recover', 'incidents tick',
+                                          'notifications dispatch'])
                     if tick_code:
                         time.sleep(.1)
                         self.assertNotIn('notifications dispatch', calls.read_text().splitlines())
@@ -589,6 +596,13 @@ class ObservationLoopTests(unittest.TestCase):
 
     def test_failed_measurement_is_not_followed_by_dispatch(self):
         self.run_worker(self.policy(enabled=True), tick_code=1)
+
+    def test_recovery_failure_still_attempts_observation(self):
+        self.run_worker(self.policy(enabled=True), recover_code=70)
+
+    def test_delivery_failure_does_not_stop_next_observation_cycle(self):
+        self.run_worker(self.policy(enabled=True), corrupt_policy=True,
+                        corrupt_queue=True, ticks=2)
 
     def test_second_worker_is_refused(self):
         self.run_worker(self.policy(), hold_lock=True)

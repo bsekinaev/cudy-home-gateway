@@ -40,7 +40,7 @@
 - [x] Процессный regression test с настоящим ucode worker и фиктивным gateway:
   disabled/muted/categories off, повреждённая очередь, отказ tick, singleton lock.
 - [x] Наблюдать RED при выключенной доставке, затем устранить gating измерений.
-- [x] Выполнить notifications suite: 48 tests PASS; ucode production module выполнялся в процессных тестах.
+- [x] Выполнить notifications suite: 50 tests PASS; ucode production module выполнялся в процессных тестах.
 
 ### Task 2: Fresh samples and bounded scheduling
 
