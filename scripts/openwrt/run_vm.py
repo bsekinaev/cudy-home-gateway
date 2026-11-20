@@ -53,6 +53,33 @@ def git(*args):
     return subprocess.check_output(['git', '-C', str(ROOT), *args], stderr=subprocess.PIPE)
 
 
+def owner_update_fixture(commit, workspace):
+    """Exercise current V1 controllers with their unchanged Telegram-only scope.
+
+    V2 observer acceptance separately uses the real candidate without this fixture.
+    Never broaden the historical V1 builder to accept backend changes.
+    """
+    fixture = workspace / 'v1-regression-source'
+    subprocess.run(['git', '-c', 'core.autocrlf=false', 'clone', '--quiet', '--shared',
+                    '--no-checkout', str(ROOT), str(fixture)], check=True)
+    subprocess.run(['git', '-C', str(fixture), 'checkout', '--quiet', '--detach', commit], check=True)
+    paths = ['src/usr/lib/home-gateway/' + name for name in
+             ('dns.sh', 'redmi.sh', 'health.sh', 'status.sh')]
+    subprocess.run(['git', '-C', str(fixture), 'restore', '--source',
+                    '62592457237e7f026786c086d1ca6fdd4b6c095d', '--staged', '--worktree', '--', *paths], check=True)
+    stamp = str(int(git('show', '-s', '--format=%ct', commit)) + 1) + ' +0000'
+    env = dict(os.environ, GIT_AUTHOR_NAME='HG VM fixture', GIT_COMMITTER_NAME='HG VM fixture',
+               GIT_AUTHOR_EMAIL='fixture@example.invalid', GIT_COMMITTER_EMAIL='fixture@example.invalid',
+               GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp)
+    subprocess.run(['git', '-C', str(fixture), 'commit', '--quiet', '--allow-empty',
+                    '-m', 'VM_ONLY V1 Telegram regression with pinned backend observers'], env=env, check=True)
+    source = subprocess.check_output(['git', '-C', str(fixture), 'rev-parse', 'HEAD']).decode().strip()
+    (workspace / 'owner-update-fixture.json').write_text(json.dumps(dict(
+        real_candidate_commit=commit, fixture_commit=source,
+        fixture_scope='VM_ONLY_V1_TELEGRAM_REGRESSION')), encoding='utf-8')
+    return fixture, source
+
+
 def validated_input(path, sha, reason='INPUT_SHA256'):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, 'rb') as file:
@@ -235,6 +262,8 @@ def inject(image, workspace, commit, packages, scenario):
             subprocess.run(['git', 'clone', '--quiet', '--shared', '--no-checkout', str(ROOT), str(parent_source)], check=True)
             parent_commit = 'd2039b6c62da3aa458f720af1c46fb619aee48dd'
             subprocess.run(['git', '-C', str(parent_source), 'checkout', '--quiet', '--detach', parent_commit], check=True)
+        else:
+            parent_source, parent_commit = owner_update_fixture(commit, workspace)
         subprocess.run(['python3',str(parent_source/'scripts/owner_update/build_kit.py'),'--ref',parent_commit,'--output',str(workspace/'owner-update')],check=True,stdout=subprocess.DEVNULL)
         parent_archive = next((workspace/'owner-update').glob('*.tar.gz'))
         put('/opt/hg-vm-lab/owner-update.tar.gz',parent_archive.read_bytes(),0o600)
@@ -369,6 +398,7 @@ def run(args):
         report.update(commit=commit, scenario=args.scenario, kernel_sha256=KERNEL_SHA, rootfs_sha256=ROOTFS_SHA,
                       network_devices=0, host_shared_directories=0, package_sha256=PACKAGE_SHA)
         if args.scenario == 'owner-series': report.update(json.loads((workspace/'series-fixture.json').read_text()))
+        if args.scenario == 'owner-update': report.update(json.loads((workspace/'owner-update-fixture.json').read_text()))
         if args.scenario in REBOOT_SCENARIOS: report['reboot_mechanism']='GUEST_REBOOT_SUPERVISED_COLD_BOOT'
         return report
 

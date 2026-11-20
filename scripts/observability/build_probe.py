@@ -8,20 +8,26 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def build(output):
+def build(output, ref='HEAD'):
+    source = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', '--verify',
+                                      '--end-of-options', ref+'^{commit}']).decode().strip()
+
+    def committed(path):
+        return subprocess.check_output(['git', '-C', str(ROOT), 'show', source+':'+path])
+
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
     script = b'#!/bin/sh\n# Read-only candidate DNS test; no installed runtime files.\n'
     for name in ('common.sh', 'dns.sh', 'redmi.sh'):
-        script += (ROOT / 'src/usr/lib/home-gateway' / name).read_bytes() + b'\n'
-    script += (ROOT / 'scripts/observability/router-redmi-probe-footer.sh').read_bytes()
+        script += committed('src/usr/lib/home-gateway/'+name) + b'\n'
+    script += committed('scripts/observability/router-redmi-probe-footer.sh')
     if b'\r' in script:
         raise ValueError('CRLF in candidate shell source')
     (output / 'router-redmi-probe.sh').write_bytes(script)
-    (output / 'check-redmi.ps1').write_bytes((ROOT / 'scripts/observability/check-redmi.ps1').read_bytes())
+    (output / 'check-redmi.ps1').write_bytes(committed('scripts/observability/check-redmi.ps1'))
     (output / 'CHECK-REDMI.cmd').write_bytes(
         b'@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0check-redmi.ps1"\r\npause\r\n')
-    (output / 'SOURCE.txt').write_bytes(subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']))
+    (output / 'SOURCE.txt').write_bytes((source+'\n').encode('ascii'))
     (output / 'README.txt').write_text(
         'Run CHECK-REDMI.cmd. This is a no-install read-only candidate test.\n'
         'It uses the existing owner session address/port and performs DNS queries.\n'
@@ -40,5 +46,6 @@ def build(output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--ref', default='HEAD')
     args = parser.parse_args()
-    print(build(args.output))
+    print(build(args.output, args.ref))
