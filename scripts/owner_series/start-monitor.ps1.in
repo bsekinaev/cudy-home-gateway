@@ -46,8 +46,16 @@ case "$operation" in *[!A-Za-z0-9.]*|*..*) exit 70 ;; esac
 [ "$(cat "/etc/home-gateway-deploy/$operation/commit")" = '@@SOURCE@@' ]
 exec /usr/bin/gateway notifications configure monitoring
 '@
-        & ssh -T -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -p $ownerArgs.Port $ownerArgs.Target $remote
-        if($LASTEXITCODE -ne 0) { throw 'Уведомления не включены: сохраните вывод и сообщите результат.' }
+        # PowerShell here-strings contain CRLF on Windows. Keep the SSH command
+        # short and stream LF-terminated UTF-8, as in the tested readiness probe.
+        $remote=$remote.Replace("`r`n","`n")+"`n"
+        $previousEncoding=$OutputEncoding
+        try {
+            $OutputEncoding=New-Object Text.UTF8Encoding($false)
+            $remote | & ssh -T -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -p $ownerArgs.Port $ownerArgs.Target 'sh -s --'
+            $sshExit=$LASTEXITCODE
+        } finally { $OutputEncoding=$previousEncoding }
+        if($sshExit -ne 0) { throw 'Уведомления не включены: сохраните вывод и сообщите результат.' }
     } else {
         & $runner @ownerArgs -Stage $Stage
         if(!$?) { throw 'Этап завершился с ошибкой.' }
