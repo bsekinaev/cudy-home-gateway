@@ -1,6 +1,41 @@
 #!/bin/sh
 # Read-only DNS и AdBlock-Fast статус CUDY Home Gateway.
 
+hg_dns_probe() {
+    local domain="${1:-}" port="${2:-}" output
+    HG_DNS_PROBE_STATE='UNKNOWN'
+    HG_DNS_PROBE_REASON='invalid_endpoint'
+    case "$port" in ''|0*|*[!0-9]*) return 0 ;; esac
+    [ "${#port}" -le 5 ] && [ "$port" -le 65535 ] || return 0
+
+    HG_DNS_PROBE_REASON='invalid_domain'
+    case "$domain" in ''|-*|*[!a-zA-Z0-9.-]*) return 0 ;; esac
+    [ "${#domain}" -le 253 ] || return 0
+
+    HG_DNS_PROBE_REASON='tool_unavailable'
+    command -v busybox >/dev/null 2>&1 || return 0
+    busybox --list 2>/dev/null | grep -qx nslookup || return 0
+    busybox --list 2>/dev/null | grep -qx timeout || return 0
+
+    HG_DNS_PROBE_STATE='DOWN'
+    HG_DNS_PROBE_REASON='query_failed'
+    output="$(busybox timeout -k 1 3 busybox nslookup -type=A "$domain" "127.0.0.1:$port" 2>/dev/null)" || return 0
+    # Ignore the resolver's own Address line: only an A answer after Name counts.
+    if printf '%s\n' "$output" | awk '
+        /^Name:/ { answer = 1; next }
+        answer && /^Address([[:space:]][0-9]+)?:[[:space:]]/ {
+            ip = $NF; n = split(ip, octets, "."); valid = (n == 4)
+            for (i = 1; i <= n; i++)
+                if (octets[i] !~ /^[0-9]+$/ || octets[i] > 255) valid = 0
+            if (valid) found = 1
+        }
+        END { exit(found ? 0 : 1) }
+    '; then
+        HG_DNS_PROBE_STATE='OK'
+        HG_DNS_PROBE_REASON='answer'
+    fi
+}
+
 hg_dns_collect() {
     HG_DNS_STATE='UNKNOWN'
     HG_DNS_DNSMASQ_STATE='UNKNOWN'
@@ -36,13 +71,8 @@ hg_dns_collect() {
     fi
 
     if [ "$HG_DNS_DNSMASQ_STATE" = 'OK' ]; then
-        if command -v nslookup >/dev/null 2>&1; then
-            if nslookup "$HG_DNS_PROBE_DOMAIN" 127.0.0.1 >/dev/null 2>&1; then
-                HG_DNS_RESOLUTION_STATE='OK'
-            else
-                HG_DNS_RESOLUTION_STATE='DOWN'
-            fi
-        fi
+        hg_dns_probe "$HG_DNS_PROBE_DOMAIN" "$HG_DNS_PORT"
+        HG_DNS_RESOLUTION_STATE="$HG_DNS_PROBE_STATE"
     else
         HG_DNS_RESOLUTION_STATE='DOWN'
     fi

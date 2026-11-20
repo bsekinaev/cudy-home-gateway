@@ -107,6 +107,10 @@ HG_TEST_BUSYBOX=busybox python3 -m unittest discover -s scripts/notifications -p
     fail 'Notification delivery/fault-injection contracts'
 pass 'Notification delivery/fault-injection contracts'
 
+HG_TEST_BUSYBOX=busybox python3 -m unittest discover -s scripts/observability -p 'test_*.py' -v ||
+    fail 'Bounded DNS observation contracts'
+pass 'Bounded DNS observation contracts'
+
 HG_TEST_BUSYBOX=busybox python3 -m unittest discover -s scripts/vtest -p 'test_*.py' -v ||
     fail 'vtest inspection/Telegram authorization contracts'
 pass 'vtest inspection/Telegram authorization contracts'
