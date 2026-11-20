@@ -1,6 +1,13 @@
 # План релизов
 
-## Ближайшие milestones — 18.11.2026
+## Ближайшие milestones — 20.11.2026
+
+Последовательное обновление `fb8d9e3b021db592e369290df9753e65cead484d`
+установлено владельцем: Apply PASS, отдельный Verify PASS, selftest 62/0,
+doctor 11/0/0. Владелец подтвердил: «Всё установилось и работает».
+[Приёмка на CUDY](reports/HGDEPLOY2_OWNER_SERIES_20261120_LIVE.md).
+Первый UI-патч и путь последующих обновлений закрыты. Следующий выпуск —
+DNS-наблюдения REDMI; затем уведомления о сбое и восстановлении.
 
 Owner incremental update `d2039b6c62da3aa458f720af1c46fb619aee48dd`
 установлен: COMMITTED, отдельный Verify PASS, selftest 62/0, doctor 11/0/0.
@@ -24,13 +31,11 @@ Owner incremental update `d2039b6c62da3aa458f720af1c46fb619aee48dd`
 5. vtest runner, Safe Actions, MAIN transactions и backup — отдельными milestones
    по существующим safety gates. Автоматическая смена MAIN не добавляется.
 
-Текущий этап пункта 2: реализованы строгая проверка gzip/USTAR без распаковки,
-аутентификация V1/V2 parent, последовательные транзакции с отдельным откатом,
-защита запуска при прерывании и Windows PowerShell 5.1 runner. Проверяются все
-20 runtime/14 control файлов, Safe Actions и неизменность истории. Сборка owner
-пакета требует полного native crash/reboot отчёта, успешного CI и независимого
-review той же версии исходников. Отдельные проверки упаковки и Windows проходят;
-полная native приёмка ещё выполняется. На CUDY остаётся установленный d2039b6.
+Пункты 1–2 завершены: observer UI установлен, последовательный updater прошёл
+CI 15/15, native owner-series 67/67, V1 regression 81/81 и независимое review.
+Owner Apply и отдельный Verify на CUDY подтверждены. Пакет, session и журналы
+сохраняются для последующих обновлений и восстановления. Production rollback
+и восстановление после перезагрузки остаются отдельными LIVE-проверками.
 [План реализации](superpowers/plans/2026-11-18-owner-update-generations.md).
 
 ## Предыдущая очередь — 21.10.2026 (история)
