@@ -41,7 +41,12 @@ Telegram показывает отдельный ответ и его возра
 Независимый review runtime: блокирующих замечаний нет; предложенные негативные
 проверки добавлены. UI regression сохраняет отсутствие клиентского proof.
 
-Полный repository CI и окончательные результаты записываются после завершения.
+Repository CI `scripts/ci/check.sh` для runtime source `75e176b`:
+**CI_RESULT=PASS**. Observability: 36 PASS, 1 opt-in Windows test skipped;
+этот integration test отдельно PASS на Windows. Telegram/vtest regression:
+55 PASS, включая 21 тест status. Owner-series: 95 tests, 14 Windows tests skipped в Linux.
+Новый Windows runner отдельно PASS на 5.1. Полная GitHub/native release matrix
+и LIVE установка этим локальным результатом не заменяются.
 Ни unit tests, ни этот отчёт не означают выпуск установленного обновления.
 
 ## Следующий owner-тест без установки
@@ -56,3 +61,8 @@ Windows PowerShell 5.1 runner и настоящая цепочка Windows OpenS
 Dropbear на loopback проверены с полным payload кандидата. Перед owner installer
 нужен этот bounded test на фактической системе, затем exact-source release gates.
 Владелец выполняет соединение; агент production CUDY не трогает.
+
+Owner-пакет: `CUDY-REDMI-Probe-20261120-75e176b.zip`, SHA256
+`91f21f487bd390f7479013a878c06ac7c3e8b969638bda9c3e15b717a2654a07`.
+ZIP целостен, payload совпадает с кандидатными исходниками; SOURCE.txt содержит
+полный runtime source commit. Packaged runner повторно проверен offline на 5.1.

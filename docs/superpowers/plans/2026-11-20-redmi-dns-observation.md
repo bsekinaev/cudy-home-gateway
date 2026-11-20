@@ -41,18 +41,18 @@
 **Files:** `redmi.sh`, create `scripts/observability/test_redmi_dns.py`.
 **Interfaces:** `hg_redmi_dns_snapshot` prints `port|pid|starttime|socket_inode|config_sha256|node` only for one verified loopback UDP owner; no raw config. `hg_redmi_dns_collect` sets `HG_REDMI_DNS_STATE/REASON/PORT/CHECKED_AT/SOURCE`; snapshot comparison brackets `hg_dns_probe`. Test-only config/proc overrides follow existing HG_REDMI_RUNTIME_CONFIG convention.
 
-- [ ] Write tests with real UDP resolver and controlled procfs for valid tunnel/legacy, wrong owner/path, duplicate endpoints/processes, missing files, changed config/node/starttime, absent tools, silence.
-- [ ] Observe RED, implement bounded parser, exact arguments and socket ownership, compare context before/after.
-- [ ] Integrate collect after existing config/process/policy checks; DNS failure makes ready policy DEGRADED, never egress OK. UNKNOWN remains explicit.
-- [ ] Run all new tests and existing source contracts; commit.
+- [x] Write tests with real UDP resolver and controlled procfs for valid tunnel/legacy, wrong owner/path, duplicate endpoints/processes, missing files, changed config/node/starttime, absent tools, silence.
+- [x] Observe RED, implement bounded parser, exact arguments and socket ownership, compare context before/after.
+- [x] Integrate collect after existing config/process/policy checks; DNS failure makes ready policy DEGRADED, never egress OK. UNKNOWN remains explicit.
+- [x] Run new component tests and repository CI; commit runtime.
 
 ### Task 3: Scope in status, health and Telegram
 
 **Files:** `status.sh`, `health.sh`, `telegram-poller.uc`, tests in `scripts/observability` and `scripts/vtest/test_status_evidence.py`.
 **Interfaces:** additive `redmi.dns` object with state, reason, scope=`profile_resolver`, port, checked_at, source. Existing egress/client proof unchanged. Health reason distinguishes DNS failure/unverified from policy readiness.
 
-- [ ] Write failing scope/UI tests; implement additive JSON and concise DNS line with observation age.
-- [ ] Test absent legacy fields, failed/unknown probe, stale/context-changed evidence and unchanged client-internet wording.
+- [x] Write failing scope/UI tests; implement additive JSON and concise DNS line with observation age.
+- [x] Test absent legacy fields, failed/unknown probe, stale/context-changed evidence and unchanged client-internet wording.
 - [ ] Run repository CI, independent review and release gates before owner kit. Do not label source installable from unit tests alone.
 
 ## Owner report received
@@ -61,3 +61,12 @@
 loopback true, port 2004. BusyBox version unknown, nslookup A supported,
 BusyBox timeout-k/awk unsupported, router DNS port 53. This is metadata,
 not an active DNS response or proof that standalone tools are missing.
+
+## Safe owner acceptance before installer
+
+A separate no-install packet runs candidate common/dns/redmi definitions through
+SSH stdin and emits only a fixed safe JSON report. Existing owner session is read
+for address/port only. It performs DNS queries but does not write runtime/config,
+start/restart services or persist incidents. Candidate helper was independently
+reviewed and exercised via Windows PowerShell 5.1 and real loopback Dropbear.
+Owner target result remains pending; installer release gates are not waived.
