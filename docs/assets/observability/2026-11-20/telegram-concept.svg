@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1460" height="970" viewBox="0 0 1460 970" role="img">
+<title>Telegram: кратко сейчас, подробнее по запросу</title>
+<desc>КОНЦЕПТ, НЕ СКРИНШОТ БОТА. Все значения и времена ниже вымышлены.</desc>
+<rect width="100%" height="100%" fill="#f3f6fb"/>
+<text x="42" y="45" font-family="Segoe UI,Arial,sans-serif" font-size="17" font-weight="700" fill="#2463b8">CUDY HOME GATEWAY · ПРОЕКТ ДЛЯ ОБСУЖДЕНИЯ · 20.11.2026</text>
+<text x="42" y="102" font-family="Segoe UI,Arial,sans-serif" font-size="37" font-weight="700" fill="#14243b">Telegram: кратко сейчас, подробнее по запросу</text>
+<text x="42" y="139" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">КОНЦЕПТ, НЕ СКРИНШОТ БОТА. Все значения и времена ниже вымышлены.</text>
+<rect x="40" y="185" width="420" height="705" rx="17" fill="white" stroke="#d8e0eb"/>
+<rect x="40" y="185" width="420" height="64" rx="17" fill="#e6eefb" stroke="#e6eefb"/>
+<text x="60" y="224" font-family="Segoe UI,Arial,sans-serif" font-size="25" font-weight="700" fill="#2463b8">Главная</text>
+<rect x="520" y="185" width="420" height="705" rx="17" fill="white" stroke="#d8e0eb"/>
+<rect x="520" y="185" width="420" height="64" rx="17" fill="#e6eefb" stroke="#e6eefb"/>
+<text x="540" y="224" font-family="Segoe UI,Arial,sans-serif" font-size="25" font-weight="700" fill="#2463b8">После восстановления</text>
+<rect x="1000" y="185" width="420" height="705" rx="17" fill="white" stroke="#d8e0eb"/>
+<rect x="1000" y="185" width="420" height="64" rx="17" fill="#e6eefb" stroke="#e6eefb"/>
+<text x="1020" y="224" font-family="Segoe UI,Arial,sans-serif" font-size="25" font-weight="700" fill="#2463b8">История</text>
+<text x="62" y="304" font-family="Segoe UI,Arial,sans-serif" font-size="26" font-weight="700" fill="#14243b">CUDY · свежесть данных</text>
+<text x="62" y="357" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="400" fill="#14243b">WAN: канал доступен</text>
+<text x="62" y="389" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="400" fill="#14243b">MAIN: выход проверен</text>
+<text x="62" y="421" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="400" fill="#14243b">DNS роутера: отвечает</text>
+<text x="62" y="453" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="400" fill="#14243b">DNS REDMI: отвечает</text>
+<text x="62" y="518" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="700" fill="#a2650b">Интернет телефона:</text>
+<text x="62" y="550" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="700" fill="#a2650b">нет клиентской проверки</text>
+<text x="62" y="614" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#52627a">Последний запрос: 40 с назад</text>
+<text x="62" y="644" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#52627a">Активных инцидентов: 0</text>
+<rect x="60" y="697" width="380" height="44" rx="17" fill="#edf3fc" stroke="#d8e0eb"/>
+<text x="76" y="723" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#2463b8">Обновить экран</text>
+<rect x="60" y="755" width="380" height="44" rx="17" fill="#edf3fc" stroke="#d8e0eb"/>
+<text x="76" y="781" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#2463b8">Проверить сейчас</text>
+<rect x="60" y="813" width="380" height="44" rx="17" fill="#edf3fc" stroke="#d8e0eb"/>
+<text x="76" y="839" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#2463b8">Инциденты · История</text>
+<text x="542" y="303" font-family="Segoe UI,Arial,sans-serif" font-size="25" font-weight="700" fill="#16816e">Связь восстановилась</text>
+<text x="542" y="375" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="400" fill="#14243b">Проблема замечена: 12:04</text>
+<text x="542" y="407" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="400" fill="#14243b">Восстановление: 12:09</text>
+<text x="542" y="439" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="400" fill="#14243b">Доставлено: 12:10</text>
+<text x="542" y="524" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">Наблюдаемый сбой: ≈5 мин</text>
+<text x="542" y="555" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">Затронуты WAN, DNS и MAIN</text>
+<text x="542" y="650" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#52627a">Сообщение отложено:</text>
+<text x="542" y="681" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#52627a">во время сбоя Telegram</text>
+<text x="542" y="712" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#52627a">был недоступен.</text>
+<rect x="540" y="813" width="380" height="44" rx="17" fill="#edf3fc" stroke="#d8e0eb"/>
+<text x="556" y="839" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#2463b8">Подробнее об инциденте</text>
+<text x="1022" y="303" font-family="Segoe UI,Arial,sans-serif" font-size="25" font-weight="700" fill="#14243b">За последний час</text>
+<text x="1022" y="367" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">По наблюдениям: 87,5%</text>
+<text x="1022" y="398" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">Покрытие периода: 80%</text>
+<text x="1022" y="429" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">Наблюдаемый DOWN: 6 мин</text>
+<text x="1022" y="460" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">Нет наблюдений: 12 мин</text>
+<text x="1022" y="582" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#52627a">Скорость загрузки</text>
+<text x="1022" y="613" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#52627a">этой сводкой не измеряется.</text>
+<rect x="1020" y="755" width="380" height="44" rx="17" fill="#edf3fc" stroke="#d8e0eb"/>
+<text x="1036" y="781" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#2463b8">Сутки · Неделя</text>
+<rect x="1020" y="813" width="380" height="44" rx="17" fill="#edf3fc" stroke="#d8e0eb"/>
+<text x="1036" y="839" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#2463b8">Последние события</text>
+<text x="42" y="941" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Предложение для обсуждения. Названия кнопок, интервалы и состав сводок уточняются до реализации.</text>
+</svg>

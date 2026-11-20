@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1460" height="815" viewBox="0 0 1460 815" role="img">
+<title>Три чтения кэша — это не три проверки</title>
+<desc>Синтетический пример. Интервалы показаны условно; это не обещание времени доставки.</desc>
+<rect width="100%" height="100%" fill="#f3f6fb"/>
+<text x="42" y="45" font-family="Segoe UI,Arial,sans-serif" font-size="17" font-weight="700" fill="#2463b8">CUDY HOME GATEWAY · ПРОЕКТ ДЛЯ ОБСУЖДЕНИЯ · 20.11.2026</text>
+<text x="42" y="102" font-family="Segoe UI,Arial,sans-serif" font-size="37" font-weight="700" fill="#14243b">Три чтения кэша — это не три проверки</text>
+<text x="42" y="139" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Синтетический пример. Интервалы показаны условно; это не обещание времени доставки.</text>
+<rect x="40" y="180" width="1375" height="190" rx="17" fill="white" stroke="#d8e0eb"/>
+<text x="62" y="223" font-family="Segoe UI,Arial,sans-serif" font-size="26" font-weight="700" fill="#14243b">Повтор одного результата</text>
+<rect x="70" y="250" width="280" height="90" rx="17" fill="#eef1f6" stroke="#d8e0eb"/>
+<text x="87" y="282" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="700" fill="#14243b">Чтение 1</text>
+<text x="87" y="319" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#52627a">sample_id = A · DOWN</text>
+<rect x="440" y="250" width="280" height="90" rx="17" fill="#eef1f6" stroke="#d8e0eb"/>
+<text x="457" y="282" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="700" fill="#14243b">Чтение 2</text>
+<text x="457" y="319" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#52627a">sample_id = A · DOWN</text>
+<rect x="810" y="250" width="280" height="90" rx="17" fill="#eef1f6" stroke="#d8e0eb"/>
+<text x="827" y="282" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="700" fill="#14243b">Чтение 3</text>
+<text x="827" y="319" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#52627a">sample_id = A · DOWN</text>
+<polyline points="350,295 440,295" fill="none" stroke="#778497" stroke-width="2.5"/>
+<polygon points="440,295 430,289 430,301" fill="#778497"/>
+<polyline points="720,295 810,295" fill="none" stroke="#778497" stroke-width="2.5"/>
+<polygon points="810,295 800,289 800,301" fill="#778497"/>
+<text x="1120" y="277" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="700" fill="#2463b8">Один факт,</text>
+<text x="1120" y="309" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="700" fill="#2463b8">один голос.</text>
+<rect x="40" y="395" width="1375" height="235" rx="17" fill="white" stroke="#d8e0eb"/>
+<text x="62" y="438" font-family="Segoe UI,Arial,sans-serif" font-size="25" font-weight="700" fill="#14243b">Новые измерения и отдельное подтверждение восстановления</text>
+<rect x="65" y="490" width="250" height="105" rx="17" fill="#fbecee" stroke="#c13c4d"/>
+<text x="79" y="529" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="700" fill="#c13c4d">A · DOWN</text>
+<text x="79" y="568" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Подозрение 1/3</text>
+<rect x="335" y="490" width="250" height="105" rx="17" fill="#fbecee" stroke="#c13c4d"/>
+<text x="349" y="529" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="700" fill="#c13c4d">B · DOWN</text>
+<text x="349" y="568" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Подозрение 2/3</text>
+<rect x="605" y="490" width="250" height="105" rx="17" fill="#fbecee" stroke="#c13c4d"/>
+<text x="619" y="529" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="700" fill="#c13c4d">C · DOWN</text>
+<text x="619" y="568" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Инцидент открыт</text>
+<rect x="875" y="490" width="250" height="105" rx="17" fill="#e6f3ef" stroke="#16816e"/>
+<text x="889" y="529" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="700" fill="#16816e">D · OK</text>
+<text x="889" y="568" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Recovery 1/2</text>
+<rect x="1145" y="490" width="250" height="105" rx="17" fill="#e6f3ef" stroke="#16816e"/>
+<text x="1159" y="529" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="700" fill="#16816e">E · OK</text>
+<text x="1159" y="568" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Восстановлен</text>
+<rect x="40" y="660" width="1375" height="110" rx="17" fill="#e9edf3" stroke="#d8e0eb"/>
+<text x="62" y="703" font-family="Segoe UI,Arial,sans-serif" font-size="25" font-weight="700" fill="#778497">Нет свежего результата → UNKNOWN</text>
+<text x="62" y="742" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">Не добавляет успех/ошибку, прерывает серию кандидата и не закрывает активный инцидент.</text>
+</svg>

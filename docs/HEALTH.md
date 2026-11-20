@@ -2,6 +2,17 @@
 
 Этап `0.5.1` вводит read-only Health Core поверх существующего Status API.
 
+## Уточнение текущего состояния и следующего выпуска — 20.11.2026
+
+Health установлен в source fb8d9e3; [LIVE-приёмка](reports/HGDEPLOY2_OWNER_SERIES_20261120_LIVE.md).
+`components.redmi` описывает policy/process/защиту, а не сквозную доступность
+телефона. DNS роутера и будущая DNS-проба REDMI — разные scopes.
+
+[Переработанный проект](superpowers/specs/2026-11-20-internet-observability-revised-design.md)
+вводит общий ID/свежесть измерения и явные пропуски. Это будущая работа, не
+изменение текущего JSON contract. Повтор кэша не должен стать несколькими
+независимыми подтверждениями для incident engine.
+
 ## Граница ответственности
 
 Health Core:

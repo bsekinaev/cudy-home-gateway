@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1460" height="920" viewBox="0 0 1460 920" role="img">
+<title>Один набор фактов — статус, инциденты и история</title>
+<desc>Целевая логическая схема. Разделение задач не означает добавление новых служб.</desc>
+<rect width="100%" height="100%" fill="#f3f6fb"/>
+<text x="42" y="45" font-family="Segoe UI,Arial,sans-serif" font-size="17" font-weight="700" fill="#2463b8">CUDY HOME GATEWAY · ПРОЕКТ ДЛЯ ОБСУЖДЕНИЯ · 20.11.2026</text>
+<text x="42" y="102" font-family="Segoe UI,Arial,sans-serif" font-size="37" font-weight="700" fill="#14243b">Один набор фактов — статус, инциденты и история</text>
+<text x="42" y="139" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Целевая логическая схема. Разделение задач не означает добавление новых служб.</text>
+<rect x="40" y="180" width="330" height="560" rx="17" fill="white" stroke="#d8e0eb"/>
+<text x="62" y="233" font-family="Segoe UI,Arial,sans-serif" font-size="29" font-weight="700" fill="#14243b">Наблюдения</text>
+<rect x="60" y="280" width="290" height="112" rx="17" fill="#edf3fc" stroke="#d8e0eb"/>
+<text x="77" y="317" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="700" fill="#2463b8">WAN и выход</text>
+<text x="77" y="353" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Разные направления и</text>
+<text x="77" y="382" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">цели</text>
+<rect x="60" y="420" width="290" height="112" rx="17" fill="#edf3fc" stroke="#d8e0eb"/>
+<text x="77" y="457" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="700" fill="#2463b8">DNS роутера / REDMI</text>
+<text x="77" y="493" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Профиль и порт</text>
+<text x="77" y="522" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">определены</text>
+<rect x="60" y="560" width="290" height="112" rx="17" fill="#edf3fc" stroke="#d8e0eb"/>
+<text x="77" y="597" font-family="Segoe UI,Arial,sans-serif" font-size="23" font-weight="700" fill="#2463b8">Процессы и правила</text>
+<text x="77" y="633" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Локальные признаки</text>
+<text x="77" y="662" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">состояния</text>
+<rect x="435" y="180" width="395" height="225" rx="17" fill="white" stroke="#d8e0eb"/>
+<text x="457" y="232" font-family="Segoe UI,Arial,sans-serif" font-size="29" font-weight="700" fill="#14243b">Единый снимок</text>
+<text x="457" y="280" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">Область проверки · sample_id</text>
+<text x="457" y="311" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">Результат и причина</text>
+<text x="457" y="342" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">Время, boot_id и свежесть</text>
+<rect x="435" y="500" width="395" height="240" rx="17" fill="white" stroke="#d8e0eb"/>
+<text x="457" y="550" font-family="Segoe UI,Arial,sans-serif" font-size="29" font-weight="700" fill="#14243b">Инциденты</text>
+<text x="457" y="596" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#14243b">Подозрение → подтверждение</text>
+<text x="457" y="626" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#14243b">3 плохих / 2 хороших измерения</text>
+<text x="457" y="656" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#14243b">UNKNOWN не означает recovery</text>
+<text x="457" y="686" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#14243b">Связанные проблемы учитываются</text>
+<rect x="900" y="180" width="515" height="175" rx="17" fill="#e6f3ef" stroke="#16816e"/>
+<text x="924" y="228" font-family="Segoe UI,Arial,sans-serif" font-size="28" font-weight="700" fill="#16816e">История и пропуски</text>
+<text x="924" y="273" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#14243b">RAM + ограниченные сохранения</text>
+<text x="924" y="303" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#14243b">Доступность рядом с покрытием</text>
+<text x="924" y="333" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#14243b">Независима от очистки очереди</text>
+<rect x="900" y="460" width="515" height="185" rx="17" fill="#fff3df" stroke="#a2650b"/>
+<text x="924" y="508" font-family="Segoe UI,Arial,sans-serif" font-size="28" font-weight="700" fill="#a2650b">Очередь уведомлений</text>
+<text x="924" y="553" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#14243b">Событие сохранено до отправки</text>
+<text x="924" y="583" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#14243b">Mute и группировка влияют на доставку</text>
+<text x="924" y="613" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="400" fill="#14243b">Подтверждение Telegram → receipt</text>
+<rect x="900" y="735" width="515" height="115" rx="17" fill="#eaf0ff" stroke="#2463b8"/>
+<text x="924" y="777" font-family="Segoe UI,Arial,sans-serif" font-size="27" font-weight="700" fill="#2463b8">Telegram</text>
+<text x="924" y="817" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="400" fill="#14243b">Статус · диагностика · сводки</text>
+<polyline points="370,292 435,292" fill="none" stroke="#2463b8" stroke-width="2.5"/>
+<polygon points="435,292 425,286 425,298" fill="#2463b8"/>
+<polyline points="830,265 900,265" fill="none" stroke="#16816e" stroke-width="2.5"/>
+<polygon points="900,265 890,259 890,271" fill="#16816e"/>
+<polyline points="630,405 630,500" fill="none" stroke="#2463b8" stroke-width="2.5"/>
+<polygon points="630,500 624,490 636,490" fill="#2463b8"/>
+<polyline points="830,555 900,555" fill="none" stroke="#a2650b" stroke-width="2.5"/>
+<polygon points="900,555 890,549 890,561" fill="#a2650b"/>
+<polyline points="1157,645 1157,735" fill="none" stroke="#a2650b" stroke-width="2.5"/>
+<polygon points="1157,735 1151,725 1163,725" fill="#a2650b"/>
+<polyline points="830,350 865,350 865,790 900,790" fill="none" stroke="#2463b8" stroke-width="2.5"/>
+<polygon points="900,790 890,784 890,796" fill="#2463b8"/>
+<text x="42" y="817" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="700" fill="#16816e">Всё хранится на роутере.</text>
+<text x="42" y="853" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Полный обрыв: сообщение после восстановления.</text>
+<text x="42" y="882" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Маршрутизация не зависит от наблюдения.</text>
+</svg>

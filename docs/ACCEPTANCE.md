@@ -1,6 +1,20 @@
 # Приёмка v1.0.0 — открыта
 
-## Текущий production baseline — 21.10.2026
+## Текущий production baseline — 20.11.2026
+
+Владелец установил source `fb8d9e3b021db592e369290df9753e65cead484d`:
+Apply и отдельный Verify PASS, selftest 62/0, doctor 11/0/0.
+Подтверждение владельца: «Всё установилось и работает».
+[LIVE evidence](reports/HGDEPLOY2_OWNER_SERIES_20261120_LIVE.md).
+Навигация и observer status Telegram установлены. Приёмка реальной доставки
+инцидентов, длительный soak, production rollback/reboot и sysupgrade restore
+остаются отдельными доказательствами. Общая приёмка v1.0.0 не закрыта.
+
+[Новый проект наблюдения](OBSERVABILITY.md) отделён от установленных возможностей.
+Ниже сохранён срез 21.10.2026: его статусы «update ещё не установлен» описывают
+тот момент и не отменяют подтверждённую установку 20 ноября.
+
+## Исторический production baseline — 21.10.2026
 
 HGDEPLOY2 RC-B 20261020.2 на CUDY TR3000 v1 / OpenWrt 25.12.5:
 `COMMITTED`, отдельный Owner Verify PASS, source

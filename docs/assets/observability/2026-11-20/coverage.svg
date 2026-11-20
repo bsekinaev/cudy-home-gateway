@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1460" height="735" viewBox="0 0 1460 735" role="img">
+<title>Доступность и покрытие наблюдением — разные числа</title>
+<desc>Учебный пример за один час. Это не измерения установленного CUDY.</desc>
+<rect width="100%" height="100%" fill="#f3f6fb"/>
+<text x="42" y="45" font-family="Segoe UI,Arial,sans-serif" font-size="17" font-weight="700" fill="#2463b8">CUDY HOME GATEWAY · ПРОЕКТ ДЛЯ ОБСУЖДЕНИЯ · 20.11.2026</text>
+<text x="42" y="102" font-family="Segoe UI,Arial,sans-serif" font-size="37" font-weight="700" fill="#14243b">Доступность и покрытие наблюдением — разные числа</text>
+<text x="42" y="139" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Учебный пример за один час. Это не измерения установленного CUDY.</text>
+<rect x="40" y="185" width="1375" height="465" rx="17" fill="white" stroke="#d8e0eb"/>
+<rect x="80" y="252" width="902.9999999999999" height="100" rx="0" fill="#16816e" stroke="#16816e"/>
+<text x="92" y="306" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700" fill="white">42 мин: OK</text>
+<rect x="982.9999999999999" y="252" width="129.0" height="100" rx="0" fill="#c13c4d" stroke="#c13c4d"/>
+<text x="994.9999999999999" y="306" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700" fill="white">6 мин:</text>
+<text x="994.9999999999999" y="335" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700" fill="white">DOWN</text>
+<rect x="1112.0" y="252" width="258.0" height="100" rx="0" fill="#778497" stroke="#778497"/>
+<text x="1124.0" y="306" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="700" fill="white">12 мин: нет данных</text>
+<text x="80" y="397" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="700" fill="#14243b">Известно: 48 минут</text>
+<text x="800" y="397" font-family="Segoe UI,Arial,sans-serif" font-size="22" font-weight="700" fill="#778497">Не наблюдалось: 12 минут</text>
+<text x="80" y="490" font-family="Segoe UI,Arial,sans-serif" font-size="50" font-weight="700" fill="#16816e">87,5%</text>
+<text x="80" y="536" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="400" fill="#14243b">Доступность по наблюдениям</text>
+<text x="80" y="569" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="400" fill="#14243b">42 / (42 + 6)</text>
+<text x="800" y="490" font-family="Segoe UI,Arial,sans-serif" font-size="50" font-weight="700" fill="#2463b8">80%</text>
+<text x="800" y="536" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="400" fill="#14243b">Покрытие периода</text>
+<text x="800" y="569" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="400" fill="#14243b">(42 + 6) / 60</text>
+<text x="42" y="698" font-family="Segoe UI,Arial,sans-serif" font-size="20" font-weight="400" fill="#52627a">Пробел не становится ни исправной связью, ни доказанным простоем. При отсутствии данных — «нет данных».</text>
+</svg>

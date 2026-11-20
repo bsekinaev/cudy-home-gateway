@@ -32,18 +32,18 @@
 
 **Разработка продолжается.** `0.5.0-dev` — не стабильный production-релиз.
 
-Production CUDY TR3000 v1 / OpenWrt 25.12.5: HGDEPLOY2 RC-B 20261020.2
-установлен владельцем, transaction `786dbec9-f1b6-4732-9ea4-23df99d372ed` —
-`COMMITTED`, отдельный Owner Verify — PASS. Установленный source:
-`62592457237e7f026786c086d1ca6fdd4b6c095d`; runtime — `0.5.0-dev`.
-Selftest: 62 PASS / 0 FAIL; doctor: 11 OK / 0 WARN / 0 FAIL.
-Миграция завершена в пределах этого LIVE acceptance. Повторный Apply,
-Retire и bootstrap не нужны. Сохранить release, receipts и Windows sessions.
+На CUDY TR3000 v1 / OpenWrt 25.12.5 владелец установил последовательное
+обновление `fb8d9e3b021db592e369290df9753e65cead484d`: Apply и отдельный Verify —
+PASS; selftest 62/0, doctor 11/0/0. Владелец подтвердил: «Всё установилось и работает».
+Runtime — `0.5.0-dev`. [LIVE-приёмка 20.11.2026](docs/reports/HGDEPLOY2_OWNER_SERIES_20261120_LIVE.md).
+Исходная HGDEPLOY2 migration и V1 update сохранены как история;
+их повторное применение не является обновлением. Сохранить пакеты, receipts и sessions.
 
-Telegram navigation [PR #30](https://github.com/bsekinaev/cudy-home-gateway/pull/30)
-объединён в main; его код ещё не установлен на CUDY. P0 — отдельное безопасное
-обновление COMMITTED HGDEPLOY2 с откатом на предыдущий HGDEPLOY2.
-[Owner update и ограничения](docs/HGDEPLOY2_OWNER_UPDATE.md).
+Навигация и observer status Telegram установлены. Следующий этап — независимое
+наблюдение, DNS REDMI, приёмка уведомлений и история качества.
+[Краткий план с иллюстрациями](docs/OBSERVABILITY.md),
+[исследование похожих проектов](docs/research/2026-11-20-monitoring-projects.md).
+Новые возможности из плана ещё не реализованы; web UI не добавляется.
 
 Reboot persistence, независимый end-to-end traffic, длительный soak и реальный
 sysupgrade restore этим acceptance не доказаны. Окончательного v1.0.0 acceptance нет.
@@ -76,6 +76,10 @@ flowchart LR
 
 Подробности: [архитектура](docs/ARCHITECTURE.md), [инциденты](docs/INCIDENTS.md), [уведомления](docs/NOTIFICATIONS.md).
 
+Целевая схема следующего этапа, а не снимок установленной реализации:
+
+![Проект наблюдения: статус, инциденты и история](docs/assets/observability/2026-11-20/architecture.png)
+
 ## Демонстрация безопасных сценариев
 
 Ниже — команды **только для уже установленного экземпляра** Gateway CLI. Они не меняют MAIN, конфигурацию роутера или сетевые правила. Не исполняйте команды установки, миграции либо rollback ради демонстрации.
@@ -102,7 +106,8 @@ gateway selftest       # локальная проверка установле�
 | [GitHub Actions CI, 21.10.2026](https://github.com/bsekinaev/cudy-home-gateway/actions/runs/39576418134) | PASS | Проверки исходников в CI; не установку на роутер |
 | [Owner LIVE, RC-B 19–20.10.2026](docs/reports/HGDEPLOY2_RC_B_20261019_2_OWNER_LIVE.md) | **Apply заблокирован; rollback PASS** | Восстановление рабочего состояния после неуспешного кандидата |
 | Selftest и doctor после rollback | **58 PASS / 0 FAIL; 11 OK / 0 WARN / 0 FAIL** | Состояние восстановленного legacy-окружения, не приёмку нового RC-B |
-| Owner LIVE RC-B 20261020.2, 21.10.2026 | **COMMITTED; Verify PASS; selftest 62/0; doctor 11/0/0** | Последняя подтверждённая установка HGDEPLOY2; см. [матрицу приёмки](docs/ACCEPTANCE.md#owner-live-hgdeploy2-rc-b-202610202--21-october-2026-msk) |
+| Owner LIVE RC-B 20261020.2, 21.10.2026 | **COMMITTED; Verify PASS; selftest 62/0; doctor 11/0/0** | Принятая исходная миграция HGDEPLOY2; см. [матрицу приёмки](docs/ACCEPTANCE.md#owner-live-hgdeploy2-rc-b-202610202--21-october-2026-msk) |
+| [Owner series fb8d9e3, 20.11.2026](docs/reports/HGDEPLOY2_OWNER_SERIES_20261120_LIVE.md) | **Apply/Verify PASS; selftest 62/0; doctor 11/0/0; владелец подтвердил работу** | Текущий observer UI и последовательное обновление на CUDY; не полную LIVE-приёмку доставки/rollback/soak |
 
 Отчёт RC-B 19–20 октября подтверждает возврат к прежнему состоянию после отказа.
 Последующая установка RC-B 20261020.2 подтверждена отдельно в ACCEPTANCE.
@@ -116,6 +121,8 @@ gateway selftest       # локальная проверка установле�
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Инженерные решения](docs/DECISIONS.md)
 - [План релизов](docs/ROADMAP.md)
+- [Наблюдение за интернетом: план и иллюстрации](docs/OBSERVABILITY.md)
+- [Исследование похожих проектов и источники](docs/research/2026-11-20-monitoring-projects.md)
 - [Матрица приёмки v1.0.0 и блокеры](docs/ACCEPTANCE.md)
 - [MAIN Transactions: read-only planner и ограничения](docs/MAIN_TRANSACTIONS.md)
 - [Health Core](docs/HEALTH.md)
@@ -130,4 +137,5 @@ gateway selftest       # локальная проверка установле�
 
 ## Лицензия
 
-MIT.
+Основной код — MIT. Включённые официальные скриншоты Gatus сохраняют Apache-2.0:
+[источники, атрибуция и лицензия](docs/assets/observability/2026-11-20/CREDITS.md).
