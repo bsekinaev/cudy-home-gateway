@@ -36,6 +36,10 @@ try {
     if (!$refused -or $global:HGDiscoveryTestCalls -ne 1) { throw 'Invalid target reached SSH' }
     @{format='HG_OWNER_SERIES_SESSION_V1';target='root@fixture.invalid';port=22} |
         ConvertTo-Json | Set-Content -LiteralPath $sessionFile -Encoding UTF8
+    $global:HGDiscoveryTestReply[7]='runtime_dns=[{"port":2007,"loopback":true,"protocol":"dokodemo-door"}]'
+    & (Join-Path $PSScriptRoot 'check-dns.ps1') -SessionFile $sessionFile -ReportFile $reportFile
+    $global:HGDiscoveryTestReply[7]='runtime=unreadable_or_unsupported'
+    & (Join-Path $PSScriptRoot 'check-dns.ps1') -SessionFile $sessionFile -ReportFile $reportFile
     foreach ($reply in @(@('HG_DNS_DISCOVERY_V1'),
                          @('HG_DNS_DISCOVERY_V1','unexpected=PRIVATE'))) {
         $global:HGDiscoveryTestReply=$reply

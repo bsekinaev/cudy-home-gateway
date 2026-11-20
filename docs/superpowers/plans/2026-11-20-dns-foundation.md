@@ -32,21 +32,28 @@
 
 **Interfaces:** `hg_dns_probe DOMAIN PORT` sets `HG_DNS_PROBE_STATE` (OK/DOWN/UNKNOWN) and `HG_DNS_PROBE_REASON`; queries only 127.0.0.1 using BusyBox server:port. `hg_dns_collect` consumes these results for configured dnsmasq port.
 
-- [ ] Write UDP loopback fixture tests: valid A reply, NXDOMAIN, empty NOERROR, silence, invalid port/domain, unavailable tools; collection uses configured port.
-- [ ] Run `python3 -m unittest discover -s scripts/observability -v` in networkless pinned BusyBox container: observe failures for absent helper/current port handling.
-- [ ] Implement smallest helper and integrate collect. Use explicit A request and outer BusyBox timeout; validate args before execution, preserve UNKNOWN for unavailable tools. No dependency install on router.
-- [ ] Run new suite and repository `scripts/ci/check.sh`; inspect failures, don't weaken existing gates. Commit tested changes.
+- [x] Write UDP loopback fixture tests: valid A reply, NXDOMAIN, empty NOERROR, silence, invalid port/domain, unavailable tools; collection uses configured port.
+- [x] Run `python3 -m unittest discover -s scripts/observability -v` in networkless pinned BusyBox container: observe failures for absent helper/current port handling.
+- [x] Implement smallest helper and integrate collect. Use explicit A request and outer BusyBox timeout; validate args before execution, preserve UNKNOWN for unavailable tools. No dependency install on router.
+- [x] Run new suite and repository `scripts/ci/check.sh`; inspect failures, don't weaken existing gates. Commit tested changes.
 
 ### Task 2: Owner preparation and evidence
 
-**Files:** Create `docs/WAN_RELOCATION.md`, `docs/reports/OBSERVABILITY_DNS_FOUNDATION_20261120.md`; update `docs/OBSERVABILITY_PLAN.md`.
+**Files:** Create `scripts/observability/{router-dns-preflight.sh,check-dns.ps1,test_preflight.py,test_runner.ps1,README.md}`, `docs/WAN_RELOCATION.md`, `docs/reports/OBSERVABILITY_DNS_FOUNDATION_20261120.md`; update `docs/OBSERVABILITY_PLAN.md`.
 
 **Interfaces:** Human checklist only; private OpenWrt config backup is distinct from runtime kit. Lab report names exact tested tools, outcomes and remaining admission work.
 
-- [ ] Write relocation preparation/restore checklist, subnet conflict check and owner acceptance; cable remains emergency reserve.
-- [ ] Record actual lab results and missing target-specific proof. This foundation alone is not complete REDMI monitoring or release acceptance.
-- [ ] Verify local documentation links and diff whitespace; run whole-branch review and commit corrections.
+- [x] Write relocation preparation/restore checklist, subnet conflict check and owner acceptance; cable remains emergency reserve.
+- [x] Record actual lab results and missing target-specific proof. This foundation alone is not complete REDMI monitoring or release acceptance.
+- [x] Verify local documentation links and diff whitespace; run whole-branch review and commit corrections.
 
 ## Delivery boundary
 
 Following work: discover REDMI runtime resolver safely, expose scope/freshness in health/status/Telegram, then exact-source release gates and owner kit. No installer is labelled ready from unit tests alone. User has authorized continuing this sequence; no additional confirmation needed for reversible development.
+
+## Execution ruling
+
+Owner discovery is necessary before REDMI endpoint implementation: upstream generated
+configuration is not evidence of the installed version. Added a standalone read-only
+helper with allowlisted output and Windows 5.1 offline tests; it does not install
+this adapter or mutate the router. Continue endpoint work after the owner report.
