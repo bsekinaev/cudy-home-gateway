@@ -118,7 +118,3 @@ fi
                     os.killpg(proc.pid, signal.SIGKILL)
                     proc.communicate(timeout=3)
 if __name__ == '__main__': unittest.main()
-
-
-
-

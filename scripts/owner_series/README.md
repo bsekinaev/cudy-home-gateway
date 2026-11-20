@@ -57,3 +57,13 @@ requires native report fields `delivery: monitor` and
 `package_format: HG_OWNER_MONITOR_V3`. Merely relabelling an observer report does
 not supply monitor lifecycle evidence. VM fixtures remain non-executable host
 packaging tests and do not authorize owner output.
+
+### Launcher первого мониторинга
+
+Шаблон start-monitor.ps1.in генерируется в release assets с закреплёнными SHA
+runner/archive/source. Пункты 1–3: Preflight, Apply, отдельный Verify. Пункт 4
+повторяет Verify, сверяет установленный source и отсутствие pending-операции,
+затем выполняет единственный фиксированный `gateway notifications configure monitoring`.
+Это явное действие владельца: четыре категории включаются, прежние mute и
+Telegram retry_after сохраняются. Recover/rollback остаются отдельными пунктами
+5/6. Agent не вызывает это действие на рабочем CUDY.

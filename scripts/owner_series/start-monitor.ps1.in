@@ -1,0 +1,66 @@
+[CmdletBinding()]
+param([ValidateSet('Menu','Preflight','Apply','Verify','Recover','Rollback','Notifications')][string]$Stage='Menu')
+$ErrorActionPreference='Stop'
+Set-Location -LiteralPath $PSScriptRoot
+if($Stage -eq 'Menu') {
+    Write-Host 'Обновление CUDY: мониторинг, уведомления и история'
+    Write-Host '1 — Проверить готовность (сначала этот пункт)'
+    Write-Host '2 — Установить после успешной проверки'
+    Write-Host '3 — Проверить результат установки'
+    Write-Host '4 — Включить уведомления после отдельной проверки'
+    Write-Host '5 — Восстановить прерванную операцию'
+    Write-Host '6 — Откатить обновление'
+    Write-Host '0 — Закрыть'
+    $choice=Read-Host 'Выберите действие'
+    $stages=@{'1'='Preflight';'2'='Apply';'3'='Verify';'4'='Notifications';'5'='Recover';'6'='Rollback'}
+    if($choice -eq '0') { exit 0 }
+    if(!$stages.ContainsKey($choice)) { Write-Host 'Действие не выбрано.';Read-Host 'Enter — закрыть';exit 1 }
+    $Stage=$stages[$choice]
+}
+try {
+    $runner=Join-Path $PSScriptRoot 'owner.ps1'
+    $hasher=[Security.Cryptography.SHA256]::Create()
+    try { $runnerHash=([BitConverter]::ToString($hasher.ComputeHash([IO.File]::ReadAllBytes($runner)))).Replace('-','').ToLowerInvariant() }
+    finally { $hasher.Dispose() }
+    if($runnerHash -cne '@@RUNNERSHA@@') {
+        throw 'Файл установщика изменён. Распакуйте исходный архив в новую папку.'
+    }
+    $ownerArgs=@{
+        Bundle=(Join-Path $PSScriptRoot '@@ARCHIVE@@')
+        BundleSha256='@@SHA256@@'
+        Target='root@192.168.1.1'
+        Port=22
+        SessionFile=(Join-Path $PSScriptRoot 'owner-session.json')
+    }
+    if($Stage -eq 'Notifications') {
+        # Re-verify the exact package immediately before changing delivery policy.
+        & $runner @ownerArgs -Stage Verify
+        if(!$?) { throw 'Сначала требуется успешная отдельная проверка установки.' }
+        $remote=@'
+set -eu
+[ ! -e /tmp/home-gateway-deploy.lock ] && [ ! -L /tmp/home-gateway-deploy.lock ]
+operation=$(cat /etc/home-gateway-deploy/latest)
+case "$operation" in tx.*) ;; *) exit 70 ;; esac
+case "$operation" in *[!A-Za-z0-9.]*|*..*) exit 70 ;; esac
+[ "$(cat "/etc/home-gateway-deploy/$operation/commit")" = '@@SOURCE@@' ]
+exec /usr/bin/gateway notifications configure monitoring
+'@
+        & ssh -T -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -p $ownerArgs.Port $ownerArgs.Target $remote
+        if($LASTEXITCODE -ne 0) { throw 'Уведомления не включены: сохраните вывод и сообщите результат.' }
+    } else {
+        & $runner @ownerArgs -Stage $Stage
+        if(!$?) { throw 'Этап завершился с ошибкой.' }
+    }
+    Write-Host ''
+    if($Stage -eq 'Preflight') { Write-Host 'Готовность проверена. Следующий шаг: пункт 2 — установить.' }
+    elseif($Stage -eq 'Apply') { Write-Host 'Установка завершена. Следующий шаг: пункт 3 — проверить результат.' }
+    elseif($Stage -eq 'Verify') { Write-Host 'Проверка завершена. Затем пункт 4 — включить уведомления. Проверьте /status, /summary и /history в Telegram.' }
+    elseif($Stage -eq 'Notifications') { Write-Host 'Уведомления WAN/DNS/MAIN/REDMI включены; прежняя пауза или mute сохранены. Проверьте /summary и /history.' }
+    else { Write-Host 'Этап завершён. Выполните пункт 3 — проверить результат.' }
+} catch {
+    Write-Host ('Ошибка: '+$_.Exception.Message) -ForegroundColor Red
+    Write-Host 'Сохраните эту папку и пришлите текст ошибки. Не повторяйте установку после её прерывания.'
+    Read-Host 'Enter — закрыть'
+    exit 1
+}
+Read-Host 'Enter — закрыть'
