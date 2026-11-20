@@ -282,6 +282,42 @@ function load_active_incidents() {
     return active;
 }
 
+let journal_tail_repaired = false;
+function repair_journal_tail() {
+    let before=fs.lstat(JOURNAL_FILE);
+    if(before==null) return true;
+    if(before.type!='file' || before.nlink!=1 || before.size>2097152) return false;
+    let raw=fs.readfile(JOURNAL_FILE);
+    if(raw==null) return false;
+    if(!length(raw) || substr(raw,-1)=='\n') return true;
+    let edge=rindex(raw,'\n'), prefix=edge>=0?substr(raw,0,edge+1):'';
+    let tail=substr(raw,edge+1);
+    try {
+        let event=json(tail);
+        // A complete event can lose only its final delimiter during power loss.
+        // Preserve it. Structurally invalid complete JSON is not a partial tail.
+        if(type(event)!='object' || event.schema_version!=1 ||
+            index(['OPEN','STATE_CHANGED','RECOVERED'],event.event)<0 ||
+            type(event.incident_id)!='string' || type(event.at)!='int') return false;
+        prefix+=tail+'\n';
+    }
+    catch(error) { /* Only the unfinished last record is discarded. */ }
+    let temporary=JOURNAL_FILE+'.tail-repair.'+time();
+    let file=fs.open(temporary,'wxe',0600);
+    if(!file) return false;
+    let ok=file.write(prefix)==length(prefix) && file.flush()!=null;
+    let closed=file.close();
+    if(!ok || closed==null || run_command('/bin/busybox fsync '+shellquote(temporary)).code!=0) {
+        fs.unlink(temporary); return false;
+    }
+    let current=fs.lstat(JOURNAL_FILE);
+    if(current?.inode!=before.inode || current.size!=before.size || current.mtime!=before.mtime ||
+        !fs.rename(temporary,JOURNAL_FILE)) { fs.unlink(temporary); return false; }
+    if(run_command('/bin/busybox fsync '+shellquote(STATE_DIR)).code!=0) return false;
+    journal_tail_repaired=true;
+    return true;
+}
+
 function append_events(events) {
     if (!length(events))
         return true;
@@ -578,6 +614,7 @@ function record_history(health, epoch, events) {
     let e = health?.observation;
     if (e?.schema_version != 1 || type(e?.finished_uptime) != 'int') return true;
     let h = load_history();
+    if(journal_tail_repaired) { h.truncated=true; h.journal_tail_repaired=true; }
     let p = h.last;
     let c = { boot_id: e.boot_id, context: e.context, uptime: e.finished_uptime,
         epoch: epoch >= 1700000000 ? epoch : null, trusted: e.wall_time_trusted == true, components: {} };
@@ -777,6 +814,12 @@ function tick() {
         lock.close();
         warn('incidents: notification compaction recovery required\n');
         return 70;
+    }
+
+    // Delivery projection is strict: repair a power-loss tail before any new
+    // append can join it. The incident lock excludes producers and compaction.
+    if(!repair_journal_tail()) {
+        lock.close(); warn('incidents: journal tail recovery failed\n'); return 70;
     }
 
     let health = fetch_health();
