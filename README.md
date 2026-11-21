@@ -33,9 +33,9 @@
 **Разработка продолжается.** `0.5.0-dev` — не стабильный production-релиз.
 
 На CUDY TR3000 v1 / OpenWrt 25.12.5 владелец установил обновление
-`62b5c4a9f25bc657fa1456eeacdfdc9039648cae`: Preflight, Apply и отдельный Verify —
+`1fc822c3bddc1021a1d641c7d7cce71fab7332b8`: Preflight, Apply и отдельный Verify —
 PASS; selftest 62/0, doctor 11/0/0. Проверка завершена 21.11.2026 по Москве.
-Runtime — `0.5.0-dev`. [Отчёт установки](docs/reports/REDMI_DNS_OBSERVER_20261121_LIVE.md).
+Runtime — `0.5.0-dev`. [Отчёт установки мониторинга](docs/reports/MONITORING_20261121_LIVE.md).
 Предыдущие пакеты, receipts и sessions сохраняются для истории и восстановления.
 
 В Telegram установлена отдельная DNS-проверка профиля REDMI с возрастом результата.
@@ -44,7 +44,7 @@ Runtime — `0.5.0-dev`. [Отчёт установки](docs/reports/REDMI_DNS_
 
 ### Telegram на работающем CUDY
 
-Реальный скриншот владельца после установки, 21.11.2026. Все IP-адреса скрыты
+Реальный скриншот владельца после обновления DNS (`62b5c4a`), 21.11.2026. Все IP-адреса скрыты
 перед публикацией; остальные результаты относятся к моменту снимка.
 
 <img src="docs/assets/observability/2026-11-21/telegram-status-redacted.png" alt="Telegram: WAN, DNS, MAIN VPN и DNS профиля REDMI после установки; IP-адреса скрыты" width="420">
@@ -55,7 +55,7 @@ Runtime — `0.5.0-dev`. [Отчёт установки](docs/reports/REDMI_DNS_
 При установке нужны собственный Preflight и отдельный Verify; сборка исходников
 из GitHub не заменяет проверенный owner-пакет.
 
-Дальше — установка мониторинга, приёмка уведомлений и 24–72 часа наблюдения;
+Дальше — проверка Telegram и клиентов, приёмка уведомлений и 24–72 часа наблюдения;
 затем подготовка WAN к переезду. [Порядок работ](docs/OBSERVABILITY_PLAN.md),
 [иллюстрированное руководство](docs/OBSERVABILITY.md),
 [исследование похожих проектов](docs/research/2026-11-20-monitoring-projects.md).
@@ -69,7 +69,8 @@ native monitor 66/66, V2 regression 67/67, V1 regression 81/81.
 
 В ZIP есть `START.cmd`: Preflight → Apply → отдельный Verify → включение
 уведомлений. No-install проверка владельца на CUDY: цикл 4,34 с, четыре
-направления OK. Установка нового runtime и длительное наблюдение ещё предстоят.
+направления OK. Владелец установил новый runtime и включил четыре категории
+уведомлений; проверка Telegram/клиентов и длительное наблюдение ещё предстоят.
 [Реализация, замеры и границы](docs/reports/MONITORING_FOUNDATION_20261121.md).
 
 
@@ -82,7 +83,8 @@ Health Core нормализует WAN, DNS, MAIN и service/policy observations
 
 Notification Dispatcher объединён в main через PR #6 после успешного CI: retry,
 MAIN/Torrent delivery, recovery summary, CLI mute/categories и sysupgrade allowlist.
-Доставка выключена по умолчанию. Добавлена crash-safe compaction с dedup receipts. Приёмка на CUDY ожидается;
+Доставка выключена по умолчанию; владелец включил четыре категории preset мониторинга.
+Добавлена crash-safe compaction с dedup receipts. LIVE-проверка доставки на CUDY ожидается;
 CI каждой новой ветки проверяется отдельно. `0.5.0-dev` пока не является стабильным релизом.
 
 [Установка и ограничения диспетчера](docs/NOTIFICATIONS.md).

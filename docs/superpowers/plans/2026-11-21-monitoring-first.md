@@ -85,8 +85,9 @@ VM scenarios, Windows runner tests, README/release docs.
   проверена исполнением точных модулей baseline62.
 - [x] Exact-source CI/native crash/reboot gates, review и owner installer:
   [выпуск](https://github.com/bsekinaev/cudy-home-gateway/releases/tag/v0.5.0-dev.20261121), [CI 16/16](https://github.com/bsekinaev/cudy-home-gateway/actions/runs/44835123653).
-- [ ] Отдельные owner Preflight/Apply/Verify, включение уведомлений, проверка
-  клиентов и естественное наблюдение 24–72 часа.
+- [x] Отдельные owner Preflight/Apply/Verify и включение уведомлений подтверждены
+  отчётами владельца 21.11.2026.
+- [ ] Проверка Telegram/клиентов и естественное наблюдение 24–72 часа.
 
 ## Состояние финальной приёмки
 
@@ -94,5 +95,6 @@ VM scenarios, Windows runner tests, README/release docs.
 После него исправлены две нестабильности scheduler-тестов: ожидание завершённого
 heartbeat и допуск дробного представления секунд; 5 процессных тестов прошли.
 Финальные native/CI gates и owner-пакет завершены для source `1fc822c`.
-Установка и LIVE-приёмка владельцем ещё предстоят.
+Установка и включение четырёх категорий сообщений подтверждены владельцем.
+Проверка Telegram/клиентов, накопления истории и доставки ещё предстоит.
 Readiness владельца уже получен — повторно просить его не нужно.
