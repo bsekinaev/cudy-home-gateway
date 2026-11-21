@@ -287,3 +287,6 @@ jobs:
       - name: Test owner runner without router access
         shell: powershell
         run: python -m unittest discover -s scripts/owner_series -p 'test_owner*.py' -v
+      - name: Test read-only WAN probe transport without router access
+        shell: powershell
+        run: python -m unittest discover -s scripts/observability -p 'test_check_wan.py' -v

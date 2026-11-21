@@ -1,0 +1,65 @@
+﻿# Owner-run WAN inspection. Never invokes an updater or changes network settings.
+[CmdletBinding()]
+param(
+    [string]$SessionFile=(Join-Path $env:USERPROFILE 'CUDY-Update-20261121-1fc822c/owner-session.json'),
+    [string]$ReportFile=(Join-Path $env:USERPROFILE ('CUDY-WAN-Readiness-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'.txt'))
+)
+Set-StrictMode -Version 2
+$ErrorActionPreference='Stop'
+$expectedSource='@@SOURCE@@'
+$expectedScript='@@SCRIPT_SHA@@'
+$session=Get-Content -LiteralPath $SessionFile -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($session.format -cne 'HG_OWNER_SERIES_SESSION_V1' -or
+    $session.target -cnotmatch '^root@[A-Za-z0-9][A-Za-z0-9.-]{0,126}$' -or
+    ($session.port -isnot [int] -and $session.port -isnot [long]) -or
+    $session.port -lt 1 -or $session.port -gt 65535) {
+    throw 'Unsupported connection identity. No SSH command was run.'
+}
+$source=([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'SOURCE.txt'))).Trim()
+if ($source -cne $expectedSource -or $source -cnotmatch '^[a-f0-9]{40}$') { throw 'Package source identity mismatch.' }
+$utf8=New-Object Text.UTF8Encoding($false)
+$scriptBytes=[IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'router-wan-probe.sh'))
+$hasher=[Security.Cryptography.SHA256]::Create()
+try { $pin=([BitConverter]::ToString($hasher.ComputeHash($scriptBytes))).Replace('-','').ToLowerInvariant() }
+finally { $hasher.Dispose() }
+if ($pin -cne $expectedScript) { throw 'Probe checksum mismatch. No SSH command was run.' }
+$text=$utf8.GetString($scriptBytes).Replace("`r`n","`n")
+Write-Host 'Проверяю адрес, маршрут и пересечение подсетей WAN/LAN. Настройки сети не меняются.'
+$previousOutputEncoding=$OutputEncoding
+try {
+    $OutputEncoding=$utf8
+    $report=@($text | & ssh -T -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=6 -p $session.port $session.target 'timeout -k 1 20 sh -s --')
+    $sshExit=$LASTEXITCODE
+} finally { $OutputEncoding=$previousOutputEncoding }
+if ($sshExit -ne 0) { Write-Error ('WAN diagnostic SSH failed: '+$sshExit); exit $sshExit }
+if ($report.Count -ne 2 -or $report[0] -cne 'HG_WAN_READINESS_V1') { throw 'Incomplete or unexpected WAN response.' }
+$json=[string]$report[1]
+if ($utf8.GetByteCount($json) -gt 8192) { throw 'Oversized WAN response.' }
+$data=ConvertFrom-Json -InputObject $json
+$states=@{
+    protocol=@('dhcp','static','pppoe','OTHER','UNKNOWN')
+    interface_state=@('UP','DOWN','UNKNOWN')
+    wan_device_state=@('PRESENT','UNKNOWN')
+    ipv4_address_state=@('PRESENT','MISSING','UNKNOWN')
+    ipv4_address_scope=@('PRIVATE','CGNAT','LINK_LOCAL','SPECIAL','OTHER','UNKNOWN')
+    ipv6_address_state=@('PRESENT','UNVERIFIED')
+    ipv4_route_state=@('PRESENT','MISSING','UNKNOWN')
+    gateway_state=@('PRESENT','NOT_REQUIRED','UNKNOWN')
+    subnet_overlap=@('YES','NO','UNKNOWN')
+    ipv4_local_path_state=@('READY','INCOMPLETE','UNSUPPORTED','CONFLICT')
+    physical_link_state=@('UNVERIFIED')
+    dns_state=@('UNVERIFIED')
+    internet_state=@('UNVERIFIED')
+}
+$expected=@('schema_version','source_commit')+@($states.Keys)
+if ((@($data.PSObject.Properties.Name | Sort-Object) -join ',') -cne (@($expected | Sort-Object) -join ',')) { throw 'Unexpected WAN fields.' }
+if (($data.schema_version -isnot [int] -and $data.schema_version -isnot [long]) -or $data.schema_version -ne 1 -or $data.source_commit -cne $source) { throw 'WAN source or schema mismatch.' }
+foreach ($name in $states.Keys) {
+    if ($data.$name -isnot [string] -or $data.$name -cnotin $states[$name]) { throw 'Invalid WAN state.' }
+}
+[IO.File]::WriteAllLines($ReportFile,[string[]]$report,$utf8)
+Write-Host ('Протокол: '+$data.protocol+'; интерфейс: '+$data.interface_state)
+Write-Host ('Адрес IPv4: '+$data.ipv4_address_state+'; маршрут: '+$data.ipv4_route_state)
+Write-Host ('Пересечение WAN/LAN: '+$data.subnet_overlap+'; локальный путь: '+$data.ipv4_local_path_state)
+Write-Host 'Физический линк, DNS и интернет этим инструментом не проверяются.'
+Write-Host ('REPORT='+$ReportFile)
