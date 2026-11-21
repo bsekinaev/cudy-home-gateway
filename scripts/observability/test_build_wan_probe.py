@@ -23,6 +23,16 @@ class WanBuildTests(unittest.TestCase):
    if os.name!='nt':
     r=subprocess.run(['sh',str(b/'out/router-wan-probe.sh')],capture_output=True,text=True,timeout=5)
     self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(r.stdout,'TRANSPORT_OK:'+source)
+    # Windows PowerShell appends CRLF to the native pipeline string. The
+    # receiving shell must finish successfully before interpreting that tail.
+    for shell in (['sh','-s','--'],['busybox','ash','-s','--']):
+     r=subprocess.run(shell,input=raw+b'\r\n',capture_output=True,timeout=5)
+     self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(r.stderr,b'')
+     self.assertEqual(r.stdout,('TRANSPORT_OK:'+source).encode())
+     failed=raw.replace(b"print('TRANSPORT_OK:'+ARGV[0]);",b'exit(23);')
+     r=subprocess.run(shell,input=failed+b'\r\n',capture_output=True,timeout=5)
+     self.assertEqual(r.returncode,23,r.stderr)
+
    runner=(b/'out/check-wan.ps1').read_text(encoding='utf-8-sig')
    self.assertIn(hashlib.sha256(raw).hexdigest(),runner);self.assertIn(source,runner);self.assertNotIn('@@',runner)
    for row in (b/'out/SHA256SUMS.txt').read_text().splitlines():

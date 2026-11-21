@@ -11,7 +11,7 @@ def build(output,ref='HEAD'):
     def committed(name):return subprocess.check_output(['git','-C',str(ROOT),'show',source+':scripts/observability/'+name])
     collector=committed('router-wan-probe.uc')
     if b'\r' in collector or b'HG_WAN_UCODE_EOF' in collector:raise ValueError('Invalid collector transport boundary')
-    script=(b'#!/bin/sh\nset -eu\nucode - '+source.encode()+b" <<'HG_WAN_UCODE_EOF'\n"+collector+b'\nHG_WAN_UCODE_EOF\n')
+    script=(b'#!/bin/sh\nset -eu\nucode - '+source.encode()+b" <<'HG_WAN_UCODE_EOF'\n"+collector+b'\nHG_WAN_UCODE_EOF\nexit 0\n')
     pin=hashlib.sha256(script).hexdigest()
     runner=committed('check-wan.ps1.in').decode('utf-8-sig').replace('@@SOURCE@@',source).replace('@@SCRIPT_SHA@@',pin)
     if '@@' in runner:raise ValueError('Unfilled launcher template')

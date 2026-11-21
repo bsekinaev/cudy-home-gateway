@@ -19,7 +19,7 @@ class WanRunnerTests(unittest.TestCase):
  def tearDownClass(cls):cls.temp.cleanup()
  def invoke(self,case='valid'):
   with tempfile.TemporaryDirectory() as tmp:
-   b=Path(tmp);payload=b'#!/bin/sh\nprintf test\n'
+   b=Path(tmp);payload=b'#!/bin/sh\nprintf test\nexit 0\n'
    (b/'router-wan-probe.sh').write_bytes(payload+(b'#tamper' if case=='tampered' else b''))
    (b/'SOURCE.txt').write_text(SOURCE)
    session={'format':'HG_OWNER_SERIES_SESSION_V1','target':'root@fixture.invalid','port':22}
@@ -38,7 +38,7 @@ class WanRunnerTests(unittest.TestCase):
  def test_native_fixed_command_lf_payload_and_valid_report(self):
   r,args,stdin,report=self.invoke();self.assertEqual(r.returncode,0,r.stderr)
   self.assertEqual(args[-1],'timeout -k 1 20 sh -s --');self.assertIn('StrictHostKeyChecking=yes',args)
-  self.assertNotIn(b'\r',stdin.rstrip(b'\r\n'));self.assertTrue(stdin.endswith(b'\n'))
+  self.assertEqual(stdin,b'#!/bin/sh\nprintf test\nexit 0\n\r\n')
   self.assertIn('HG_WAN_READINESS_V1',report)
  def test_wrong_identity_or_modified_payload_refused_before_ssh(self):
   for case in ('identity','tampered'):
