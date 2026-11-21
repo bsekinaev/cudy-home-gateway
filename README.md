@@ -55,17 +55,22 @@ Runtime — `0.5.0-dev`. [Отчёт установки](docs/reports/REDMI_DNS_
 При установке нужны собственный Preflight и отдельный Verify; сборка исходников
 из GitHub не заменяет проверенный owner-пакет.
 
-Дальше — независимое наблюдение, приёмка уведомлений, подготовка WAN к переезду
-и история качества. [Порядок работ](docs/OBSERVABILITY_PLAN.md),
+Дальше — установка мониторинга, приёмка уведомлений и 24–72 часа наблюдения;
+затем подготовка WAN к переезду. [Порядок работ](docs/OBSERVABILITY_PLAN.md),
 [иллюстрированное руководство](docs/OBSERVABILITY.md),
 [исследование похожих проектов](docs/research/2026-11-20-monitoring-projects.md).
 Web UI и автоматическая смена локаций не добавляются.
 
-Приоритет следующего выпуска — независимое наблюдение WAN/DNS/MAIN/REDMI,
-сообщения о сбоях и восстановлении, история 7/30 суток и сводки в Telegram.
-No-install проверка кандидата на CUDY 21.11.2026: утилиты доступны, цикл 4,34 с,
-четыре выбранных направления OK. Это не установка и не проверка длительного
-наблюдения. [Реализация, замеры и границы](docs/reports/MONITORING_FOUNDATION_20261121.md).
+Опубликован [выпуск мониторинга v0.5.0-dev.20261121](https://github.com/bsekinaev/cudy-home-gateway/releases/tag/v0.5.0-dev.20261121)
+от установленного baseline `62b5c4a`: независимые минутные проверки
+WAN/DNS/MAIN/REDMI, сообщения о сбоях и восстановлении, история 7/30 суток,
+`/summary` и `/history`. [Проверки — 16/16](https://github.com/bsekinaev/cudy-home-gateway/actions/runs/44835123653);
+native monitor 66/66, V2 regression 67/67, V1 regression 81/81.
+
+В ZIP есть `START.cmd`: Preflight → Apply → отдельный Verify → включение
+уведомлений. No-install проверка владельца на CUDY: цикл 4,34 с, четыре
+направления OK. Установка нового runtime и длительное наблюдение ещё предстоят.
+[Реализация, замеры и границы](docs/reports/MONITORING_FOUNDATION_20261121.md).
 
 
 Reboot persistence, независимый end-to-end traffic, длительный soak и реальный

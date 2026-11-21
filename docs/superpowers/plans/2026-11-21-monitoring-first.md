@@ -83,13 +83,16 @@ VM scenarios, Windows runner tests, README/release docs.
   14 control путей. История встроена в incidents.uc, новых runtime путей нет.
   V1/V2 ограничения сохранены; совместимость новых данных со старым runtime
   проверена исполнением точных модулей baseline62.
-- [ ] Exact-source CI/native crash/reboot gates, review, owner installer;
-  отдельные owner Preflight/Apply/Verify, затем естественное наблюдение 24–72 часа.
+- [x] Exact-source CI/native crash/reboot gates, review и owner installer:
+  [выпуск](https://github.com/bsekinaev/cudy-home-gateway/releases/tag/v0.5.0-dev.20261121), [CI 16/16](https://github.com/bsekinaev/cudy-home-gateway/actions/runs/44835123653).
+- [ ] Отдельные owner Preflight/Apply/Verify, включение уведомлений, проверка
+  клиентов и естественное наблюдение 24–72 часа.
 
 ## Состояние финальной приёмки
 
 Реализация и независимый review завершены; полный локальный CI прошёл на7372e63.
 После него исправлены две нестабильности scheduler-тестов: ожидание завершённого
 heartbeat и допуск дробного представления секунд; 5 процессных тестов прошли.
-Финальные native/CI gates, owner-пакет и установка пока не завершены.
+Финальные native/CI gates и owner-пакет завершены для source `1fc822c`.
+Установка и LIVE-приёмка владельцем ещё предстоят.
 Readiness владельца уже получен — повторно просить его не нужно.
