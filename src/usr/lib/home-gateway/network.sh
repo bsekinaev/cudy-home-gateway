@@ -34,6 +34,7 @@ hg_network_collect() {
     HG_NETWORK_WAN_IPV4=''
     HG_NETWORK_WAN_PREFIX=''
     HG_NETWORK_WAN_GATEWAY=''
+    HG_NETWORK_WAN_ROUTE_STATE='UNKNOWN'
     HG_NETWORK_WAN_CGNAT='unknown'
     HG_NETWORK_DIRECT_STATE='UNKNOWN'
     HG_NETWORK_DIRECT_IPV4=''
@@ -83,17 +84,35 @@ hg_network_collect() {
                 ;;
         esac
 
-        HG_NETWORK_WAN_GATEWAY="$(
-            ip -4 route show default dev "$HG_NETWORK_WAN_DEVICE" 2>/dev/null |
-                awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit } }'
-        )"
+        # iproute2 may omit the device name when it is used as a filter.
+        # Accept a single attributable, usable main-table default route.
+        wan_routes="$(ip -4 route show default 2>/dev/null)" || wan_routes=''
+        wan_route="$(printf '%s\n' "$wan_routes" | awk -v device="$HG_NETWORK_WAN_DEVICE" '
+            $1=="default" || $1=="0.0.0.0/0" {
+                dev=""; bad=0
+                for(i=1;i<=NF;i++) {
+                    if($i=="dev")dev=$(i+1)
+                    if($i=="linkdown" || $i=="dead" || $i=="nexthop")bad=1
+                }
+                if(dev==device && !bad){count++;line=$0}
+            }
+            END {if(count==1)print line}
+        ')"
+        if [ -n "$wan_route" ]; then
+            HG_NETWORK_WAN_GATEWAY="$(printf '%s\n' "$wan_route" | awk '{for(i=1;i<=NF;i++)if($i=="via"){print $(i+1);exit}}')"
+            if hg_network_is_ipv4 "$HG_NETWORK_WAN_GATEWAY" || \
+                { [ "$HG_NETWORK_WAN_PROTO" = pppoe ] && [ -z "$HG_NETWORK_WAN_GATEWAY" ] && ! printf '%s\n' "$wan_route" | grep -qw via; }; then
+                HG_NETWORK_WAN_ROUTE_STATE='PRESENT'
+            fi
+        fi
     fi
 
     case "$wan_up" in
         true)
             if [ -n "$HG_NETWORK_WAN_DEVICE" ] && \
                hg_network_is_ipv4 "$HG_NETWORK_WAN_IPV4" && \
-               hg_network_is_ipv4 "$HG_NETWORK_WAN_GATEWAY"; then
+               [ "$HG_NETWORK_WAN_ROUTE_STATE" = PRESENT ] && \
+               case "$HG_NETWORK_WAN_PROTO" in dhcp|static|pppoe) true;; *) false;; esac; then
                 HG_NETWORK_WAN_STATE='OK'
             else
                 HG_NETWORK_WAN_STATE='DEGRADED'
@@ -119,6 +138,14 @@ hg_network_collect() {
         HG_NETWORK_DIRECT_STATE='DOWN'
         return 0
     fi
+    # A cached or live probe cannot certify an incomplete local WAN path.
+    [ "$HG_NETWORK_WAN_STATE" = OK ] || return 0
+
+    wan_boot="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+    wan_context=''
+    if [ -n "$wan_boot" ] && command -v sha256sum >/dev/null 2>&1; then
+        wan_context="$(printf '%s\n' "$wan_boot" "$HG_NETWORK_WAN_INTERFACE" "$HG_NETWORK_WAN_DEVICE" "$HG_NETWORK_WAN_PROTO" "$HG_NETWORK_WAN_IPV4" "$HG_NETWORK_WAN_PREFIX" "$wan_route" "$egress_probe_url" "$secondary_probe_url" "$primary_provider" "$secondary_provider" | sha256sum | awk '{print $1}')"
+    fi
 
     now="$(date '+%s' 2>/dev/null || true)"
     case "$now" in
@@ -129,7 +156,7 @@ hg_network_collect() {
     cache_ipv4=''
     cache_provider=''
     if [ -r "$egress_cache_file" ]; then
-        set -- $(awk 'NR == 1 { print $1, $2, $3; exit }' "$egress_cache_file" 2>/dev/null || true)
+        set -- $(awk 'NR == 1 && NF == 4 { print $1, $2, $3, $4; exit }' "$egress_cache_file" 2>/dev/null || true)
         cache_checked_at="${1:-}"
         cache_ipv4="${2:-}"
         cache_provider="${3:-}"
@@ -137,7 +164,7 @@ hg_network_collect() {
         case "$cache_checked_at" in
             ''|*[!0-9]*) cache_checked_at='' ;;
         esac
-        if ! hg_network_is_ipv4 "$cache_ipv4"; then
+        if [ -z "$wan_context" ] || [ "${4:-}" != "$wan_context" ] || ! hg_network_is_ipv4 "$cache_ipv4"; then
             cache_ipv4=''
             cache_provider=''
         fi
@@ -174,8 +201,8 @@ hg_network_collect() {
             HG_NETWORK_DIRECT_PROVIDER="$primary_provider"
             HG_NETWORK_DIRECT_STATE='OK'
 
-            if [ -n "$now" ]; then
-                printf '%s %s %s\n' "$now" "$probe_ipv4" "$primary_provider" >"$egress_cache_file" 2>/dev/null || true
+            if [ -n "$now" ] && [ -n "$wan_context" ]; then
+                printf '%s %s %s %s\n' "$now" "$probe_ipv4" "$primary_provider" "$wan_context" >"$egress_cache_file" 2>/dev/null || true
             fi
             return 0
         fi
@@ -197,8 +224,8 @@ hg_network_collect() {
                 HG_NETWORK_DIRECT_PROVIDER="$secondary_provider"
                 HG_NETWORK_DIRECT_STATE='OK'
 
-                if [ -n "$now" ]; then
-                    printf '%s %s %s\n' "$now" "$probe_ipv4" "$secondary_provider" >"$egress_cache_file" 2>/dev/null || true
+                if [ -n "$now" ] && [ -n "$wan_context" ]; then
+                    printf '%s %s %s %s\n' "$now" "$probe_ipv4" "$secondary_provider" "$wan_context" >"$egress_cache_file" 2>/dev/null || true
                 fi
                 return 0
             fi
