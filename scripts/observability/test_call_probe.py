@@ -5,7 +5,7 @@ COLLECTOR=ROOT/'scripts/observability/router-call-probe.uc'
 SOURCE='d'*40
 @unittest.skipUnless(os.name!='nt' and shutil.which('ucode'),'POSIX ucode required')
 class CallProbeTests(unittest.TestCase):
- def collect(self,uci=None,config=None,nft=None,raw=None,unsafe=None):
+ def collect(self,uci=None,config=None,nft=None,raw=None,unsafe=None,nested=False):
   with tempfile.TemporaryDirectory() as tmp:
    b=Path(tmp);cfg=b/'configs';cfg.mkdir()
    values={'passwall2.@global[0].client_proxy':'1','passwall2.@global_forwarding[0].udp_no_redir_ports':'','passwall2.@global_forwarding[0].udp_redir_ports':'1:65535','passwall2.rulenode.default_node':'main_test','passwall2.acl_A2dNs.enabled':'1'}
@@ -13,6 +13,11 @@ class CallProbeTests(unittest.TestCase):
    (b/'values').write_text(json.dumps(values))
    if config is None:config={'inbounds':[{'protocol':'dokodemo-door','settings':{'network':'tcp,udp'},'streamSettings':{'sockopt':{'tproxy':'tproxy'}}}],'outbounds':[{'tag':'proxy','protocol':'vless','settings':{'vnext':[{'address':'203.0.113.5','users':[{'id':'PRIVATE_UUID'}]}]},'streamSettings':{'network':'grpc','realitySettings':{'publicKey':'SECRET_KEY','serverName':'SECRET_HOST'}}}],'routing':{'rules':[]}}
    (cfg/'main_test.json').write_text(raw if raw is not None else json.dumps(config))
+   if nested:
+    (cfg/'acl').mkdir()
+    modern={'inbounds':[{'protocol':'tunnel','settings':{'allowedNetwork':'udp','followRedirect':True},'streamSettings':{'sockopt':{'tproxy':'tproxy'}}}], 'outbounds':[{'protocol':'vless','streamSettings':{'method':'grpc'}}]}
+    for name in ('default.json','acl_A2dNs.json'):
+     (cfg/'acl'/name).write_text(json.dumps(modern))
    if unsafe=='writable':(cfg/'main_test.json').chmod(0o666)
    if unsafe=='symlink':
     target=b/'private.json';target.write_text(json.dumps(config));(cfg/'main_test.json').unlink();(cfg/'main_test.json').symlink_to(target)
@@ -36,6 +41,13 @@ class CallProbeTests(unittest.TestCase):
  def test_all_udp_excluded_is_reported_without_changing_settings(self):
   r=self.collect(uci={'passwall2.@global_forwarding[0].udp_no_redir_ports':'1:65535'})
   self.assertEqual(r['udp_exclusion_mode'],'ALL');self.assertEqual(r['asata_udp_direct_rule'],'PRESENT')
+ def test_nested_acl_and_modern_xray_fields(self):
+  r=self.collect(nested=True)
+  by_role={c['role']:c for c in r['configs']}
+  for role in ('GLOBAL','REDMI'):
+   self.assertIn(role,by_role)
+   self.assertEqual(by_role[role]['udp_transparent_inbounds'],1)
+   self.assertEqual(by_role[role]['proxy_transports'],['grpc'])
  def test_socks_listener_not_confused_with_transparent_udp(self):
   r=self.collect(config={'inbounds':[{'protocol':'socks','settings':{'udp':True}}]})
   self.assertEqual(r['configs'][0]['udp_transparent_inbounds'],0)

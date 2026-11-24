@@ -50,11 +50,16 @@ let report={schema_version:1,source_commit:source,
 let dir=getenv('HG_CALL_CONFIG_DIR') || '/tmp/etc/passwall2';
 let identity=fs.stat('/proc/self'),owner=identity?identity.uid:null;
 let names=filter(fs.lsdir(dir) || [],name=>match(name,/^[A-Za-z0-9_-]{1,80}\.json$/));
+let acl=fs.lstat(dir+'/acl');
+if(acl && acl.type=='directory' && acl.uid==owner && !acl.perm.group_write && !acl.perm.other_write) {
+    for(let name in ['default.json','acl_A2dNs.json'])
+        if(fs.lstat(dir+'/acl/'+name))push(names,'acl/'+name);
+}
 report.configs_truncated=length(names)>8;
 for(let name in sort(names)) {
     if(length(report.configs)>=8)break;
-    let role=name=='acl_A2dNs.json'?'REDMI':main && name==main+'.json'?'MAIN_SOCKS':
-        index(['global.json','default.json','acl_default.json'],name)>=0?'GLOBAL':'OTHER';
+    let role=index(['acl_A2dNs.json','acl/acl_A2dNs.json'],name)>=0?'REDMI':main && name==main+'.json'?'MAIN_SOCKS':
+        index(['global.json','default.json','acl_default.json','acl/default.json'],name)>=0?'GLOBAL':'OTHER';
     let item={role,config_state:'UNREADABLE',udp_transparent_inbounds:null,
         udp_enabled_socks_inbounds:null,proxy_protocols:[],proxy_transports:[],
         broad_udp_direct_rule:'UNKNOWN',outbound_count:null};
@@ -71,7 +76,7 @@ for(let name in sort(names)) {
         if(!object(inbound) || !object(inbound.settings))continue;
         let settings=inbound.settings;
         if(inbound.protocol=='socks' && settings.udp===true)item.udp_enabled_socks_inbounds++;
-        if(inbound.protocol=='dokodemo-door' && udp_network(settings.network) && object(inbound.streamSettings) &&
+        if((inbound.protocol=='dokodemo-door' && udp_network(settings.network) || inbound.protocol=='tunnel' && udp_network(settings.allowedNetwork) && settings.followRedirect===true) && object(inbound.streamSettings) &&
             object(inbound.streamSettings.sockopt) && inbound.streamSettings.sockopt.tproxy=='tproxy')item.udp_transparent_inbounds++;
     }
     let direct_tags=[];
@@ -81,7 +86,7 @@ for(let name in sort(names)) {
         unique(item.proxy_protocols,proto);
         if(proto=='freedom' && type(outbound.tag)=='string')push(direct_tags,outbound.tag);
         if(index(['freedom','blackhole','dns'],proto)>=0)continue;
-        let transport=object(outbound.streamSettings)?outbound.streamSettings.network:null;
+        let transport=object(outbound.streamSettings)?(outbound.streamSettings.network ?? outbound.streamSettings.method):null;
         transport=transport==null?'UNSPECIFIED':index(['tcp','raw','grpc','ws','xhttp','splithttp','httpupgrade','http','h2','quic','kcp'],transport)>=0?transport:'OTHER';
         unique(item.proxy_transports,transport);
     }
