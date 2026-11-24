@@ -211,7 +211,8 @@ export function open_protocol(root) {
         let monitor=m.format=='HG_OWNER_MONITOR_V3';
         let wan=m.format=='HG_OWNER_WAN_V4';
         need(!wan || (m.baseline_commit=='1fc822c3bddc1021a1d641c7d7cce71fab7332b8' &&
-            m.parent?.format=='HG_OWNER_MONITOR_V3' && m.profile=='VM_ONLY' && m.production_apply==false),'PACKAGE_WAN_BASELINE');
+            m.parent?.format=='HG_OWNER_MONITOR_V3' && !m.source_fixture &&
+            (m.profile=='VM_ONLY' || m.parent.archive_sha256=='a9f86d3d972c2c8ec9b5f531d9660eb97d0690342da5eed3c2f2cc6d0ad36a65')),'PACKAGE_WAN_BASELINE');
         need(!monitor || (m.baseline_commit=='62b5c4a9f25bc657fa1456eeacdfdc9039648cae' &&
             m.parent?.format=='HG_OWNER_UPDATE_V2'),'PACKAGE_MONITOR_BASELINE');
         let owner=m.profile=='OWNER_MANUAL' && m.production_apply==true && m.source_fixture==false;
@@ -292,10 +293,12 @@ export function open_protocol(root) {
             let approval=strict_json(read(kit+'/acceptance.json',0600,262144),'PACKAGE_APPROVAL');
             need(!monitor || (approval.report?.delivery=='monitor' && approval.report.package_format=='HG_OWNER_MONITOR_V3' &&
                 approval.report.baseline_commit=='62b5c4a9f25bc657fa1456eeacdfdc9039648cae'),'PACKAGE_MONITOR_APPROVAL');
+            need(!wan || (approval.report?.delivery=='wan' && approval.report.package_format==m.format &&
+                approval.report.baseline_commit==m.baseline_commit),'PACKAGE_WAN_APPROVAL');
             need(approval.format=='HG_OWNER_SERIES_ACCEPTANCE_V1' && approval.commit==m.source_commit &&
                 approval.ci_head==m.source_commit && approval.ci_conclusion=='success' &&
                 approval.review_head==m.source_commit && type(approval.review_blockers)=='int' && approval.review_blockers==0 &&
-                approval.report?.commit==m.source_commit && approval.report.scenario==(monitor?'owner-monitor':'owner-series') &&
+                approval.report?.commit==m.source_commit && approval.report.scenario==(wan?'owner-wan':monitor?'owner-monitor':'owner-series') &&
                 approval.report.status=='PASS' && approval.report.failed==0,'PACKAGE_APPROVAL');
         }
         return m;

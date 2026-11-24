@@ -27,6 +27,7 @@ MONITOR_ALLOWED = {'usr/bin/gateway'} | {'usr/lib/home-gateway/' + name for name
     ('health.sh', 'network.sh', 'vpn.sh', 'incidents.uc', 'notifications.uc', 'telegram-poller.uc', 'torrent.sh')}
 WAN_FORMAT = 'HG_OWNER_WAN_V4'
 WAN_BASELINE = '1fc822c3bddc1021a1d641c7d7cce71fab7332b8'
+WAN_PARENT_ARCHIVE = 'a9f86d3d972c2c8ec9b5f531d9660eb97d0690342da5eed3c2f2cc6d0ad36a65'
 WAN_ALLOWED = {'usr/lib/home-gateway/' + name for name in
                ('network.sh', 'health.sh', 'vpn.sh', 'torrent.sh')}
 
@@ -65,9 +66,9 @@ def validate_acceptance(raw, commit, repo, delivery='observer'):
             not isinstance(a.get('ci_url'), str) or not re.fullmatch(
                 r'https://github.com/bsekinaev/cudy-home-gateway/actions/runs/[0-9]+', a['ci_url'])):
         raise ValueError('OWNER_ACCEPTANCE_CI_REVIEW_SOURCE')
-    if delivery not in ('observer', 'monitor'):
+    if delivery not in ('observer', 'monitor', 'wan'):
         raise ValueError('SERIES_DELIVERY')
-    scenario = 'owner-monitor' if delivery == 'monitor' else 'owner-series'
+    scenario = {'observer': 'owner-series', 'monitor': 'owner-monitor', 'wan': 'owner-wan'}[delivery]
     guest = git(repo, 'show', commit + ':scripts/openwrt/guest-owner-series.sh').decode()
     for profile in ('MONITOR', 'OBSERVER', 'WAN', 'BASELINED'):
         pattern = r'^# HGVM_' + profile + r'_BEGIN\n(.*?)^# HGVM_' + profile + r'_END\n'
@@ -105,6 +106,9 @@ def validate_acceptance(raw, commit, repo, delivery='observer'):
     if delivery == 'monitor' and (r.get('delivery') != 'monitor' or r.get('package_format') != MONITOR_FORMAT or
                                   r.get('baseline_commit') != MONITOR_BASELINE):
         raise ValueError('OWNER_ACCEPTANCE_MONITOR_REQUIRED')
+    if delivery == 'wan' and (r.get('delivery') != 'wan' or r.get('package_format') != WAN_FORMAT or
+                              r.get('baseline_commit') != WAN_BASELINE):
+        raise ValueError('OWNER_ACCEPTANCE_WAN_REQUIRED')
     return a
 
 
@@ -206,9 +210,9 @@ def _core(m, profile):
             not _commit(m['baseline_commit'])):
         raise ValueError('SERIES_MANIFEST')
     if m['format'] == WAN_FORMAT:
-        # The new format remains VM-only until its native acceptance exists.
-        if (profile != 'vm' or m['baseline_commit'] != WAN_BASELINE or
-                not isinstance(m['parent'], dict) or m['parent'].get('format') != MONITOR_FORMAT):
+        if (m['source_fixture'] or m['baseline_commit'] != WAN_BASELINE or
+                not isinstance(m['parent'], dict) or m['parent'].get('format') != MONITOR_FORMAT or
+                (profile == 'owner' and m['parent'].get('archive_sha256') != WAN_PARENT_ARCHIVE)):
             raise ValueError('SERIES_WAN_BASELINE_OR_PROFILE')
         return
     if not isinstance(m['parent'], dict) or m['parent'].get('format') not in ('HG_OWNER_UPDATE_V1', 'HG_OWNER_UPDATE_V2'):
@@ -369,7 +373,7 @@ def validate_series(raw, pin, profile, repo):
         raise ValueError('SERIES_SOURCE_LINEAGE')
     if profile == 'owner':
         validate_acceptance(files['acceptance.json'][1], m['source_commit'], repo,
-                            'monitor' if m['format'] == MONITOR_FORMAT else 'observer')
+                            {MONITOR_FORMAT: 'monitor', WAN_FORMAT: 'wan'}.get(m['format'], 'observer'))
     return {'manifest': m, 'manifest_sha256': digest(files['manifest.json'][1]),
             'archive_sha256': pin, 'files': files}
 
@@ -378,8 +382,6 @@ def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=Fals
     _vm_only(profile)
     if delivery not in ('observer', 'monitor', 'wan'):
         raise ValueError('SERIES_DELIVERY')
-    if delivery == 'wan' and profile != 'vm':
-        raise ValueError('SERIES_WAN_ACCEPTANCE_PENDING')
     package_format = {'observer': 'HG_OWNER_UPDATE_V2', 'monitor': MONITOR_FORMAT, 'wan': WAN_FORMAT}[delivery]
     if type(source_fixture) is not bool:
         raise ValueError('SERIES_FIXTURE_FLAG')
@@ -401,7 +403,9 @@ def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=Fals
     if delivery == 'monitor' and (baseline != MONITOR_BASELINE or
             parent['manifest']['format'] != 'HG_OWNER_UPDATE_V2'):
         raise ValueError('SERIES_MONITOR_BASELINE')
-    if delivery == 'wan' and (baseline != WAN_BASELINE or parent['manifest']['format'] != MONITOR_FORMAT):
+    if delivery == 'wan' and (source_fixture or parent['manifest']['source_fixture'] or
+                              baseline != WAN_BASELINE or parent['manifest']['format'] != MONITOR_FORMAT or
+                              (profile == 'owner' and parent_pin != WAN_PARENT_ARCHIVE)):
         raise ValueError('SERIES_WAN_BASELINE_OR_PROFILE')
     if delivery == 'observer' and parent['manifest']['format'] not in ('HG_OWNER_UPDATE_V1', 'HG_OWNER_UPDATE_V2'):
         raise ValueError('SERIES_PARENT_FORMAT')

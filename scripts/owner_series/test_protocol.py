@@ -392,10 +392,11 @@ class ProtocolTests(unittest.TestCase):
         kit, manifest = self.monitor_fixture(changed_path)
         parent_path = self.root / kit.lstrip('/') / 'parent.json'
         previous = json.loads(parent_path.read_bytes())
-        previous.update(format='HG_OWNER_MONITOR_V3', source_commit='1fc822c3bddc1021a1d641c7d7cce71fab7332b8')
+        previous.update(format='HG_OWNER_MONITOR_V3', source_commit='1fc822c3bddc1021a1d641c7d7cce71fab7332b8',
+                        source_fixture=False)
         raw = json.dumps(previous).encode()
         self.put(kit.lstrip('/') + '/parent.json', raw)
-        manifest.update(format='HG_OWNER_WAN_V4', baseline_commit=previous['source_commit'])
+        manifest.update(format='HG_OWNER_WAN_V4', baseline_commit=previous['source_commit'], source_fixture=False)
         manifest['parent'].update(format=previous['format'], source_commit=previous['source_commit'],
                                   manifest_sha256=hashlib.sha256(raw).hexdigest())
         next(f for f in manifest['files'] if f['path']=='parent.json').update(size=len(raw), sha256=hashlib.sha256(raw).hexdigest())
