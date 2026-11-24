@@ -66,12 +66,18 @@ let up=wan && wan.up===true?'UP':wan && wan.up===false?'DOWN':'UNKNOWN';
 let device=wan?wan.l3_device:null;
 let route='UNKNOWN',gateway='UNKNOWN';
 if(valid_device(device)) {
-    let raw=read_command('timeout -k 1 3 ip -4 route show default dev '+device);
+    // iproute2 omits dev from its display when a device filter is supplied.
+    // Read main-table defaults without that filter, then match the device here.
+    let raw=read_command('timeout -k 1 3 ip -4 route show default');
     if(raw!=null) {
         route='MISSING';
         for(let line in split(trim(raw),'\n')) {
             let tokens=split(trim(line),/\s+/),dev_index=index(tokens,'dev');
-            if(tokens[0]!='default' || dev_index<0 || tokens[dev_index+1]!=device) continue;
+            if(index(['default','0.0.0.0/0'],tokens[0])<0) continue;
+            if(dev_index<0 || !valid_device(tokens[dev_index+1])) {
+                if(route!='PRESENT') route='UNKNOWN';continue;
+            }
+            if(tokens[dev_index+1]!=device) continue;
             if(index(tokens,'linkdown')>=0 || index(tokens,'unreachable')>=0) continue;
             let via_index=index(tokens,'via');
             if(via_index>=0 && ipv4(tokens[via_index+1])==null) {

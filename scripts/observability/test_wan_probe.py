@@ -13,7 +13,7 @@ SOURCE='1'*40
 
 @unittest.skipUnless(os.name!='nt' and shutil.which('ucode'),'POSIX ucode runtime required; Windows transport tested separately')
 class WanProbeTests(unittest.TestCase):
-    def run_probe(self, wan=None, lan=None, route='default via 192.0.2.1 dev eth1', raw=None):
+    def run_probe(self, wan=None, lan=None, route='default via 192.0.2.1 dev eth1', raw=None, iproute2=False):
         if wan is None: wan={'up':True,'proto':'dhcp','l3_device':'eth1','ipv4-address':[{'address':'192.0.2.2','mask':24}],'dns-server':['192.0.2.1'],'password':'DO_NOT_DISCLOSE'}
         if lan is None: lan={'up':True,'ipv4-address':[{'address':'192.168.1.1','mask':24}]}
         with tempfile.TemporaryDirectory() as tmp:
@@ -24,9 +24,9 @@ class WanProbeTests(unittest.TestCase):
             (base/'calls').write_text('')
             for tool in ('ubus','ip'):
                 path=base/tool
-                path.write_text('#!/usr/bin/env python3\nimport os,sys\nfrom pathlib import Path\nb=Path(os.environ["HG_WAN_TEST"])\nwith (b/"calls").open("a") as f:f.write(" ".join(sys.argv)+"\\n")\nname="route" if Path(sys.argv[0]).name=="ip" else "lan" if "network.interface.lan" in sys.argv else "wan"\nprint((b/name).read_text())\n')
+                path.write_text('#!/usr/bin/env python3\nimport os,sys\nfrom pathlib import Path\nb=Path(os.environ["HG_WAN_TEST"])\nwith (b/"calls").open("a") as f:f.write(" ".join(sys.argv)+"\\n")\nname="route" if Path(sys.argv[0]).name=="ip" else "lan" if "network.interface.lan" in sys.argv else "wan"\nraw=(b/name).read_text()\nif name=="route" and os.environ.get("HG_IPROUTE2")=="1" and "dev" in sys.argv:raw=raw.replace(" dev "+sys.argv[sys.argv.index("dev")+1],"")\nprint(raw)\n')
                 path.chmod(0o755)
-            env=dict(os.environ,PATH=tmp+os.pathsep+os.environ['PATH'],HG_WAN_TEST=tmp)
+            env=dict(os.environ,PATH=tmp+os.pathsep+os.environ['PATH'],HG_WAN_TEST=tmp,HG_IPROUTE2='1' if iproute2 else '0')
             r=subprocess.run(['ucode',str(COLLECTOR),SOURCE],env=env,text=True,capture_output=True,timeout=10)
             self.assertEqual(r.returncode,0,r.stderr)
             lines=r.stdout.splitlines()
@@ -49,6 +49,23 @@ class WanProbeTests(unittest.TestCase):
         self.assertEqual(r['subnet_overlap'],'NO')
         self.assertEqual(r['dns_state'],'UNVERIFIED')
         self.assertEqual(r['internet_state'],'UNVERIFIED')
+
+    def test_iproute2_filtered_output_omits_device(self):
+        # iproute2 iproute.c suppresses RTA_OIF when filter.oifmask == -1.
+        # BusyBox prints dev even with that filter; both must be supported.
+        r=self.run_probe(iproute2=True)
+        self.assertEqual(r['ipv4_route_state'],'PRESENT')
+        self.assertEqual(r['gateway_state'],'PRESENT')
+        self.assertEqual(r['ipv4_local_path_state'],'READY')
+
+    def test_numeric_default_destination_supported(self):
+        r=self.run_probe(route='0.0.0.0/0 via 192.0.2.1 dev eth1')
+        self.assertEqual(r['ipv4_route_state'],'PRESENT')
+
+    def test_unattributable_default_is_unknown_not_missing(self):
+        r=self.run_probe(route='default via 192.0.2.1')
+        self.assertEqual(r['ipv4_route_state'],'UNKNOWN')
+        self.assertNotEqual(r['ipv4_local_path_state'],'READY')
 
     def test_static_private_address_is_not_failure(self):
         r=self.run_probe(wan={'up':True,'proto':'static','l3_device':'eth1','ipv4-address':[{'address':'10.0.0.2','mask':24}]},route='default via 10.0.0.1 dev eth1')
