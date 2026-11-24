@@ -1,0 +1,75 @@
+﻿# Owner-run call troubleshooting. Never invokes an updater or changes network settings.
+[CmdletBinding()]
+param(
+    [string]$SessionFile=(Join-Path $env:USERPROFILE 'CUDY-Update-20261121-1fc822c/owner-session.json'),
+    [string]$ReportFile=(Join-Path $env:USERPROFILE ('CUDY-Calls-Readiness-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'.txt'))
+)
+Set-StrictMode -Version 2
+$ErrorActionPreference='Stop'
+$expectedSource='@@SOURCE@@'
+$expectedScript='@@SCRIPT_SHA@@'
+$session=Get-Content -LiteralPath $SessionFile -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($session.format -cne 'HG_OWNER_SERIES_SESSION_V1' -or
+    $session.target -cnotmatch '^root@[A-Za-z0-9][A-Za-z0-9.-]{0,126}$' -or
+    ($session.port -isnot [int] -and $session.port -isnot [long]) -or
+    $session.port -lt 1 -or $session.port -gt 65535) {
+    throw 'Unsupported connection identity. No SSH command was run.'
+}
+$source=([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'SOURCE.txt'))).Trim()
+if ($source -cne $expectedSource -or $source -cnotmatch '^[a-f0-9]{40}$') { throw 'Package source identity mismatch.' }
+$utf8=New-Object Text.UTF8Encoding($false)
+$scriptBytes=[IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'router-call-probe.sh'))
+$hasher=[Security.Cryptography.SHA256]::Create()
+try { $pin=([BitConverter]::ToString($hasher.ComputeHash($scriptBytes))).Replace('-','').ToLowerInvariant() }
+finally { $hasher.Dispose() }
+if ($pin -cne $expectedScript) { throw 'Probe checksum mismatch. No SSH command was run.' }
+$text=$utf8.GetString($scriptBytes).Replace("`r`n","`n")
+Write-Host 'Проверяю параметры звонков Telegram через шлюз. Настройки сети не меняются.'
+$previousOutputEncoding=$OutputEncoding
+try {
+    $OutputEncoding=$utf8
+    $report=@($text | & ssh -T -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=6 -p $session.port $session.target 'timeout -k 1 60 sh -s --')
+    $sshExit=$LASTEXITCODE
+} finally { $OutputEncoding=$previousOutputEncoding }
+if ($sshExit -ne 0) { Write-Error ('Call diagnostic SSH failed: '+$sshExit); exit $sshExit }
+if ($report.Count -ne 2 -or $report[0] -cne 'HG_CALL_READINESS_V1') { throw 'Incomplete or unexpected call response.' }
+$json=[string]$report[1]
+if ($utf8.GetByteCount($json) -gt 8192) { throw 'Oversized call response.' }
+$data=ConvertFrom-Json -InputObject $json
+$states=@{
+ passwall_enabled_state=@('ENABLED','DISABLED','UNKNOWN')
+ client_proxy_state=@('ENABLED','DISABLED','UNKNOWN')
+ udp_exclusion_mode=@('EMPTY','ALL','PARTIAL','DISABLED','UNKNOWN')
+ udp_redirect_mode=@('EMPTY','ALL','PARTIAL','DISABLED','UNKNOWN')
+ udp_drop_mode=@('EMPTY','ALL','PARTIAL','DISABLED','UNKNOWN')
+ udp_proxy_drop_mode=@('EMPTY','ALL','PARTIAL','DISABLED','UNKNOWN')
+ redmi_enabled_state=@('ENABLED','DISABLED','UNKNOWN')
+ redmi_udp_exclusion_mode=@('EMPTY','ALL','PARTIAL','DISABLED','UNKNOWN')
+ redmi_udp_redirect_mode=@('EMPTY','ALL','PARTIAL','DISABLED','UNKNOWN')
+ firewall_state=@('READABLE','UNKNOWN')
+ asata_udp_direct_rule=@('PRESENT','ABSENT','UNKNOWN')
+ call_connectivity=@('UNVERIFIED')
+}
+function Check-Keys($value,$names) {
+ if ($null -eq $value -or (@($value.PSObject.Properties.Name | Sort-Object) -join ',') -cne (@($names | Sort-Object) -join ',')) { throw 'Unexpected diagnostic fields.' }
+}
+function Check-Count($value,$allowNull) {
+ if ($allowNull -and $null -eq $value) { return }
+ if (($value -isnot [int] -and $value -isnot [long]) -or $value -lt 0 -or $value -gt 65536) { throw 'Invalid diagnostic count.' }
+}
+Check-Keys $data (@('schema_version','source_commit','configs','configs_truncated','udp_match_rules','tproxy_rules')+@($states.Keys))
+if (($data.schema_version -isnot [int] -and $data.schema_version -isnot [long]) -or $data.schema_version -ne 1 -or $data.source_commit -cne $source) { throw 'Call source or schema mismatch.' }
+foreach ($name in $states.Keys) { if ($data.$name -isnot [string] -or $data.$name -cnotin $states[$name]) { throw 'Invalid diagnostic state.' } }
+if ($data.configs_truncated -isnot [bool] -or $data.configs -isnot [Array] -or $data.configs.Count -gt 8) { throw 'Invalid config inventory.' }
+foreach ($name in @('udp_match_rules','tproxy_rules')) { Check-Count $data.$name ($data.firewall_state -ceq 'UNKNOWN') }
+foreach ($cfg in $data.configs) {
+ Check-Keys $cfg @('role','config_state','udp_transparent_inbounds','udp_enabled_socks_inbounds','proxy_protocols','proxy_transports','broad_udp_direct_rule','outbound_count')
+ if ($cfg.role -cnotin @('MAIN_SOCKS','REDMI','GLOBAL','OTHER') -or $cfg.config_state -cnotin @('READABLE','UNREADABLE','UNSAFE') -or $cfg.broad_udp_direct_rule -cnotin @('PRESENT','ABSENT','UNKNOWN')) { throw 'Invalid config state.' }
+ foreach ($name in @('udp_transparent_inbounds','udp_enabled_socks_inbounds','outbound_count')) { Check-Count $cfg.$name ($cfg.config_state -cne 'READABLE') }
+ if ($cfg.proxy_protocols -isnot [Array] -or $cfg.proxy_transports -isnot [Array] -or $cfg.proxy_protocols.Count -gt 10 -or $cfg.proxy_transports.Count -gt 14) { throw 'Invalid proxy inventory.' }
+ foreach ($value in $cfg.proxy_protocols) { if ($value -isnot [string] -or $value -cnotin @('vless','vmess','trojan','socks','freedom','blackhole','dns','shadowsocks','wireguard','OTHER')) { throw 'Invalid protocol.' } }
+ foreach ($value in $cfg.proxy_transports) { if ($value -isnot [string] -or $value -cnotin @('tcp','raw','grpc','ws','xhttp','splithttp','httpupgrade','http','h2','quic','kcp','UNSPECIFIED','OTHER')) { throw 'Invalid transport.' } }
+}
+[IO.File]::WriteAllLines($ReportFile,[string[]]$report,$utf8)
+Write-Host 'Отчёт готов. Фактическое прохождение звонка этим чтением настроек не проверяется.'
+Write-Host ('REPORT='+$ReportFile)
