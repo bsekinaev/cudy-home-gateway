@@ -43,3 +43,26 @@ passed. These tests do not establish external VPN or call availability.
 The previous WAN-only commit also passed the complete local repository suite and
 a real iproute2 test with an isolated loopback route change (network disabled,
 synthetic egress responses).
+
+Additional isolated real-iproute2 check: static default with gateway, then a
+device-only default with synthetic PPPoE status, then removal of the default.
+Observed OK, OK/fresh probe, DEGRADED/UNKNOWN respectively. This checks route
+semantics without a real PPP negotiation, ISP or external traffic.
+
+## Delivery contract for the next milestone
+
+The existing monitor V3 package admits only `62b5c4a` with a V2 parent, so it
+cannot be reused for the installed `1fc822c`. Introduce an explicitly separate
+owner WAN format rather than widening V3. The immediate parent must be the
+accepted immutable monitor archive and its exact source/manifest; keep the
+existing 20 runtime and 14 control paths. Allow changes only to network.sh,
+health.sh, vpn.sh, torrent.sh for this milestone. All previous V1/V2/V3 admissions,
+historical receipts and manifest validation must continue to work as before.
+
+Add a source-bound native scenario that builds and installs the exact V3
+baseline, applies the actual WAN candidate, verifies it, rolls back to V3,
+checks state preservation and baseline bytes, exercises interruption/recovery
+and reboot. A distinct acceptance report must bind the WAN format, installed
+baseline, source and executed check inventory. Re-run old format scenarios.
+Only after exact-source full CI and review, build an owner package and verify
+the archive pins. No installer from the previous baseline is suitable.
