@@ -25,6 +25,10 @@ MONITOR_FORMAT = 'HG_OWNER_MONITOR_V3'
 MONITOR_BASELINE = '62b5c4a9f25bc657fa1456eeacdfdc9039648cae'
 MONITOR_ALLOWED = {'usr/bin/gateway'} | {'usr/lib/home-gateway/' + name for name in
     ('health.sh', 'network.sh', 'vpn.sh', 'incidents.uc', 'notifications.uc', 'telegram-poller.uc', 'torrent.sh')}
+WAN_FORMAT = 'HG_OWNER_WAN_V4'
+WAN_BASELINE = '1fc822c3bddc1021a1d641c7d7cce71fab7332b8'
+WAN_ALLOWED = {'usr/lib/home-gateway/' + name for name in
+               ('network.sh', 'health.sh', 'vpn.sh', 'torrent.sh')}
 
 
 def _allowed(format):
@@ -32,6 +36,8 @@ def _allowed(format):
         return ALLOWED
     if format == MONITOR_FORMAT:
         return MONITOR_ALLOWED
+    if format == WAN_FORMAT:
+        return WAN_ALLOWED
     raise ValueError('SERIES_FORMAT')
 
 
@@ -191,13 +197,19 @@ def _parent(raw, pin, profile, repo):
 
 
 def _core(m, profile):
-    if (not isinstance(m, dict) or set(m) != KEYS or m['format'] not in ('HG_OWNER_UPDATE_V2', MONITOR_FORMAT) or
+    if (not isinstance(m, dict) or set(m) != KEYS or m['format'] not in ('HG_OWNER_UPDATE_V2', MONITOR_FORMAT, WAN_FORMAT) or
             m['profile'] != ('OWNER_MANUAL' if profile == 'owner' else 'VM_ONLY') or
             m['production_apply'] is not (profile == 'owner') or
             (profile == 'owner' and m['source_fixture'] is not False) or
             type(m['source_fixture']) is not bool or not _commit(m['source_commit']) or
             not _commit(m['baseline_commit'])):
         raise ValueError('SERIES_MANIFEST')
+    if m['format'] == WAN_FORMAT:
+        # The new format remains VM-only until its native acceptance exists.
+        if (profile != 'vm' or m['baseline_commit'] != WAN_BASELINE or
+                not isinstance(m['parent'], dict) or m['parent'].get('format') != MONITOR_FORMAT):
+            raise ValueError('SERIES_WAN_BASELINE_OR_PROFILE')
+        return
     if not isinstance(m['parent'], dict) or m['parent'].get('format') not in ('HG_OWNER_UPDATE_V1', 'HG_OWNER_UPDATE_V2'):
         raise ValueError('SERIES_PARENT_FORMAT')
     if m['format'] == MONITOR_FORMAT and (m['baseline_commit'] != MONITOR_BASELINE or
@@ -260,7 +272,7 @@ def _prior_manifest(m, repo, bootstrap, profile):
     link = m['parent']
     if (not isinstance(link, dict) or
             set(link) != {'format', 'source_commit', 'manifest_sha256', 'archive_sha256'} or
-            link['format'] not in ('HG_OWNER_UPDATE_V1', 'HG_OWNER_UPDATE_V2') or
+            link['format'] not in ((MONITOR_FORMAT,) if m['format'] == WAN_FORMAT else ('HG_OWNER_UPDATE_V1', 'HG_OWNER_UPDATE_V2')) or
             link['source_commit'] != m['baseline_commit'] or
             any(not isinstance(link[p], str) or not re.fullmatch(r'[0-9a-f]{64}', link[p])
                 for p in ('manifest_sha256', 'archive_sha256'))):
@@ -363,9 +375,11 @@ def validate_series(raw, pin, profile, repo):
 
 def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=False, acceptance=None, delivery='observer'):
     _vm_only(profile)
-    if delivery not in ('observer', 'monitor'):
+    if delivery not in ('observer', 'monitor', 'wan'):
         raise ValueError('SERIES_DELIVERY')
-    package_format = MONITOR_FORMAT if delivery == 'monitor' else 'HG_OWNER_UPDATE_V2'
+    if delivery == 'wan' and profile != 'vm':
+        raise ValueError('SERIES_WAN_ACCEPTANCE_PENDING')
+    package_format = {'observer': 'HG_OWNER_UPDATE_V2', 'monitor': MONITOR_FORMAT, 'wan': WAN_FORMAT}[delivery]
     if type(source_fixture) is not bool:
         raise ValueError('SERIES_FIXTURE_FLAG')
     if profile == 'owner' and source_fixture:
@@ -386,6 +400,10 @@ def content(repo, ref, parent_raw, parent_pin, profile='vm', source_fixture=Fals
     if delivery == 'monitor' and (baseline != MONITOR_BASELINE or
             parent['manifest']['format'] != 'HG_OWNER_UPDATE_V2'):
         raise ValueError('SERIES_MONITOR_BASELINE')
+    if delivery == 'wan' and (baseline != WAN_BASELINE or parent['manifest']['format'] != MONITOR_FORMAT):
+        raise ValueError('SERIES_WAN_BASELINE_OR_PROFILE')
+    if delivery == 'observer' and parent['manifest']['format'] not in ('HG_OWNER_UPDATE_V1', 'HG_OWNER_UPDATE_V2'):
+        raise ValueError('SERIES_PARENT_FORMAT')
     runtime = {'baseline': _runtime(repo, baseline), 'candidate': _runtime(repo, source)}
     inventories = {name: _inventory(value) for name, value in runtime.items()}
     changed = [p for p in PATHS if inventories['baseline'][p] != inventories['candidate'][p]]
@@ -465,7 +483,7 @@ if __name__ == '__main__':
     parser.add_argument('--parent-sha256', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--profile', choices=['vm', 'owner'], default='vm')
-    parser.add_argument('--delivery', choices=['observer', 'monitor'], default='observer')
+    parser.add_argument('--delivery', choices=['observer', 'monitor', 'wan'], default='observer')
     parser.add_argument('--source-fixture', action='store_true')
     parser.add_argument('--acceptance-report', type=Path)
     args = parser.parse_args()

@@ -204,11 +204,14 @@ export function open_protocol(root) {
         need(digest(kit+'/manifest.json',0600,65536)==input.manifest_sha256,'PACKAGE_MANIFEST_PIN');
         let m=strict_json(read(kit+'/manifest.json',0600,65536),'PACKAGE_JSON');
         need(same_keys(m,['format','profile','production_apply','source_commit','baseline_commit','source_fixture',
-            'parent','bootstrap','inventories','changed','controls','files']) && index(['HG_OWNER_UPDATE_V2','HG_OWNER_MONITOR_V3'],m.format)>=0 &&
+            'parent','bootstrap','inventories','changed','controls','files']) && index(['HG_OWNER_UPDATE_V2','HG_OWNER_MONITOR_V3','HG_OWNER_WAN_V4'],m.format)>=0 &&
             type(m.source_commit)=='string' && match(m.source_commit,/^[0-9a-f]{40}$/) &&
             type(m.baseline_commit)=='string' && match(m.baseline_commit,/^[0-9a-f]{40}$/) &&
             type(m.source_fixture)=='bool','PACKAGE_FORMAT');
         let monitor=m.format=='HG_OWNER_MONITOR_V3';
+        let wan=m.format=='HG_OWNER_WAN_V4';
+        need(!wan || (m.baseline_commit=='1fc822c3bddc1021a1d641c7d7cce71fab7332b8' &&
+            m.parent?.format=='HG_OWNER_MONITOR_V3' && m.profile=='VM_ONLY' && m.production_apply==false),'PACKAGE_WAN_BASELINE');
         need(!monitor || (m.baseline_commit=='62b5c4a9f25bc657fa1456eeacdfdc9039648cae' &&
             m.parent?.format=='HG_OWNER_UPDATE_V2'),'PACKAGE_MONITOR_BASELINE');
         let owner=m.profile=='OWNER_MANUAL' && m.production_apply==true && m.source_fixture==false;
@@ -252,6 +255,7 @@ export function open_protocol(root) {
         }
         let allowed=map(['telegram-poller.uc','dns.sh','health.sh','redmi.sh','status.sh'],n=>'usr/lib/home-gateway/'+n);
         if(monitor)allowed=['usr/bin/gateway',...map(['health.sh','network.sh','vpn.sh','incidents.uc','notifications.uc','telegram-poller.uc','torrent.sh'],n=>'usr/lib/home-gateway/'+n)];
+        if(wan)allowed=map(['network.sh','health.sh','vpn.sh','torrent.sh'],n=>'usr/lib/home-gateway/'+n);
         need(type(m.changed)=='array' && length(changed)>0 && join('\n',m.changed)==join('\n',changed) &&
             length(filter(changed,p=>index(allowed,p)>=0))==length(changed),'PACKAGE_DELTA');
         for(let name in ['baseline','candidate']) {
@@ -267,7 +271,7 @@ export function open_protocol(root) {
             hash(m.parent.archive_sha256) && hash(m.parent.manifest_sha256) &&
             pins[kit+'/parent.json']==m.parent.manifest_sha256 && type(previous)=='object' &&
             m.parent.source_commit==m.baseline_commit && previous.source_commit==m.baseline_commit &&
-            m.parent.format==previous.format && index(['HG_OWNER_UPDATE_V1','HG_OWNER_UPDATE_V2'],previous.format)>=0 &&
+            m.parent.format==previous.format && index(wan?['HG_OWNER_MONITOR_V3']:['HG_OWNER_UPDATE_V1','HG_OWNER_UPDATE_V2'],previous.format)>=0 &&
             same_keys(previous.inventories?.candidate,PATHS) && same_keys(previous.controls,keys(CONTROL_PINS)),'PACKAGE_PARENT');
         for(let path in PATHS)need(previous.inventories.candidate[path]==m.inventories.baseline[path],'PACKAGE_PARENT');
         for(let path in keys(CONTROL_PINS))need(previous.controls[path]==CONTROL_PINS[path],'PACKAGE_PARENT');

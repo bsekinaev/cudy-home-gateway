@@ -319,7 +319,7 @@ class ProtocolTests(unittest.TestCase):
         self.put(path.name, json.dumps(record).encode())
         self.assert_refused('platform', 'VM_ONLY', 'BUSYBOX')
 
-    def package_fixture(self):
+    def package_fixture(self, changed_path='usr/lib/home-gateway/telegram-poller.uc'):
         kit = '/tmp/hg-series-test-kit'
         files = {}
         baseline = dict(self.inventory)
@@ -327,7 +327,7 @@ class ProtocolTests(unittest.TestCase):
         for name in ('baseline', 'candidate'):
             for path in PATHS:
                 data = (self.root / path).read_bytes()
-                if name == 'candidate' and path.endswith('/telegram-poller.uc'):
+                if name == 'candidate' and path == changed_path:
                     data += b'// UI fixture\n'
                     candidate[path] = hashlib.sha256(data).hexdigest()
                 files[name + '/' + path] = (0o755 if path in PATHS[:3] else 0o644, data)
@@ -344,7 +344,7 @@ class ProtocolTests(unittest.TestCase):
         manifest = dict(format='HG_OWNER_UPDATE_V2', profile='VM_ONLY', production_apply=False,
                         source_commit='1' * 40, baseline_commit=previous['source_commit'], source_fixture=True,
                         inventories=dict(baseline=baseline, candidate=candidate),
-                        changed=['usr/lib/home-gateway/telegram-poller.uc'], controls=controls,
+                        changed=[changed_path], controls=controls,
                         parent=dict(format=previous['format'], source_commit=previous['source_commit'],
                             manifest_sha256=hashlib.sha256(parent).hexdigest(), archive_sha256=hashlib.sha256(files['bootstrap.tar.gz'][1]).hexdigest()),
                         bootstrap=dict(archive_sha256=hashlib.sha256(files['bootstrap.tar.gz'][1]).hexdigest(),
@@ -360,8 +360,8 @@ class ProtocolTests(unittest.TestCase):
         self.put(kit.lstrip('/') + '/manifest.json', raw)
         return self.run_protocol('package', dict(kit=kit, manifest_sha256=hashlib.sha256(raw).hexdigest()))
 
-    def monitor_fixture(self):
-        kit, manifest = self.package_fixture()
+    def monitor_fixture(self, changed_path='usr/lib/home-gateway/telegram-poller.uc'):
+        kit, manifest = self.package_fixture(changed_path)
         previous = json.loads((self.root / kit.lstrip('/') / 'parent.json').read_bytes())
         previous.update(format='HG_OWNER_UPDATE_V2', source_commit='62b5c4a9f25bc657fa1456eeacdfdc9039648cae',
                         profile='VM_ONLY', production_apply=False, source_fixture=True,
@@ -387,6 +387,33 @@ class ProtocolTests(unittest.TestCase):
         manifest['format']='HG_OWNER_MONITOR_V3'
         manifest['controls'][next(iter(manifest['controls']))]='0'*64
         self.assertIn('PACKAGE_CONTROLS', self.inspect_package(kit, manifest).stderr)
+
+    def wan_fixture(self, changed_path='usr/lib/home-gateway/network.sh'):
+        kit, manifest = self.monitor_fixture(changed_path)
+        parent_path = self.root / kit.lstrip('/') / 'parent.json'
+        previous = json.loads(parent_path.read_bytes())
+        previous.update(format='HG_OWNER_MONITOR_V3', source_commit='1fc822c3bddc1021a1d641c7d7cce71fab7332b8')
+        raw = json.dumps(previous).encode()
+        self.put(kit.lstrip('/') + '/parent.json', raw)
+        manifest.update(format='HG_OWNER_WAN_V4', baseline_commit=previous['source_commit'])
+        manifest['parent'].update(format=previous['format'], source_commit=previous['source_commit'],
+                                  manifest_sha256=hashlib.sha256(raw).hexdigest())
+        next(f for f in manifest['files'] if f['path']=='parent.json').update(size=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        return kit, manifest
+
+    def test_wan_v3_transition_is_vm_only(self):
+        kit, manifest = self.wan_fixture()
+        result = self.inspect_package(kit, manifest)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest['baseline_commit']='2'*40
+        self.assertIn('PACKAGE_WAN_BASELINE', self.inspect_package(kit, manifest).stderr)
+        manifest['baseline_commit']='1fc822c3bddc1021a1d641c7d7cce71fab7332b8'
+        manifest.update(profile='OWNER_MANUAL', production_apply=True, source_fixture=False)
+        self.assertIn('PACKAGE_WAN_BASELINE', self.inspect_package(kit, manifest).stderr)
+
+    def test_wan_scope_rejects_unrelated_runtime_change(self):
+        kit, manifest = self.wan_fixture('usr/lib/home-gateway/telegram-poller.uc')
+        self.assertIn('PACKAGE_DELTA', self.inspect_package(kit, manifest).stderr)
 
     def test_package_file_closure_and_parent_identity_are_read_only(self):
         kit, manifest = self.package_fixture()

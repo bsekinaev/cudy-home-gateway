@@ -66,3 +66,11 @@ and reboot. A distinct acceptance report must bind the WAN format, installed
 baseline, source and executed check inventory. Re-run old format scenarios.
 Only after exact-source full CI and review, build an owner package and verify
 the archive pins. No installer from the previous baseline is suitable.
+
+First delivery increment: `HG_OWNER_WAN_V4` is admitted by host builder and
+target protocol only as VM_ONLY, with exact V3 baseline `1fc822c`, four-path
+allowlist and unchanged immutable inventories. OWNER_MANUAL is deliberately
+refused until the new native scenario and owner acceptance contract exist.
+Old V1/V2/V3 scope and parent restrictions are unchanged. The existing Windows
+owner runner does not admit V4. This is development infrastructure, not an
+installable release for CUDY.
