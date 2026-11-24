@@ -35,6 +35,7 @@ hg_network_collect() {
     HG_NETWORK_WAN_PREFIX=''
     HG_NETWORK_WAN_GATEWAY=''
     HG_NETWORK_WAN_ROUTE_STATE='UNKNOWN'
+    HG_NETWORK_PATH_CONTEXT=''
     HG_NETWORK_WAN_CGNAT='unknown'
     HG_NETWORK_DIRECT_STATE='UNKNOWN'
     HG_NETWORK_DIRECT_IPV4=''
@@ -144,7 +145,10 @@ hg_network_collect() {
     wan_boot="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
     wan_context=''
     if [ -n "$wan_boot" ] && command -v sha256sum >/dev/null 2>&1; then
-        wan_context="$(printf '%s\n' "$wan_boot" "$HG_NETWORK_WAN_INTERFACE" "$HG_NETWORK_WAN_DEVICE" "$HG_NETWORK_WAN_PROTO" "$HG_NETWORK_WAN_IPV4" "$HG_NETWORK_WAN_PREFIX" "$wan_route" "$egress_probe_url" "$secondary_probe_url" "$primary_provider" "$secondary_provider" | sha256sum | awk '{print $1}')"
+        HG_NETWORK_PATH_CONTEXT="$(printf '%s\n' "$wan_boot" "$HG_NETWORK_WAN_INTERFACE" "$HG_NETWORK_WAN_DEVICE" "$HG_NETWORK_WAN_PROTO" "$HG_NETWORK_WAN_IPV4" "$HG_NETWORK_WAN_PREFIX" "$wan_route" | sha256sum | awk '{print $1}')"
+        if [ "${#HG_NETWORK_PATH_CONTEXT}" = 64 ]; then
+            wan_context="$(printf '%s\n' "$HG_NETWORK_PATH_CONTEXT" "$egress_probe_url" "$secondary_probe_url" "$primary_provider" "$secondary_provider" | sha256sum | awk '{print $1}')"
+        fi
     fi
 
     now="$(date '+%s' 2>/dev/null || true)"

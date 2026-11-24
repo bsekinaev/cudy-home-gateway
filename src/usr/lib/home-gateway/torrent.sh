@@ -116,11 +116,25 @@ hg_torrent_collect() {
         ''|*[!0-9]*) now='' ;;
     esac
 
+    torrent_cache_context=''
+    torrent_wan_context="${HG_NETWORK_PATH_CONTEXT:-}"
+    case "$HG_TORRENT_PROFILE" in
+        ''|*[!A-Za-z0-9_-]*) ;;
+        *)
+            torrent_config="${HG_MONITOR_GENERATED_DIR:-/tmp/etc/passwall2}/${HG_TORRENT_PROFILE}.json"
+            if [ "${#torrent_wan_context}" = 64 ] && [ -f "$torrent_config" ] && [ ! -L "$torrent_config" ]; then
+                torrent_config_hash="$(sha256sum "$torrent_config" 2>/dev/null | awk '{print $1}')"
+                if [ "${#torrent_config_hash}" = 64 ]; then
+                    torrent_cache_context="$(printf '%s\n' "$HG_NETWORK_PATH_CONTEXT" "$torrent_config_hash" "$HG_TORRENT_PROFILE" "$HG_TORRENT_NODE" "$HG_TORRENT_SOCKS_HOST" "$HG_TORRENT_SOCKS_PORT" "$egress_probe_url" "$secondary_probe_url" "$primary_provider" "$secondary_provider" | sha256sum | awk '{print $1}')"
+                fi
+            fi
+            ;;
+    esac
     cache_checked_at=''
     cache_ipv4=''
     cache_provider=''
     if [ -r "$egress_cache_file" ]; then
-        set -- $(awk 'NR == 1 { print $1, $2, $3; exit }' "$egress_cache_file" 2>/dev/null || true)
+        set -- $(awk 'NR == 1 && NF == 4 { print $1, $2, $3, $4; exit }' "$egress_cache_file" 2>/dev/null || true)
         cache_checked_at="${1:-}"
         cache_ipv4="${2:-}"
         cache_provider="${3:-}"
@@ -128,7 +142,7 @@ hg_torrent_collect() {
         case "$cache_checked_at" in
             ''|*[!0-9]*) cache_checked_at='' ;;
         esac
-        if ! hg_torrent_is_ipv4 "$cache_ipv4"; then
+        if [ -z "$torrent_cache_context" ] || [ "${4:-}" != "$torrent_cache_context" ] || ! hg_torrent_is_ipv4 "$cache_ipv4"; then
             cache_ipv4=''
             cache_provider=''
         fi
@@ -190,8 +204,8 @@ hg_torrent_collect() {
             HG_TORRENT_EGRESS_STATE='OK'
             HG_TORRENT_STATE='OK'
 
-            if [ -n "$now" ]; then
-                printf '%s %s %s\n' "$now" "$torrent_ipv4" "$primary_provider" >"$egress_cache_file" 2>/dev/null || true
+            if [ -n "$now" ] && [ -n "$torrent_cache_context" ]; then
+                printf '%s %s %s %s\n' "$now" "$torrent_ipv4" "$primary_provider" "$torrent_cache_context" >"$egress_cache_file" 2>/dev/null || true
             fi
             return 0
         fi
@@ -214,8 +228,8 @@ hg_torrent_collect() {
                 HG_TORRENT_EGRESS_STATE='OK'
                 HG_TORRENT_STATE='OK'
 
-                if [ -n "$now" ]; then
-                    printf '%s %s %s\n' "$now" "$torrent_ipv4" "$secondary_provider" >"$egress_cache_file" 2>/dev/null || true
+                if [ -n "$now" ] && [ -n "$torrent_cache_context" ]; then
+                    printf '%s %s %s %s\n' "$now" "$torrent_ipv4" "$secondary_provider" "$torrent_cache_context" >"$egress_cache_file" 2>/dev/null || true
                 fi
                 return 0
             fi

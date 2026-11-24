@@ -63,6 +63,11 @@ hg_health_print_json
     def test_clock_not_trusted_from_plausible_date_alone(self):
         self.assertFalse(self.collect()['observation']['wall_time_trusted'])
 
+    def test_changed_wan_path_separates_observation_context(self):
+        a=self.collect('HG_NETWORK_PATH_CONTEXT=first')
+        b=self.collect('HG_NETWORK_PATH_CONTEXT=second')
+        self.assertNotEqual(a['observation']['context'],b['observation']['context'])
+
     def test_no_external_attempt_does_not_confirm_egress_failure(self):
         h=self.collect('HG_VPN_MAIN_STATE=DEGRADED; HG_VPN_EGRESS_STATE=UNKNOWN; HG_VPN_EGRESS_PROBE_ATTEMPTS=0')
         self.assertEqual(h['components']['main']['state'],'UNKNOWN')

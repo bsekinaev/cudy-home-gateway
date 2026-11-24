@@ -132,11 +132,26 @@ hg_vpn_collect() {
         ''|*[!0-9]*) now='' ;;
     esac
 
+    # Reuse only evidence tied to this WAN and the generated SOCKS config.
+    vpn_cache_context=''
+    vpn_wan_context="${HG_NETWORK_PATH_CONTEXT:-}"
+    case "$HG_VPN_MAIN_PROFILE" in
+        ''|*[!A-Za-z0-9_-]*) ;;
+        *)
+            vpn_config="${HG_MONITOR_GENERATED_DIR:-/tmp/etc/passwall2}/${HG_VPN_MAIN_PROFILE}.json"
+            if [ "${#vpn_wan_context}" = 64 ] && [ -f "$vpn_config" ] && [ ! -L "$vpn_config" ]; then
+                vpn_config_hash="$(sha256sum "$vpn_config" 2>/dev/null | awk '{print $1}')"
+                if [ "${#vpn_config_hash}" = 64 ]; then
+                    vpn_cache_context="$(printf '%s\n' "$HG_NETWORK_PATH_CONTEXT" "$vpn_config_hash" "$HG_VPN_MAIN_PROFILE" "$HG_VPN_MAIN_NODE" "$HG_VPN_MAIN_SOCKS_HOST" "$HG_VPN_MAIN_SOCKS_PORT" "$egress_probe_url" "$secondary_probe_url" "$primary_provider" "$secondary_provider" | sha256sum | awk '{print $1}')"
+                fi
+            fi
+            ;;
+    esac
     cache_checked_at=''
     cache_ipv4=''
     cache_provider=''
     if [ -r "$egress_cache_file" ]; then
-        set -- $(awk 'NR == 1 { print $1, $2, $3; exit }' "$egress_cache_file" 2>/dev/null || true)
+        set -- $(awk 'NR == 1 && NF == 4 { print $1, $2, $3, $4; exit }' "$egress_cache_file" 2>/dev/null || true)
         cache_checked_at="${1:-}"
         cache_ipv4="${2:-}"
         cache_provider="${3:-}"
@@ -144,7 +159,7 @@ hg_vpn_collect() {
         case "$cache_checked_at" in
             ''|*[!0-9]*) cache_checked_at='' ;;
         esac
-        if ! hg_vpn_is_ipv4 "$cache_ipv4"; then
+        if [ -z "$vpn_cache_context" ] || [ "${4:-}" != "$vpn_cache_context" ] || ! hg_vpn_is_ipv4 "$cache_ipv4"; then
             cache_ipv4=''
             cache_provider=''
         fi
@@ -197,8 +212,8 @@ hg_vpn_collect() {
             HG_VPN_EGRESS_STATE='OK'
             HG_VPN_MAIN_STATE='OK'
 
-            if [ -n "$now" ]; then
-                printf '%s %s %s\n' "$now" "$vpn_ipv4" "$primary_provider" >"$egress_cache_file" 2>/dev/null || true
+            if [ -n "$now" ] && [ -n "$vpn_cache_context" ]; then
+                printf '%s %s %s %s\n' "$now" "$vpn_ipv4" "$primary_provider" "$vpn_cache_context" >"$egress_cache_file" 2>/dev/null || true
             fi
             return 0
         fi
@@ -221,8 +236,8 @@ hg_vpn_collect() {
                 HG_VPN_EGRESS_STATE='OK'
                 HG_VPN_MAIN_STATE='OK'
 
-                if [ -n "$now" ]; then
-                    printf '%s %s %s\n' "$now" "$vpn_ipv4" "$secondary_provider" >"$egress_cache_file" 2>/dev/null || true
+                if [ -n "$now" ] && [ -n "$vpn_cache_context" ]; then
+                    printf '%s %s %s %s\n' "$now" "$vpn_ipv4" "$secondary_provider" "$vpn_cache_context" >"$egress_cache_file" 2>/dev/null || true
                 fi
                 return 0
             fi

@@ -221,7 +221,8 @@ hg_health_observation_finish() {
     HG_OBS_CONTEXT="$(printf '%s\n' "$HG_OBS_CONFIG_AFTER" \
         "${HG_NETWORK_WAN_INTERFACE:-}" "${HG_NETWORK_WAN_DEVICE:-}" \
         "${HG_NETWORK_WAN_PROTO:-}" "${HG_NETWORK_WAN_IPV4:-}" \
-        "${HG_NETWORK_WAN_GATEWAY:-}" | sha256sum | awk '{print $1}')"
+        "${HG_NETWORK_WAN_GATEWAY:-}" "${HG_NETWORK_WAN_PREFIX:-}" \
+        "${HG_NETWORK_PATH_CONTEXT:-}" | sha256sum | awk '{print $1}')"
     [ "${#HG_OBS_CONTEXT}" -eq 64 ] || HG_OBS_VALID=false
     [ "${#HG_OBS_CONFIG_BEFORE}" -eq 64 ] || HG_OBS_VALID=false
     case "$HG_OBS_CONTEXT:$HG_OBS_CONFIG_BEFORE" in *[!a-f0-9:]*) HG_OBS_VALID=false ;; esac
