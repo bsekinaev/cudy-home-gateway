@@ -172,7 +172,7 @@ function no_pending_global() {
         need(!io.exists(path+'.new'),'GLOBAL_PENDING');
 }
 function preflight(kind,held) {
-    if(kind=='APPLY' && m.format=='HG_OWNER_MONITOR_V3') {
+    if(kind=='APPLY' && index(['HG_OWNER_MONITOR_V3','HG_OWNER_WAN_V4'],m.format)>=0) {
         let prerequisite=capture(['/bin/sh','-c','command -v setsid >/dev/null 2>&1 && setsid /bin/sh -c '+quote('exit 0')],1024);
         need(prerequisite.code==0,'MONITOR_SETSID_REQUIRED');
     }

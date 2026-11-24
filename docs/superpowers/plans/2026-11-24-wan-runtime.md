@@ -74,3 +74,12 @@ refused until the new native scenario and owner acceptance contract exist.
 Old V1/V2/V3 scope and parent restrictions are unchanged. The existing Windows
 owner runner does not admit V4. This is development infrastructure, not an
 installable release for CUDY.
+
+The initial immutable VM V4 archive was built through the exact V1 → V2 → V3
+source chain. Its manifest has VM_ONLY, production_apply=false, baseline
+`1fc822c` and exactly the four permitted runtime changes. Host build suite
+17 PASS; target protocol suite 30 PASS; scope tests 5 PASS. Previous full
+runtime context suite also PASS. Native scenario `owner-wan` now selects a
+separate V3 baseline installation, V4 apply/verify/rollback, inherited crash
+matrix and reboot; it is added to CI. Native results are pending, and owner
+format admission remains closed.

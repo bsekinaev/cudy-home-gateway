@@ -31,7 +31,7 @@ PACKAGE_SHA = {
 ROOTFS_SHA = 'a1cb366a0af03d0f4afbce90aed9b4db35b07140629eabf7ae21c45dc08eeb23'
 RESULT = re.compile(r'^HGVM_RESULT=(PASS|FAIL) TOTAL=([0-9]+) FAILED=([0-9]+) SCOPE=ISOLATED_X86_NOT_CUDY$', re.M)
 CHECK = re.compile(r'^HGVM_CHECK=([a-z0-9_]+):(PASS|FAIL)$', re.M)
-REBOOT_SCENARIOS = ('owner-monitor', 'owner-series', 'owner-update', 'rc-b-crash-apply', 'rc-b-crash-restore', 'retirement-reboot',
+REBOOT_SCENARIOS = ('owner-wan', 'owner-monitor', 'owner-series', 'owner-update', 'rc-b-crash-apply', 'rc-b-crash-restore', 'retirement-reboot',
                     'overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase')
 
 
@@ -87,9 +87,10 @@ def owner_update_fixture(commit, workspace):
 def series_guest(raw, scenario):
     """Select explicit VM-only blocks before deriving the accepted check set."""
     text = raw.decode()
-    for profile in ('MONITOR', 'OBSERVER'):
+    for profile in ('MONITOR', 'OBSERVER', 'WAN', 'BASELINED'):
         pattern = r'^# HGVM_' + profile + r'_BEGIN\n(.*?)^# HGVM_' + profile + r'_END\n'
-        keep = (scenario == 'owner-monitor') == (profile == 'MONITOR')
+        keep = scenario in {'MONITOR': ('owner-monitor',), 'OBSERVER': ('owner-series',),
+                            'WAN': ('owner-wan',), 'BASELINED': ('owner-monitor','owner-wan')}[profile]
         text = re.sub(pattern, lambda m: m[1] if keep else '', text, flags=re.M | re.S)
     require('# HGVM_' not in text, 'GUEST_PROFILE_MARKERS')
     return text.encode()
@@ -119,7 +120,7 @@ def regression_admission(commit):
 
 def inject(image, workspace, commit, packages, scenario):
     requested_scenario = scenario
-    if scenario in ('owner-series', 'owner-monitor'):
+    if scenario in ('owner-series', 'owner-monitor', 'owner-wan'):
         scenario = 'owner-update'  # identical accepted HG1 -> HG2 -> V1 bootstrap
     commands = []
     created = set()
@@ -272,7 +273,7 @@ def inject(image, workspace, commit, packages, scenario):
     if scenario=='owner-update':
         parent_source = ROOT
         parent_commit = commit
-        if requested_scenario in ('owner-series', 'owner-monitor'):
+        if requested_scenario in ('owner-series', 'owner-monitor', 'owner-wan'):
             parent_source = workspace / 'accepted-v1-source'
             subprocess.run(['git', 'clone', '--quiet', '--shared', '--no-checkout', str(ROOT), str(parent_source)], check=True)
             parent_commit = 'd2039b6c62da3aa458f720af1c46fb619aee48dd'
@@ -282,7 +283,7 @@ def inject(image, workspace, commit, packages, scenario):
         subprocess.run(['python3',str(parent_source/'scripts/owner_update/build_kit.py'),'--ref',parent_commit,'--output',str(workspace/'owner-update')],check=True,stdout=subprocess.DEVNULL)
         parent_archive = next((workspace/'owner-update').glob('*.tar.gz'))
         put('/opt/hg-vm-lab/owner-update.tar.gz',parent_archive.read_bytes(),0o600)
-        if requested_scenario in ('owner-series', 'owner-monitor'):
+        if requested_scenario in ('owner-series', 'owner-monitor', 'owner-wan'):
             parent_pin = hashlib.sha256(parent_archive.read_bytes()).hexdigest()
             # Historical V2 acceptance stays scoped to the published observer
             # generation. Monitoring has its own real-candidate V3 delivery.
@@ -294,7 +295,24 @@ def inject(image, workspace, commit, packages, scenario):
                             '--parent',str(parent_archive),'--parent-sha256',parent_pin,
                             '--output',str(workspace/'accepted-v2')],check=True,stdout=subprocess.DEVNULL)
             baseline = next((workspace/'accepted-v2').glob('*.tar.gz'))
-            if requested_scenario == 'owner-monitor':
+            if requested_scenario == 'owner-wan':
+                put('/opt/hg-vm-lab/series-previous.tar.gz',baseline.read_bytes(),0o600)
+                monitor_commit = '1fc822c3bddc1021a1d641c7d7cce71fab7332b8'
+                monitor_source = workspace/'accepted-v3-source'
+                subprocess.run(['git','clone','--quiet','--shared','--no-checkout',str(ROOT),str(monitor_source)],check=True)
+                subprocess.run(['git','-C',str(monitor_source),'checkout','--quiet','--detach',monitor_commit],check=True)
+                subprocess.run(['python3',str(monitor_source/'scripts/owner_series/build_kit.py'),'--ref',monitor_commit,
+                                '--parent',str(baseline),'--parent-sha256',hashlib.sha256(baseline.read_bytes()).hexdigest(),
+                                '--output',str(workspace/'accepted-v3'),'--delivery','monitor'],check=True,stdout=subprocess.DEVNULL)
+                baseline = next((workspace/'accepted-v3').glob('*.tar.gz'))
+                put('/opt/hg-vm-lab/series-baseline.tar.gz',baseline.read_bytes(),0o600)
+                subprocess.run(['python3',str(ROOT/'scripts/owner_series/build_kit.py'),'--ref',commit,
+                                '--parent',str(baseline),'--parent-sha256',hashlib.sha256(baseline.read_bytes()).hexdigest(),
+                                '--output',str(workspace/'series-a'),'--delivery','wan'],check=True,stdout=subprocess.DEVNULL)
+                a=next((workspace/'series-a').glob('*.tar.gz'))
+                metadata=dict(real_candidate_commit=commit,baseline_commit=monitor_commit,
+                              delivery='wan',package_format='HG_OWNER_WAN_V4')
+            elif requested_scenario == 'owner-monitor':
                 put('/opt/hg-vm-lab/series-baseline.tar.gz',baseline.read_bytes(),0o600)
                 subprocess.run(['python3',str(ROOT/'scripts/owner_series/build_kit.py'),'--ref',commit,
                                 '--parent',str(baseline),'--parent-sha256',hashlib.sha256(baseline.read_bytes()).hexdigest(),
@@ -326,9 +344,9 @@ def inject(image, workspace, commit, packages, scenario):
                 metadata['fixture_commit']=fixture_commit
             (workspace/'series-fixture.json').write_text(json.dumps(metadata))
     guest={'owner-update':'guest-owner-update.sh','retirement-reboot':'guest-retirement.sh','rc-b-crash-apply':'guest-rc-b-crash-apply.sh','rc-b-crash-restore':'guest-rc-b-crash-restore.sh','rc-b-root-cycle':'guest-rc-b.sh', 'baseline':'guest-smoke.sh', 'legacy-snapshot':'guest-snapshot.sh', 'candidate-snapshot':'guest-candidate.sh', 'overlay-identity':'guest-overlay.sh', 'runtime-cycle':'guest-runtime.sh', 'runtime-crash-apply':'guest-crash-apply.sh', 'runtime-crash-restore':'guest-crash-restore.sh', 'runtime-crash-phase':'guest-crash-phase.sh', 'rc-a-package':'guest-rc-a.sh', 'control-cycle':'guest-controls.sh', 'service-cycle':'guest-service-cycle.sh'}[scenario]
-    if requested_scenario in ('owner-series', 'owner-monitor'): guest = 'guest-owner-series.sh'
+    if requested_scenario in ('owner-series', 'owner-monitor', 'owner-wan'): guest = 'guest-owner-series.sh'
     smoke = git('show', commit + ':scripts/openwrt/' + guest)
-    if requested_scenario in ('owner-series', 'owner-monitor'):
+    if requested_scenario in ('owner-series', 'owner-monitor', 'owner-wan'):
         smoke = series_guest(smoke, requested_scenario)
     subprocess.run(['sh', '-n'], input=smoke, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     service = git('show', commit + ':scripts/openwrt/fixture-service.sh')
@@ -384,7 +402,7 @@ def run(args):
         # The control scenario snapshots runtime plus its dependency closure.
         # TCG-only hosts need a separate bounded budget; assertions are unchanged.
         console = bytearray(); progress = 0
-        deadline = time.monotonic() + (7200 if args.scenario in ('owner-series','owner-monitor') else 1800 if args.scenario=='owner-update' else 900 if args.scenario=='retirement-reboot' else 600 if args.scenario in ('rc-b-crash-apply','rc-b-crash-restore') else 300 if args.scenario in ('rc-b-root-cycle','control-cycle','service-cycle') else 180)
+        deadline = time.monotonic() + (7200 if args.scenario in ('owner-series','owner-monitor','owner-wan') else 1800 if args.scenario=='owner-update' else 900 if args.scenario=='retirement-reboot' else 600 if args.scenario in ('rc-b-crash-apply','rc-b-crash-restore') else 300 if args.scenario in ('rc-b-root-cycle','control-cycle','service-cycle') else 180)
         try:
             for boot in range(2 if args.scenario in REBOOT_SCENARIOS else 1):
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -432,7 +450,7 @@ def run(args):
             report['native_refusals']=sorted(set(re.findall(r'\bMIGRATION_[A-Z0-9_]{1,80}\b', console.decode('utf-8',errors='replace'))))[:32]
         report.update(commit=commit, scenario=args.scenario, kernel_sha256=KERNEL_SHA, rootfs_sha256=ROOTFS_SHA,
                       network_devices=0, host_shared_directories=0, package_sha256=PACKAGE_SHA)
-        if args.scenario in ('owner-series','owner-monitor'): report.update(json.loads((workspace/'series-fixture.json').read_text()))
+        if args.scenario in ('owner-series','owner-monitor','owner-wan'): report.update(json.loads((workspace/'series-fixture.json').read_text()))
         if args.scenario == 'owner-update': report.update(json.loads((workspace/'owner-update-fixture.json').read_text()))
         if args.scenario in REBOOT_SCENARIOS: report['reboot_mechanism']='GUEST_REBOOT_SUPERVISED_COLD_BOOT'
         return report
@@ -461,7 +479,7 @@ def main():
     parser.add_argument('--bios', type=Path)
     parser.add_argument('--packages-directory', type=Path, required=True, help='Pinned official stat/timeout APKs, installed offline only in guest')
     parser.add_argument('--ref', default='HEAD')
-    parser.add_argument('--scenario', choices=('owner-monitor', 'owner-series', 'owner-update', 'rc-b-crash-apply', 'rc-b-crash-restore', 'retirement-reboot', 'rc-b-root-cycle', 'baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase', 'rc-a-package', 'control-cycle', 'service-cycle'), default='baseline')
+    parser.add_argument('--scenario', choices=('owner-wan', 'owner-monitor', 'owner-series', 'owner-update', 'rc-b-crash-apply', 'rc-b-crash-restore', 'retirement-reboot', 'rc-b-root-cycle', 'baseline', 'legacy-snapshot', 'candidate-snapshot', 'overlay-identity', 'runtime-cycle', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase', 'rc-a-package', 'control-cycle', 'service-cycle'), default='baseline')
     parser.add_argument('--diagnostic-log', type=Path, help='Private local diagnostic only; never CI artifact')
     args = parser.parse_args()
     try: report = run(args)

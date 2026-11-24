@@ -69,9 +69,10 @@ def validate_acceptance(raw, commit, repo, delivery='observer'):
         raise ValueError('SERIES_DELIVERY')
     scenario = 'owner-monitor' if delivery == 'monitor' else 'owner-series'
     guest = git(repo, 'show', commit + ':scripts/openwrt/guest-owner-series.sh').decode()
-    for profile in ('MONITOR', 'OBSERVER'):
+    for profile in ('MONITOR', 'OBSERVER', 'WAN', 'BASELINED'):
         pattern = r'^# HGVM_' + profile + r'_BEGIN\n(.*?)^# HGVM_' + profile + r'_END\n'
-        keep = (scenario == 'owner-monitor') == (profile == 'MONITOR')
+        keep = scenario in {'MONITOR': ('owner-monitor',), 'OBSERVER': ('owner-series',),
+                            'WAN': ('owner-wan',), 'BASELINED': ('owner-monitor','owner-wan')}[profile]
         guest = re.sub(pattern, lambda m: m[1] if keep else '', guest, flags=re.M | re.S)
     if '# HGVM_' in guest:
         raise ValueError('OWNER_ACCEPTANCE_GUEST_PROFILE')

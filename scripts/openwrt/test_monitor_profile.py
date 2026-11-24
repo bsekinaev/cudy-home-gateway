@@ -8,6 +8,19 @@ import run_vm
 GUEST = Path(__file__).with_name('guest-owner-series.sh').read_bytes()
 
 class MonitorProfileTests(unittest.TestCase):
+    def test_wan_profile_installs_exact_predecessors_and_checks_rollback(self):
+        raw = run_vm.series_guest(GUEST, 'owner-wan')
+        self.assertIn(b'check wan_installed62_apply ', raw)
+        self.assertIn(b'check wan_installed1fc_apply ', raw)
+        self.assertIn(b'check wan_rollback_to_installed1fc ', raw)
+        self.assertIn(b'check explicit_series_recovery ', raw)
+        self.assertNotIn(b'check monitor_rollback_to_installed62 ', raw)
+        self.assertNotIn(b'check series_apply_b ', raw)
+        self.assertIn(b'sha256sum -c "$LAB/baseline/candidate.sha256"', raw)
+        checks = re.findall(rb'^\s*check ([a-z0-9_]+) ', raw, re.M)
+        self.assertEqual(len(checks), len(set(checks)))
+        subprocess.run(['sh', '-n'], input=raw, check=True)
+
     def test_monitor_selects_installed62_and_monitor_lifecycle(self):
         raw = run_vm.series_guest(GUEST, 'owner-monitor')
         self.assertIn(b'check installed62_apply ', raw)

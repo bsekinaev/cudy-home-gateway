@@ -126,6 +126,20 @@ setsid_refusal() {
 check monitor_missing_setsid_before_writes setsid_refusal missing
 check monitor_broken_setsid_before_writes setsid_refusal broken
 # HGVM_MONITOR_END
+# HGVM_WAN_BEGIN
+mkdir -m 700 "$LAB/previous" "$LAB/baseline"
+tar -xzpf /opt/hg-vm-lab/series-previous.tar.gz -C "$LAB/previous"
+tar -xzpf /opt/hg-vm-lab/series-baseline.tar.gz -C "$LAB/baseline"
+new_id
+check wan_installed62_preflight stage "$LAB/previous" preflight "$op"
+check wan_installed62_apply stage "$LAB/previous" apply "$op"
+check wan_installed62_verify stage "$LAB/previous" verify "$op"
+new_id
+check wan_installed1fc_preflight stage "$LAB/baseline" preflight "$op"
+check wan_installed1fc_apply stage "$LAB/baseline" apply "$op"
+check wan_installed1fc_verify stage "$LAB/baseline" verify "$op"
+check wan_format ucode -e 'import * as fs from "fs";let m=json(fs.readfile(ARGV[0]));exit(m.format=="HG_OWNER_WAN_V4" && m.baseline_commit=="1fc822c3bddc1021a1d641c7d7cce71fab7332b8" && m.parent.format=="HG_OWNER_MONITOR_V3" && m.profile=="VM_ONLY"?0:1);' -- "$LAB/a/manifest.json"
+# HGVM_WAN_END
 new_id; a1=$op
 check unused_recovery_refused refused stage "$LAB/a" recover "$a1"
 check series_preflight stage "$LAB/a" preflight "$a1"
@@ -160,6 +174,13 @@ check monitor_rollback_verified stage "$LAB/a" verify "$op"
 check monitor_original_receipt_immutable sha256sum -c "$LAB/a-history"
 check monitor_v1_history_immutable sha256sum -c "$LAB/v1-history"
 # HGVM_MONITOR_END
+# HGVM_WAN_BEGIN
+new_id
+check wan_rollback_to_installed1fc stage "$LAB/a" rollback "$op"
+check wan_rollback_verified stage "$LAB/a" verify "$op"
+check wan_original_receipt_immutable sha256sum -c "$LAB/a-history"
+check wan_v1_history_immutable sha256sum -c "$LAB/v1-history"
+# HGVM_WAN_END
 
 guardian_admission_case() {
  # Reuse the interrupted operation: only the disposable VM's lease is edited.
@@ -231,13 +252,13 @@ crash_case() {
 # HGVM_OBSERVER_BEGIN
  /usr/bin/ucode "$update/inspect.uc" "$update" "$(cat "$LAB/update-pin")" journal || return 1
 # HGVM_OBSERVER_END
-# HGVM_MONITOR_BEGIN
+# HGVM_BASELINED_BEGIN
  # Verify the latest receipt, whose history includes all completed operations.
  # The original baseline receipt predates later sealed generations and cannot
  # authenticate the current history inventory. Check baseline bytes separately.
  stage "$LAB/a" verify "$(cat /etc/home-gateway-owner-series/latest)" || return 1
  (cd / && sha256sum -c "$LAB/baseline/candidate.sha256") || return 1
-# HGVM_MONITOR_END
+# HGVM_BASELINED_END
  sha256sum -c "$LAB/v1-history" && sha256sum -c "$LAB/client-state"
 }
 check cut_lease_published crash_case lease_published
