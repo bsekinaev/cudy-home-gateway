@@ -30,7 +30,7 @@
 
 ## Статус
 
-25.11.2026 опубликован [выпуск подготовки WAN](https://github.com/bsekinaev/cudy-home-gateway/releases/tag/v0.5.0-dev.20261125), source `a277d07`, для установленного `1fc822c`. CI 17/17 и испытания V4 67/67 прошли. Проверены маршруты и актуальность кэша WAN, MAIN и Torrent, установка, откат и восстановление. Установка владельцем ожидается.
+25.11.2026 опубликован и установлен [выпуск подготовки WAN](https://github.com/bsekinaev/cudy-home-gateway/releases/tag/v0.5.0-dev.20261125), source `a277d07`, от `1fc822c`. CI 17/17 и испытания V4 67/67 прошли. Preflight/Apply/Verify PASS на CUDY, selftest 62/0, doctor 11/0/0. Свежая история мониторинга подтверждена через read-only SSH. [Отчёт установки](docs/reports/WAN_20261125_LIVE.md).
 
 **Разработка продолжается.** `0.5.0-dev` — не стабильный production-релиз.
 
