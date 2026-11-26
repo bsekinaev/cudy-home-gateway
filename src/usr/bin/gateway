@@ -120,7 +120,8 @@ main() {
             ;;
         candidate-check)
             [ "$#" -eq 2 ] || return "$HG_EXIT_USAGE"
-            /bin/sh "${HG_LIBDIR}/vpn-candidate-check.sh" "${HG_LIBDIR}/vpn-candidate.uc" "$2"
+            hg_load_module vpn
+            hg_candidate_check "$2"
             ;;
         main-transaction)
             if [ "$#" -eq 3 ] && [ "$2" = plan ]; then

@@ -4,7 +4,7 @@ import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-RENDERER = ROOT / 'src/usr/lib/home-gateway/vpn-candidate.uc'
+VPN_MODULE = ROOT / 'src/usr/lib/home-gateway/vpn.sh'
 
 
 class CandidateConfigTests(unittest.TestCase):
@@ -19,7 +19,10 @@ class CandidateConfigTests(unittest.TestCase):
 
     def render(self, port='51082'):
         return subprocess.run(
-            ['ucode', str(RENDERER), port], input=json.dumps(self.node),
+            ['busybox', 'ash', '-c',
+             '. "$1"; tmp=$(mktemp); trap \'rm -f "$tmp"\' EXIT; '
+             'hg_candidate_renderer > "$tmp"; ucode "$tmp" "$2"',
+             'candidate-test', str(VPN_MODULE), port], input=json.dumps(self.node),
             text=True, capture_output=True, timeout=5,
         )
 
