@@ -35,3 +35,16 @@ command. Runtime inventory remains unchanged (implementation in `vpn.sh`).
 
 These capabilities are **not implemented or accepted** yet. Real CUDY remains
 unchanged and no v1.0.0 tag may be created from this planner.
+
+## Решение в режиме наблюдения
+
+`gateway recovery-review` оценивает один снимок health. Результат содержит
+decision и changes_applied=false. KEEP_MAIN означает, что основной выход
+подтверждён. WAIT_FOR_WAN означает, что WAN ещё не подтверждён.
+REVIEW_CANDIDATES появляется при свежем успешном WAN и свежей неудачной
+проверке MAIN с попыткой через второй проверочный адрес. В остальных
+случаях выводится INSUFFICIENT_EVIDENCE.
+
+Команда доступна по SSH. Она не подбирает и не применяет узел. Для
+автоматического режима ещё нужны серия независимых наблюдений, журнал
+решений, ограничение попыток, подтверждение LAN и испытания отката.

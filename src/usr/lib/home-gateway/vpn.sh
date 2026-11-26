@@ -523,3 +523,27 @@ hg_candidate_check() (
     done
     exit "$result"
 )
+
+# A recommendation only. Repeated observations and owned apply are separate.
+hg_main_recovery_review() (
+    ucode -e '
+        import { stdin } from "fs";
+        let evidence;
+        try { evidence = json(stdin.read(65536)); } catch (err) {}
+        let wan = evidence?.external_evidence?.direct_egress;
+        let main = evidence?.external_evidence?.main_egress;
+        let state = evidence?.components?.main?.state;
+        let decision = "INSUFFICIENT_EVIDENCE";
+        if (evidence?.observation?.valid == true) {
+            if (evidence?.components?.wan?.state != "OK" || wan?.state != "OK")
+                decision = "WAIT_FOR_WAN";
+            else if (state == "OK" && main?.state == "OK")
+                decision = "KEEP_MAIN";
+            else if (wan?.freshness == "live" && main?.freshness == "live" &&
+                     main?.state != "OK" && main?.secondary_attempted == true &&
+                     (state == "DOWN" || state == "DEGRADED"))
+                decision = "REVIEW_CANDIDATES";
+        }
+        printf("%J\n", { schema_version: 1, mode: "observe", decision, changes_applied: false });
+    '
+)

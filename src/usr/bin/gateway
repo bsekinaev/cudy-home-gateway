@@ -37,6 +37,7 @@ CUDY Home Gateway
   gateway notifications configure category COMPONENT on|off
   gateway vtest [--json]   Проверить наличие и fingerprint внешнего vtest
   gateway candidate-check NODE  Проверить настроенный резерв через отдельный SOCKS
+  gateway recovery-review   Оценить необходимость поиска резерва MAIN
   gateway main-transaction plan NODE
                            Read-only проверка условий; смена MAIN заблокирована
   gateway actions [show|prepare ACTION USER CHAT MESSAGE|confirm TOKEN USER CHAT MESSAGE]
@@ -122,6 +123,14 @@ main() {
             [ "$#" -eq 2 ] || return "$HG_EXIT_USAGE"
             hg_load_module vpn
             hg_candidate_check "$2"
+            ;;
+        recovery-review)
+            [ "$#" -eq 1 ] || return "$HG_EXIT_USAGE"
+            hg_load_module vpn
+            health_rc=0
+            snapshot="$(timeout -k 2 45 "$0" health --json)" || health_rc=$?
+            [ "$health_rc" -le 1 ] || return "$HG_EXIT_SOFTWARE"
+            printf '%s\n' "$snapshot" | hg_main_recovery_review
             ;;
         main-transaction)
             if [ "$#" -eq 3 ] && [ "$2" = plan ]; then
