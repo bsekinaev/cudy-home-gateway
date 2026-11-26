@@ -355,7 +355,7 @@ DNS профиля: ${status_profile_dns(data?.redmi?.dns, status_state(data?.re
 🔗 Служба Tailscale: ${status_state(data?.tailscale?.state)}
 
 Для актуальных данных нажмите «Обновить статус».
-Версия: ${status_text(data?.gateway_version, 'unknown')}`;
+Сборка Home Gateway: ${status_text(data?.gateway_version, 'unknown')}`;
 }
 
 function build_vtest() {
@@ -375,7 +375,7 @@ function build_vtest() {
         `Тест: ${data?.provider?.installed == true ? 'найден' : 'не подтверждён'}`,
         `Расписание: ${data?.cron_configured == true ? 'настроено' : 'не подтверждено'}` ];
     if (speed != null)
-        push(rows, `Speed samples: ${count(speed.samples)}, OK: ${count(speed.success)}, FAIL: ${count(speed.failed)}`);
+        push(rows, `Замеры скорости: ${count(speed.samples)}, успешных: ${count(speed.success)}, с ошибкой: ${count(speed.failed)}`);
     if (summary != null)
         push(rows, `Сводка: ${count(summary.nodes)}, подходят: ${count(summary.eligible)}`);
     if (cap != null)
@@ -384,8 +384,8 @@ function build_vtest() {
         push(rows, 'Нет проверенных результатов последнего теста.');
     push(rows, `История наблюдений: ${type(data?.history) == 'array' ? length(data.history) : 'нет данных'}`);
     push(rows, 'Состояние запуска: UNKNOWN — по файлам не определяется.');
-    push(rows, 'Запуск из бота заблокирован до проверки безопасности runner.');
-    push(rows, 'MAIN автоматически не переключается.');
+    push(rows, 'Эта панель показывает сохранённые результаты Smart Test.');
+    push(rows, 'Автовосстановление MAIN в Home Gateway ещё не включено.');
     return join('\n', rows);
 }
 
@@ -410,14 +410,14 @@ ${enabled ? 'Выберите действие и подтвердите за 12
 }
 function help_view() {
     return `ℹ️ Управление Gateway
-🏠 Главная — состояние шлюза и сетевых служб.
-🧪 Результаты vtest — только сохранённые наблюдения; тест не запускается.
+🏠 Главная — WAN, DNS, MAIN VPN и состояние сетевых служб.
+🧪 Результаты VPN — сводка последнего сохранённого Smart Test.
 ⚙️ Действия — доступные перезапуски с отдельным подтверждением.
 Кнопки просмотра работают и в старых сообщениях.
 Переход в раздел запрашивает отмену ожидающего подтверждения.
 Команды: /start, /status, /vtest, /actions, /summary, /history, /help.
 📊 /summary — сутки, /history — неделя; только сохранённые наблюдения.
-VPN, DNS, firewall и MAIN через это меню не меняются.`;
+Автовосстановление MAIN в Home Gateway ещё не включено.`;
 }
 function action_confirmation(callback, action) {
     let chat = `${callback.message.chat.id}`, message = `${callback.message.message_id}`;

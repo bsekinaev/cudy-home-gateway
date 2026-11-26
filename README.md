@@ -53,7 +53,7 @@ Runtime — `0.5.0-dev`. [Отчёт установки мониторинга](
 
 Официальные пакеты и история публикуются в [GitHub Releases](https://github.com/bsekinaev/cudy-home-gateway/releases).
 [Как выбрать пакет, версии и их исходные baseline](docs/RELEASES.md).
-Дата в теге различает сборки; внутренняя версия gateway остаётся 0.5.0-dev.
+Дата в теге различает сборки. Версию установленного Gateway показывает команда `gateway version` и экран статуса Telegram.
 При установке нужны собственный Preflight и отдельный Verify; сборка исходников
 из GitHub не заменяет проверенный owner-пакет.
 
@@ -88,7 +88,7 @@ Notification Dispatcher объединён в main через PR #6 после �
 MAIN/Torrent delivery, recovery summary, CLI mute/categories и sysupgrade allowlist.
 Доставка выключена по умолчанию; владелец включил четыре категории preset мониторинга.
 Добавлена crash-safe compaction с dedup receipts. LIVE-проверка доставки на CUDY ожидается;
-CI каждой новой ветки проверяется отдельно. `0.5.0-dev` пока не является стабильным релизом.
+CI каждой новой ветки проверяется отдельно. Сборки с суффиксом `-dev` находятся в разработке.
 
 [Установка и ограничения диспетчера](docs/NOTIFICATIONS.md).
 

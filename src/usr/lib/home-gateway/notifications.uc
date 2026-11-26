@@ -435,6 +435,12 @@ function delivery(item, proxy, chat) {
         return { kind: 'FAILED', error: 'TELEGRAM_REJECTED' };
     return { kind: 'RETRY', error: 'TELEGRAM_UNAVAILABLE' };
 }
+function route_result(result) {
+    if (result.error == 'TRANSPORT')
+        return result.safe_fallback ? 'TRANSPORT_BEFORE_UPLOAD' : 'TRANSPORT_UNCONFIRMED';
+    return result.error ?? result.kind;
+}
+
 function dispatch(items, policy) {
     let now = time();
     if (!policy.enabled || policy.mute_until > now || (policy.delivery_not_before ?? 0) > now)
@@ -463,9 +469,11 @@ function dispatch(items, policy) {
             return 70;
         let result = delivery(item, '127.0.0.1:1082', chat);
         let route = 'MAIN';
+        item.last_route_results = { MAIN: route_result(result) };
         if (result.safe_fallback) {
             result = delivery(item, '127.0.0.1:1081', chat);
             route = 'TORRENT';
+            item.last_route_results.TORRENT = route_result(result);
         }
         let finished = time();
         item.status = result.kind == 'RETRY' ? 'PENDING' : result.kind;

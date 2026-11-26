@@ -36,6 +36,7 @@ CUDY Home Gateway
   gateway notifications configure mute SECONDS
   gateway notifications configure category COMPONENT on|off
   gateway vtest [--json]   Проверить наличие и fingerprint внешнего vtest
+  gateway candidate-check NODE  Проверить настроенный резерв через отдельный SOCKS
   gateway main-transaction plan NODE
                            Read-only проверка условий; смена MAIN заблокирована
   gateway actions [show|prepare ACTION USER CHAT MESSAGE|confirm TOKEN USER CHAT MESSAGE]
@@ -116,6 +117,10 @@ main() {
                 hg_error 'использование: gateway vtest [--json]'
                 return "$HG_EXIT_USAGE"
             fi
+            ;;
+        candidate-check)
+            [ "$#" -eq 2 ] || return "$HG_EXIT_USAGE"
+            /bin/sh "${HG_LIBDIR}/vpn-candidate-check.sh" "${HG_LIBDIR}/vpn-candidate.uc" "$2"
             ;;
         main-transaction)
             if [ "$#" -eq 3 ] && [ "$2" = plan ]; then

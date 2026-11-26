@@ -188,7 +188,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         self.assertIn(['vtest', '--json'], calls)
         sent = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
         self.assertIn('UNKNOWN', sent[3])
-        self.assertIn('заблокирован', sent[3])
+        self.assertIn('Автовосстановление MAIN в Home Gateway ещё не включено.', sent[3])
         self.assertNotIn('PRIVATE_', sent[3])
         buttons = json.loads(sent[4])['inline_keyboard'][0]
         self.assertTrue(any(b['callback_data'] == 'nav:vtest' for b in buttons))
@@ -350,7 +350,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         self.assertEqual(data['state'], 'UNKNOWN')
         calls = self.poll(self.message())
         sent = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
-        self.assertIn('samples: 2', sent[3])
+        self.assertIn('Замеры скорости: 2', sent[3])
         self.assertNotIn('private-id', sent[3])
         self.assertNotIn('PRIVATE_', sent[3])
 

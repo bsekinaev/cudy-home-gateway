@@ -141,6 +141,20 @@ sys.exit(item.get('code', 0))
         self.assertEqual([x['proxy'] for x in self.calls()], ['127.0.0.1:1082', '127.0.0.1:1081'])
         self.assertEqual(self.queue()[0]['route'], 'TORRENT')
 
+    def test_failed_routes_are_distinguishable(self):
+        self.journal([self.event()])
+        self.responses([
+            dict(http=0, uploaded=0, code=7),
+            dict(http=0, uploaded=100, code=28),
+        ])
+        self.run_cli('dispatch')
+        item = self.queue()[0]
+        self.assertEqual(item['status'], 'PENDING')
+        self.assertEqual(item['last_route_results'], {
+            'MAIN': 'TRANSPORT_BEFORE_UPLOAD',
+            'TORRENT': 'TRANSPORT_UNCONFIRMED',
+        })
+
     def test_ambiguous_timeout_never_falls_back(self):
         self.journal([self.event()])
         self.responses([dict(http=0, uploaded=100, code=28)])
