@@ -3,7 +3,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-VPN = Path(__file__).resolve().parents[2] / 'src/usr/lib/home-gateway/vpn.sh'
+INCIDENTS = Path(__file__).resolve().parents[2] / 'src/usr/lib/home-gateway/incidents.uc'
 
 
 class RecoveryReviewTests(unittest.TestCase):
@@ -35,8 +35,7 @@ class RecoveryReviewTests(unittest.TestCase):
                                           'main_egress': {**main, **evidence}},
                 }
                 result = subprocess.run(
-                    ['busybox', 'ash', '-c', '. "$1"; hg_main_recovery_review',
-                     'recovery-review', str(VPN)],
+                    ['ucode', str(INCIDENTS), '/usr/bin/gateway', 'recovery-review'],
                     input=json.dumps(sample), text=True, capture_output=True,
                     check=True, timeout=5,
                 )

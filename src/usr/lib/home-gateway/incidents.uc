@@ -626,6 +626,43 @@ function valid_sample(c, e) {
         type(s?.checked_uptime) == 'int' && type(s?.expires_uptime) == 'int' &&
         s.checked_uptime <= e.finished_uptime && e.finished_uptime <= s.expires_uptime;
 }
+function recovery_decision(health) {
+    let wan = health?.external_evidence?.direct_egress;
+    let main = health?.external_evidence?.main_egress;
+    let state = health?.components?.main?.state;
+    if (health?.observation?.valid != true)
+        return 'INSUFFICIENT_EVIDENCE';
+    if (health?.components?.wan?.state != 'OK' || wan?.state != 'OK')
+        return 'WAIT_FOR_WAN';
+    if (state == 'OK' && main?.state == 'OK')
+        return 'KEEP_MAIN';
+    if (wan?.freshness == 'live' && main?.freshness == 'live' &&
+        main?.state != 'OK' && main?.secondary_attempted == true &&
+        (state == 'DOWN' || state == 'DEGRADED'))
+        return 'REVIEW_CANDIDATES';
+    return 'INSUFFICIENT_EVIDENCE';
+}
+
+function record_recovery_review(health, runtime, now) {
+    let scope = health.observation;
+    let rows = type(runtime.recovery_reviews) == 'array' ? runtime.recovery_reviews : [];
+    let wan = health.components.wan;
+    let main = health.components.main;
+    if (scope?.valid != true || !valid_sample(wan, scope) || !valid_sample(main, scope))
+        return;
+    let previous = rows[length(rows) - 1];
+    if (previous?.boot_id == scope.boot_id && previous?.context == scope.context &&
+        (previous.main_checked >= main.sample.checked_uptime ||
+         previous.wan_checked >= wan.sample.checked_uptime))
+        return;
+    push(rows, {
+        at: now, boot_id: scope.boot_id, context: scope.context,
+        main_checked: main.sample.checked_uptime, wan_checked: wan.sample.checked_uptime,
+        decision: recovery_decision(health), changes_applied: false
+    });
+    runtime.recovery_reviews = slice(rows, max(0, length(rows) - 16));
+}
+
 function gated_component(spec, health, runtime) {
     let c = health.components?.[spec.name] ?? {};
     if (getenv('HG_INCIDENTS_LEGACY_SAMPLES') == '1' && health?.observation == null) return c;
@@ -902,6 +939,7 @@ function tick() {
         return 70;
     }
 
+    record_recovery_review(health, runtime, now);
     let history_ok = record_history(health, now, events);
 
     runtime.updated_at = now;
@@ -997,6 +1035,18 @@ function selftest_observation(state, reason) {
 }
 
 function run_selftest() {
+    let review_runtime = {};
+    let example = {
+        observation: { schema_version: 1, boot_id: 'boot', context: 'ctx', finished_uptime: 3, valid: true },
+        components: {
+            wan: { sample: { id: 'wan', boot_id: 'boot', context: 'ctx', checked_uptime: 1, expires_uptime: 5, valid: true } },
+            main: { sample: { id: 'main', boot_id: 'boot', context: 'ctx', checked_uptime: 2, expires_uptime: 5, valid: true } }
+        }
+    };
+    record_recovery_review(example, review_runtime, 1);
+    record_recovery_review(example, review_runtime, 2);
+    if (length(review_runtime.recovery_reviews) != 1)
+        return 1;
     let runtime = empty_runtime();
     let active = {};
     let events = [];
@@ -1054,6 +1104,19 @@ function run_selftest() {
 let rc;
 
 switch (MODE) {
+case 'recovery-review':
+    let health;
+    try { health = json(fs.stdin.read(65536)); } catch (err) {}
+    printf('%J\n', {
+        schema_version: 1, mode: 'observe', decision: recovery_decision(health),
+        changes_applied: false
+    });
+    rc = 0;
+    break;
+case 'recovery-history':
+    printf('%J\n', { schema_version: 1, reviews: load_runtime().recovery_reviews ?? [] });
+    rc = 0;
+    break;
 case 'history-json':
     rc = history_summary(false);
     break;
