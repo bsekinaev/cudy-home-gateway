@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -48,9 +49,15 @@ hg_health_print_json
             self.assertGreater(s['expires_uptime'],s['checked_uptime'])
 
     def test_cached_evidence_preserves_identity_across_worker_sequence(self):
-        setup='HG_VPN_EGRESS_SOURCE=cache; HG_VPN_EGRESS_CHECKED_AT=$(($(date +%s)/60*60)); HG_VPN_EGRESS_PROBE_ATTEMPTS=0'
+        # Both workers see the same cached observation even across a minute boundary.
+        cached_at = int(time.time()) - 1
+        setup = f'HG_VPN_EGRESS_SOURCE=cache; HG_VPN_EGRESS_CHECKED_AT={cached_at}; HG_VPN_EGRESS_PROBE_ATTEMPTS=0'
         a=self.collect(setup); b=self.collect(setup,{'HG_MONITOR_SEQUENCE':'8'})
-        self.assertEqual(a['components']['main']['sample']['id'],b['components']['main']['sample']['id'])
+        first = a['components']['main']['sample']
+        second = b['components']['main']['sample']
+        self.assertTrue(first['valid'])
+        self.assertTrue(second['valid'])
+        self.assertEqual(first['id'], second['id'])
 
     def test_old_cache_does_not_provide_valid_vote(self):
         h=self.collect('HG_VPN_EGRESS_SOURCE=cache; HG_VPN_EGRESS_CHECKED_AT=1; HG_VPN_EGRESS_PROBE_ATTEMPTS=0')

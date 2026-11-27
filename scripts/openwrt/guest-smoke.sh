@@ -171,6 +171,16 @@ EOF
         fresh_main_fixture || return 1
         HG_MAIN_FIXTURE_WINDOW=12 main_intent transaction-fixture-apply >/dev/null || return 1
         local service="$LAB/main-watchdog-fixture"
+        local launches="$LAB/main-watchdog-launches"
+        : > "$launches"
+        # A respawn after the deadline can roll back and exit before ubus is polled.
+        # Record each launch in the fixture so its PID survives process exit.
+        cat > "$LAB/main-watchdog-run" <<'WATCH'
+#!/bin/sh
+printf '%s\n' "$$" >> /etc/hg-vm-lab/main-watchdog-launches || exit 1
+exec /usr/bin/ucode /usr/lib/home-gateway/incidents.uc /usr/bin/gateway transaction-fixture-watch
+WATCH
+        chmod 700 "$LAB/main-watchdog-run"
         cat > "$service" <<'SERVICE'
 #!/bin/sh /etc/rc.common
 USE_PROCD=1
@@ -179,7 +189,7 @@ start_service() {
     local state
     state=$(cat /etc/hg-vm-lab/main-watchdog-state) || return 1
     procd_open_instance
-    procd_set_param command /usr/bin/ucode /usr/lib/home-gateway/incidents.uc /usr/bin/gateway transaction-fixture-watch
+    procd_set_param command /etc/hg-vm-lab/main-watchdog-run
     procd_set_param env HG_NOTIFICATION_STATE_DIR="$state" HG_MAIN_CONFIG_FILE="$state/fixture-passwall2"
     procd_set_param respawn 60 1 2
     procd_close_instance
@@ -188,23 +198,29 @@ SERVICE
         chmod 700 "$service"
         printf '%s\n' "$main_fixture" > "$LAB/main-watchdog-state"
         "$service" start || return 1
-        local first next phase restarted=0 result=1
+        local first phase started=0 restarted=0 result=1
         for attempt in 1 2 3 4; do
             first=$(fixture_watchdog_pid)
-            [ -n "$first" ] && break
+            if [ -n "$first" ] && [ "$(head -n 1 "$launches")" = "$first" ]; then
+                started=1
+                break
+            fi
             sleep 1
         done
-        case "$first" in
-            ''|*[!0-9]*)
-                printf 'HGVM_DIAG=main_watchdog_initial_pid_missing\n'
-                "$service" stop
-                return 1 ;;
-        esac
-        if kill -TERM "$first"; then
+        if [ "$started" -ne 1 ]; then
+            printf 'HGVM_DIAG=main_watchdog_initial_pid_missing\n'
+            "$service" stop
+            return 1
+        fi
+        phase=$(json_value "$main_fixture/main-intent.json" data.phase)
+        if [ "$phase" = APPLIED ] && kill -TERM "$first"; then
             for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do
-                next=$(fixture_watchdog_pid)
                 phase=$(json_value "$main_fixture/main-intent.json" data.phase)
-                if [ -n "$next" ] && [ "$first" != "$next" ]; then restarted=1; fi
+                if awk -v first="$first" '
+                    NR == 1 { started=($0 == first) }
+                    NR > 1 && /^[0-9]+$/ && $0 != first { found=1 }
+                    END { exit !(started && found) }
+                ' "$launches"; then restarted=1; fi
                 if [ "$restarted" -eq 1 ] && [ "$phase" = ROLLED_BACK ] &&
                     cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2; then
                     result=0
