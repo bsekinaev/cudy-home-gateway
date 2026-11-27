@@ -122,3 +122,34 @@ class RecoveryReviewTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0 if accepted else 2, result.stderr)
                 self.assertEqual(json.loads(result.stdout)['accepted'], accepted)
+
+    def test_transaction_waits_commits_or_rolls_back_without_overwriting_drift(self):
+        token = 'a' * 32
+        expected = {'phase': 'VERIFYING', 'token': token, 'consumed': False,
+                    'before_sha256': '1' * 64, 'applied_sha256': '2' * 64,
+                    'boot_id': 'boot', 'apply_uptime': 10, 'deadline_uptime': 35}
+        receipt = {'schema_version': 1, 'token': token, 'checks': [
+            {'Target': url, 'HTTP': '204', 'CurlExit': 0, 'Passed': True}
+            for url in ('https://www.google.com/generate_204', 'https://cp.cloudflare.com/')
+        ]}
+        sample = {'expected': expected, 'receipt': receipt, 'socks': 'OK',
+                  'boot_id': 'boot', 'received_uptime': 20, 'config_sha256': '2' * 64}
+        for override, decision in (
+            ({}, 'COMMIT'),
+            ({'receipt': None}, 'WAIT_FOR_VERIFICATION'),
+            ({'socks': 'FAILED'}, 'ROLLBACK'),
+            ({'received_uptime': 36}, 'ROLLBACK'),
+            ({'boot_id': 'reboot', 'received_uptime': 0}, 'ROLLBACK'),
+            ({'config_sha256': '3' * 64, 'socks': 'FAILED'}, 'STOP_CONFIG_CONFLICT'),
+            ({'expected': {**expected, 'consumed': True}}, 'INVALID_STATE'),
+        ):
+            with self.subTest(decision=decision):
+                result = subprocess.run(
+                    ['ucode', str(INCIDENTS), '/usr/bin/gateway', 'transaction-review'],
+                    input=json.dumps({**sample, **override}), text=True, capture_output=True, timeout=5,
+                )
+                self.assertEqual(result.returncode, 2 if decision == 'INVALID_STATE' else 0,
+                                 result.stderr)
+                self.assertEqual(json.loads(result.stdout), {
+                    'schema_version': 1, 'decision': decision, 'changes_applied': False,
+                })

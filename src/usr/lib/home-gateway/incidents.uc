@@ -1184,6 +1184,31 @@ function validate_lan_review(input) {
     return true;
 }
 
+function main_transaction_decision(input) {
+    let tx = input?.expected;
+    if (tx?.phase != 'VERIFYING' || tx.consumed != false ||
+        type(tx.before_sha256) != 'string' || match(tx.before_sha256, /^[a-f0-9]{64}$/) == null ||
+        type(tx.applied_sha256) != 'string' || match(tx.applied_sha256, /^[a-f0-9]{64}$/) == null ||
+        tx.before_sha256 == tx.applied_sha256 ||
+        type(tx.boot_id) != 'string' || !length(tx.boot_id) ||
+        type(input.boot_id) != 'string' || !length(input.boot_id) ||
+        type(tx.apply_uptime) != 'int' || tx.apply_uptime < 0 ||
+        type(tx.deadline_uptime) != 'int' || tx.deadline_uptime <= tx.apply_uptime ||
+        type(input.received_uptime) != 'int' || input.received_uptime < 0)
+        return 'INVALID_STATE';
+    if (input.config_sha256 != tx.applied_sha256)
+        return 'STOP_CONFIG_CONFLICT';
+    if (input.boot_id != tx.boot_id || input.received_uptime > tx.deadline_uptime)
+        return 'ROLLBACK';
+    if (input.received_uptime < tx.apply_uptime)
+        return 'INVALID_STATE';
+    if (input.socks == 'FAILED')
+        return 'ROLLBACK';
+    if (input.socks == 'OK' && validate_lan_review(input))
+        return 'COMMIT';
+    return 'WAIT_FOR_VERIFICATION';
+}
+
 let rc;
 
 switch (MODE) {
@@ -1195,6 +1220,16 @@ case 'recovery-review':
         changes_applied: false
     });
     rc = 0;
+    break;
+case 'transaction-review':
+    let transaction;
+    let transaction_raw = fs.stdin.read(8193);
+    if (type(transaction_raw) == 'string' && length(transaction_raw) <= 8192) {
+        try { transaction = json(transaction_raw); } catch (err) {}
+    }
+    let transaction_decision = main_transaction_decision(transaction);
+    printf('%J\n', { schema_version: 1, decision: transaction_decision, changes_applied: false });
+    rc = transaction_decision == 'INVALID_STATE' ? 2 : 0;
     break;
 case 'lan-review':
     let lan;
