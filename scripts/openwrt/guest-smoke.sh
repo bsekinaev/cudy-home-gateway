@@ -153,6 +153,65 @@ EOF
     check main_fixture_watchdog fixture_watchdog
     check main_fixture_confirm_once fixture_confirm_once
 
+    fixture_interrupted_restore() {
+        fresh_main_fixture || return 1
+        main_intent transaction-fixture-apply >/dev/null || return 1
+        ucode -e 'import * as fs from "fs"; let p=ARGV[0]; let d=json(fs.readfile(p)); d.phase="RESTORING"; fs.writefile(p, sprintf("%J",d));' "$main_fixture/main-intent.json" || return 1
+        main_intent transaction-fixture-watch || return 1
+        cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2
+    }
+    check main_fixture_interrupted_restore fixture_interrupted_restore
+
+    fixture_watchdog_pid() {
+        ubus call service list '{"name":"main-watchdog-fixture"}' |
+            ucode -e 'import * as fs from "fs"; let d=json(fs.stdin.read(8192)); for (let i in values(d["main-watchdog-fixture"]?.instances ?? {})) if (type(i.pid) == "int" && i.running) { print(i.pid); break; }'
+    }
+
+    fixture_supervision() {
+        fresh_main_fixture || return 1
+        HG_MAIN_FIXTURE_WINDOW=12 main_intent transaction-fixture-apply >/dev/null || return 1
+        local service="$LAB/main-watchdog-fixture"
+        cat > "$service" <<'SERVICE'
+#!/bin/sh /etc/rc.common
+USE_PROCD=1
+start_service() {
+    [ "$(cat /etc/hg-disposable-vm)" = HG_NETWORKLESS_OPENWRT_VM_V1 ] || return 1
+    local state
+    state=$(cat /etc/hg-vm-lab/main-watchdog-state) || return 1
+    procd_open_instance
+    procd_set_param command /usr/bin/ucode /usr/lib/home-gateway/incidents.uc /usr/bin/gateway transaction-fixture-watch
+    procd_set_param env HG_NOTIFICATION_STATE_DIR="$state" HG_MAIN_CONFIG_FILE="$state/fixture-passwall2"
+    procd_set_param respawn 60 1 2
+    procd_close_instance
+}
+SERVICE
+        chmod 700 "$service"
+        printf '%s\n' "$main_fixture" > "$LAB/main-watchdog-state"
+        "$service" start || return 1
+        local first next phase result=1
+        for attempt in 1 2 3 4; do
+            first=$(fixture_watchdog_pid)
+            [ -n "$first" ] && break
+            sleep 1
+        done
+        case "$first" in ''|*[!0-9]*) "$service" stop; return 1 ;; esac
+        if kill -TERM "$first"; then
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do
+                next=$(fixture_watchdog_pid)
+                phase=$(json_value "$main_fixture/main-intent.json" data.phase)
+                if [ -n "$next" ] && [ "$first" != "$next" ] &&
+                    [ "$phase" = ROLLED_BACK ] && cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2; then
+                    result=0
+                    break
+                fi
+                sleep 1
+            done
+        fi
+        "$service" stop
+        return "$result"
+    }
+    check main_fixture_supervised_watchdog fixture_supervision
+
     mkdir -p /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     chmod 700 /etc/home-gateway /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     printf '111\n' > /etc/home-gateway/secrets/telegram.user_id

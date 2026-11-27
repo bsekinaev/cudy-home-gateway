@@ -1360,7 +1360,9 @@ function advance_main_fixture(mode, path, current, snapshot, candidate) {
         return main_snapshot_matches(target, current.candidate_sha256) ? 0 : 75;
     if (watch && current.phase == 'ROLLED_BACK')
         return main_snapshot_matches(target, current.before_sha256) ? 0 : 75;
-    if (mode == 'fixture-verify' || watch) {
+    if (watch && index([ 'APPLYING', 'RESTORING' ], current.phase) >= 0)
+        mode = 'fixture-restore';
+    else if (mode == 'fixture-verify' || watch) {
         let decision = review_applied_main_fixture(current, target, watch);
         switch (decision) {
         case 'ROLLBACK':
