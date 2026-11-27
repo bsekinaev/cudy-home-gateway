@@ -1302,6 +1302,61 @@ function stage_main_config(snapshot, current) {
     return staged;
 }
 
+function persist_main_fixture_phase(path, current, phase) {
+    current.phase = phase;
+    return atomic_write_json(path, current) &&
+        run_command('/bin/busybox fsync ' + shellquote(path)).code == 0 &&
+        run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code == 0;
+}
+
+function advance_main_fixture(mode, path, current, snapshot, candidate) {
+    // Only the disposable fixture uses these writes. No production apply entry point.
+    if (match(STATE_DIR, /^\/tmp\/hg-main-fixture\.[a-zA-Z0-9_]+$/) == null ||
+        current?.candidate_sha256 == null)
+        return 70;
+    let target = STATE_DIR + '/fixture-passwall2';
+    if (getenv('HG_MAIN_CONFIG_FILE') != target)
+        return 70;
+
+    let applying = mode == 'fixture-apply';
+    let pending = applying ? 'APPLYING' : 'RESTORING';
+    let finished = applying ? 'APPLIED' : 'ROLLED_BACK';
+    let from = applying ? current.before_sha256 : current.candidate_sha256;
+    let to = applying ? current.candidate_sha256 : current.before_sha256;
+    if (current.phase == finished)
+        return main_snapshot_matches(target, to) ? 0 : 75;
+    if (applying ? index([ 'PREPARED', pending ], current.phase) < 0 :
+        index([ 'APPLYING', 'APPLIED', pending ], current.phase) < 0)
+        return 75;
+    let already_written = main_snapshot_matches(target, to);
+    if (!already_written && !main_snapshot_matches(target, from))
+        return 75;
+    if (already_written && current.phase == 'PREPARED')
+        return 75;
+    if (!persist_main_fixture_phase(path, current, pending))
+        return 70;
+    if (!already_written) {
+        let source = applying ? candidate : snapshot;
+        let created = run_command('umask 077; mktemp ' + shellquote(target + '.XXXXXX'));
+        if (created.code != 0)
+            return 70;
+        let temporary = trim(created.output);
+        if (index(temporary, target + '.') != 0 || fs.lstat(temporary)?.type != 'file')
+            return 70;
+        if (run_command('umask 077; /bin/cp ' + shellquote(source) + ' ' + shellquote(temporary)).code != 0 ||
+            !main_snapshot_matches(temporary, to) ||
+            run_command('/bin/busybox fsync ' + shellquote(temporary)).code != 0 ||
+            !main_snapshot_matches(target, from) || !fs.rename(temporary, target)) {
+            fs.unlink(temporary);
+            return 70;
+        }
+    }
+    if (run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code != 0 ||
+        !persist_main_fixture_phase(path, current, finished))
+        return 70;
+    return 0;
+}
+
 function main_intent(mode) {
     if (fs.lstat(STATE_DIR)?.type != 'directory')
         return 70;
@@ -1320,13 +1375,22 @@ function main_intent(mode) {
     let current = existing?.type == 'file' && existing.size <= 2048 ?
         read_json_file(path, null) : null;
     let rc = 0;
-    if (existing != null && (!valid_prepared_main(current) ||
+    let fixture_phase = current == null ? null : current.phase;
+    let prepared_fields = current == null ? null : { ...current, phase: 'PREPARED' };
+    if (existing != null && (!valid_prepared_main(prepared_fields) ||
+        index([ 'PREPARED', 'APPLYING', 'APPLIED', 'RESTORING', 'ROLLED_BACK' ], fixture_phase) < 0 ||
+        (fixture_phase != 'PREPARED' && current.candidate_sha256 == null) ||
         !main_snapshot_matches(snapshot, current.before_sha256) ||
         (current.candidate_sha256 != null &&
          (type(current.candidate_sha256) != 'string' || match(current.candidate_sha256, /^[a-f0-9]{64}$/) == null ||
           !main_snapshot_matches(staged_path, current.candidate_sha256))))) {
         rc = 70;
-    } else if (mode == "prepare") {
+    } else if (mode == 'fixture-apply' || mode == 'fixture-restore') {
+        rc = advance_main_fixture(mode, path, current, snapshot, staged_path);
+    } else if (current != null && current.phase != 'PREPARED' &&
+               (mode == 'prepare' || mode == 'stage')) {
+        rc = 75;
+    } else if (mode == 'prepare') {
         let payload;
         let raw = fs.stdin.read(2049);
         if (type(raw) == 'string' && length(raw) <= 2048) {
@@ -1393,6 +1457,12 @@ case 'recovery-review':
     break;
 case 'transaction-intent':
     rc = main_intent('prepare');
+    break;
+case 'transaction-fixture-apply':
+    rc = main_intent('fixture-apply');
+    break;
+case 'transaction-fixture-restore':
+    rc = main_intent('fixture-restore');
     break;
 case 'transaction-stage':
     rc = main_intent('stage');

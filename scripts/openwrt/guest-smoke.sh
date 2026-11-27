@@ -75,10 +75,12 @@ EOF
     printf 'HGVM_DIAG=planner_status:%s\n' "$(json_value /tmp/hg-vm-lab/plan.json data.status)"
     check planner_preserves_uci test "$(sha256sum /etc/config/passwall2)" = "$before"
 
-    main_fixture="$LAB/main-transaction"
-    mkdir -m 700 "$main_fixture"
+    main_fixture=$(mktemp -d /tmp/hg-main-fixture.XXXXXX)
+    cp /etc/config/passwall2 "$main_fixture/fixture-passwall2"
     main_engine=/usr/lib/home-gateway/incidents.uc
-    main_intent() { HG_NOTIFICATION_STATE_DIR="$main_fixture" ucode "$main_engine" /usr/bin/gateway "$@"; }
+    main_intent() {
+        HG_NOTIFICATION_STATE_DIR="$main_fixture" HG_MAIN_CONFIG_FILE="$main_fixture/fixture-passwall2" ucode "$main_engine" /usr/bin/gateway "$@"
+    }
     prepare_main_fixture() {
         printf '{"schema_version":1,"phase":"PREPARED","id":"0123456789abcdef0123456789abcdef","candidate":"trial_node","before_sha256":"%s"}\n' "${before%% *}" |
             main_intent transaction-intent
@@ -108,6 +110,14 @@ EOF
             cmp "$target" /etc/config/passwall2 &&
             [ "$(uci -q -c "$main_candidate_dir" get passwall2.socks_P8ART.node)" = old_node ]
     }
+    fixture_apply_restore() {
+        main_intent transaction-fixture-apply || return 1
+        cmp "$main_fixture/fixture-passwall2" "$main_fixture/main-intent.candidate" || return 1
+        main_intent transaction-fixture-restore || return 1
+        main_intent transaction-fixture-restore || return 1
+        cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2
+    }
+    check main_fixture_apply_restore fixture_apply_restore
     check main_snapshot_round_trip main_round_trip
 
     mkdir -p /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
