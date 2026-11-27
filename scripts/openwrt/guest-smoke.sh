@@ -110,14 +110,20 @@ EOF
             cmp "$target" /etc/config/passwall2 &&
             [ "$(uci -q -c "$main_candidate_dir" get passwall2.socks_P8ART.node)" = old_node ]
     }
-    fixture_apply_restore() {
-        main_intent transaction-fixture-apply || return 1
+    fixture_lan_timeout_rollback() {
+        local result=0
+        HG_MAIN_FIXTURE_UPTIME=100 main_intent transaction-fixture-apply || return 1
         cmp "$main_fixture/fixture-passwall2" "$main_fixture/main-intent.candidate" || return 1
-        main_intent transaction-fixture-restore || return 1
+        printf '%s' '{"socks":"OK"}' |
+            HG_MAIN_FIXTURE_UPTIME=115 main_intent transaction-fixture-verify || result=$?
+        [ "$result" -eq 75 ] || return 1
+        cmp "$main_fixture/fixture-passwall2" "$main_fixture/main-intent.candidate" || return 1
+        printf '%s' '{"socks":"OK"}' |
+            HG_MAIN_FIXTURE_UPTIME=131 main_intent transaction-fixture-verify || return 1
         main_intent transaction-fixture-restore || return 1
         cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2
     }
-    check main_fixture_apply_restore fixture_apply_restore
+    check main_fixture_lan_timeout_rollback fixture_lan_timeout_rollback
     check main_snapshot_round_trip main_round_trip
 
     mkdir -p /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state

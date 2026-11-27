@@ -1309,6 +1309,40 @@ function persist_main_fixture_phase(path, current, phase) {
         run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code == 0;
 }
 
+function main_fixture_uptime() {
+    let raw = getenv('HG_MAIN_FIXTURE_UPTIME') ??
+        split(trim(fs.readfile('/proc/uptime') ?? ''), ' ')[0];
+    return match(raw, /^[0-9]+([.][0-9]+)?$/) != null ? int(raw) : null;
+}
+
+function review_applied_main_fixture(current, target) {
+    if (current.phase != 'APPLIED')
+        return 'STOP_CONFIG_CONFLICT';
+    let sample;
+    let raw = fs.stdin.read(4097);
+    if (type(raw) == 'string' && length(raw) <= 4096) {
+        try { sample = json(raw); } catch (err) {}
+    }
+    if (type(sample) != 'object' || index([ 'OK', 'FAILED', 'UNKNOWN' ], sample.socks) < 0)
+        return 'INVALID_INPUT';
+
+    return main_transaction_decision({
+        expected: {
+            phase: 'VERIFYING', consumed: false, token: current.token,
+            boot_id: current.boot_id, apply_uptime: current.apply_uptime,
+            deadline_uptime: current.deadline_uptime,
+            before_sha256: current.before_sha256, applied_sha256: current.candidate_sha256
+        },
+        boot_id: trim(fs.readfile('/proc/sys/kernel/random/boot_id') ?? ''),
+        received_uptime: main_fixture_uptime(),
+        config_sha256: main_snapshot_matches(target, current.candidate_sha256) ?
+            current.candidate_sha256 : null,
+        socks: sample.socks,
+        receipt: sample.receipt
+    });
+
+}
+
 function advance_main_fixture(mode, path, current, snapshot, candidate) {
     // Only the disposable fixture uses these writes. No production apply entry point.
     if (match(STATE_DIR, /^\/tmp\/hg-main-fixture\.[a-zA-Z0-9_]+$/) == null ||
@@ -1318,6 +1352,23 @@ function advance_main_fixture(mode, path, current, snapshot, candidate) {
     if (getenv('HG_MAIN_CONFIG_FILE') != target)
         return 70;
 
+    if (mode == 'fixture-verify') {
+        let decision = review_applied_main_fixture(current, target);
+        switch (decision) {
+        case 'ROLLBACK':
+            mode = 'fixture-restore';
+            break;
+        case 'COMMIT':
+            return persist_main_fixture_phase(path, current, 'COMMITTED') ? 0 : 70;
+        case 'WAIT_FOR_VERIFICATION':
+        case 'STOP_CONFIG_CONFLICT':
+            return 75;
+        case 'INVALID_INPUT':
+            return 2;
+        default:
+            return 70;
+        }
+    }
     let applying = mode == 'fixture-apply';
     let pending = applying ? 'APPLYING' : 'RESTORING';
     let finished = applying ? 'APPLIED' : 'ROLLED_BACK';
@@ -1333,6 +1384,17 @@ function advance_main_fixture(mode, path, current, snapshot, candidate) {
         return 75;
     if (already_written && current.phase == 'PREPARED')
         return 75;
+    if (applying && current.phase == 'PREPARED') {
+        let uptime = main_fixture_uptime();
+        let token = replace(trim(fs.readfile('/proc/sys/kernel/random/uuid') ?? ''), /-/g, '');
+        let boot = trim(fs.readfile('/proc/sys/kernel/random/boot_id') ?? '');
+        if (uptime == null || match(token, /^[a-f0-9]{32}$/) == null || !length(boot))
+            return 70;
+        current.token = token;
+        current.boot_id = boot;
+        current.apply_uptime = uptime;
+        current.deadline_uptime = uptime + 30;
+    }
     if (!persist_main_fixture_phase(path, current, pending))
         return 70;
     if (!already_written) {
@@ -1378,14 +1440,14 @@ function main_intent(mode) {
     let fixture_phase = current == null ? null : current.phase;
     let prepared_fields = current == null ? null : { ...current, phase: 'PREPARED' };
     if (existing != null && (!valid_prepared_main(prepared_fields) ||
-        index([ 'PREPARED', 'APPLYING', 'APPLIED', 'RESTORING', 'ROLLED_BACK' ], fixture_phase) < 0 ||
+        index([ 'PREPARED', 'APPLYING', 'APPLIED', 'RESTORING', 'ROLLED_BACK', 'COMMITTED' ], fixture_phase) < 0 ||
         (fixture_phase != 'PREPARED' && current.candidate_sha256 == null) ||
         !main_snapshot_matches(snapshot, current.before_sha256) ||
         (current.candidate_sha256 != null &&
          (type(current.candidate_sha256) != 'string' || match(current.candidate_sha256, /^[a-f0-9]{64}$/) == null ||
           !main_snapshot_matches(staged_path, current.candidate_sha256))))) {
         rc = 70;
-    } else if (mode == 'fixture-apply' || mode == 'fixture-restore') {
+    } else if (mode == 'fixture-apply' || mode == 'fixture-restore' || mode == 'fixture-verify') {
         rc = advance_main_fixture(mode, path, current, snapshot, staged_path);
     } else if (current != null && current.phase != 'PREPARED' &&
                (mode == 'prepare' || mode == 'stage')) {
@@ -1457,6 +1519,9 @@ case 'recovery-review':
     break;
 case 'transaction-intent':
     rc = main_intent('prepare');
+    break;
+case 'transaction-fixture-verify':
+    rc = main_intent('fixture-verify');
     break;
 case 'transaction-fixture-apply':
     rc = main_intent('fixture-apply');
