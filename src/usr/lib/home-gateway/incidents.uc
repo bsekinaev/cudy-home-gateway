@@ -1101,6 +1101,45 @@ function run_selftest() {
     return 0;
 }
 
+function recovery_order(input, now) {
+    let allowed = input?.allowed;
+    if (input?.schema_version != 1 || type(allowed) != 'array' || length(allowed) > 32)
+        return null;
+    let order = [];
+    for (let id in allowed) {
+        if (type(id) != 'string' || match(id, /^[a-zA-Z0-9_]{1,64}$/) == null ||
+            index(order, id) >= 0)
+            return null;
+        push(order, id);
+    }
+
+    let report = input.report;
+    if (report?.complete != true || report?.schema_version != 1 ||
+        type(input.context) != 'string' || match(input.context, /^[a-f0-9]{64}$/) == null ||
+        report.context != input.context || type(report.generated_at) != 'int' ||
+        report.generated_at <= 0 || report.generated_at > now ||
+        now - report.generated_at > 21600 || type(report.ranked) != 'array' ||
+        length(report.ranked) > 128)
+        return { schema_version: 1, source: 'configured', order };
+
+    let ranked = [];
+    let seen = [];
+    for (let row in report.ranked) {
+        if (type(row?.id) != 'string' || match(row.id, /^[a-zA-Z0-9_]{1,64}$/) == null ||
+            type(row.eligible) != 'bool' || index(seen, row.id) >= 0)
+            return { schema_version: 1, source: 'configured', order };
+        push(seen, row.id);
+        if (row.eligible && index(allowed, row.id) >= 0)
+            push(ranked, row.id);
+    }
+    if (length(ranked) == 0)
+        return { schema_version: 1, source: 'configured', order };
+    for (let id in allowed)
+        if (index(ranked, id) < 0)
+            push(ranked, id);
+    return { schema_version: 1, source: 'vtest', order: ranked };
+}
+
 let rc;
 
 switch (MODE) {
@@ -1112,6 +1151,16 @@ case 'recovery-review':
         changes_applied: false
     });
     rc = 0;
+    break;
+case 'recovery-order':
+    let input;
+    let raw = fs.stdin.read(32769);
+    if (type(raw) == 'string' && length(raw) <= 32768) {
+        try { input = json(raw); } catch (err) {}
+    }
+    let result = recovery_order(input, time());
+    if (result != null) printf('%J\n', result);
+    rc = result == null ? 2 : 0;
     break;
 case 'recovery-history':
     printf('%J\n', { schema_version: 1, reviews: load_runtime().recovery_reviews ?? [] });
