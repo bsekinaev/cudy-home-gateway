@@ -372,20 +372,26 @@ function build_vtest() {
     let cap = data?.latest?.capability;
     // Numbers only: provider node IDs, names, locations and errors stay local.
     function count(value) { return type(value) == 'int' && value >= 0 && value <= 4096 ? `${value}` : '?'; }
-    let rows = [ '🧪 Результаты vtest · только просмотр',
-        `Тест: ${data?.provider?.installed == true ? 'найден' : 'не подтверждён'}`,
-        `Расписание: ${data?.cron_configured == true ? 'настроено' : 'не подтверждено'}` ];
+    let rows = [ '🧪 Результаты vtest' ];
+    if (summary != null)
+        push(rows, `Подходят для VPN: ${count(summary.eligible)} из ${count(summary.nodes)} узлов`);
+    if (type(summary?.top) == 'array' && length(summary.top) > 0) {
+        push(rows, 'Лучшие узлы по последнему отчёту');
+        for (let item in slice(summary.top, 0, 3)) {
+            if (type(item?.country) == 'string' && match(item.country, /^[A-Z]{2}$/) &&
+                (type(item.mbps) == 'int' || type(item.mbps) == 'double') &&
+                type(item.latency_ms) == 'int')
+                push(rows, `• ${item.country} · ${item.mbps} Мбит/с · ${item.latency_ms} мс`);
+        }
+    }
     if (speed != null)
         push(rows, `Замеры скорости: ${count(speed.samples)}, успешных: ${count(speed.success)}, с ошибкой: ${count(speed.failed)}`);
-    if (summary != null)
-        push(rows, `Сводка: ${count(summary.nodes)}, подходят: ${count(summary.eligible)}`);
     if (cap != null)
         push(rows, `Проверка доступа: ${count(cap.nodes)}, подходят: ${count(cap.eligible)}`);
     if (speed == null && summary == null && cap == null)
-        push(rows, 'Нет проверенных результатов последнего теста.');
-    push(rows, `История наблюдений: ${type(data?.history) == 'array' ? length(data.history) : 'нет данных'}`);
-    push(rows, 'Состояние запуска: UNKNOWN — по файлам не определяется.');
-    push(rows, 'Эта панель показывает сохранённые результаты Smart Test.');
+        push(rows, 'Нет читаемого отчёта последнего теста.');
+    if (type(data?.history) == 'array')
+        push(rows, `Сохранённых запусков: ${length(data.history)}`);
     let recovery = run_gateway([ 'recovery-history' ]);
     if (recovery.code == 0) {
         let observed;

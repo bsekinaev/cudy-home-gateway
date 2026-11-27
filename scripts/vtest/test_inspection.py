@@ -213,7 +213,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         calls = self.poll(self.message())
         self.assertIn(['vtest', '--json'], calls)
         sent = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
-        self.assertIn('UNKNOWN', sent[3])
+        self.assertIn('Нет читаемого отчёта', sent[3])
         self.assertIn('Автовосстановление MAIN в Home Gateway ещё не включено.', sent[3])
         self.assertIn('Последнее наблюдение MAIN — проверить резервы', sent[3])
         self.assertNotIn('PRIVATE_', sent[3])
@@ -240,7 +240,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         calls = self.poll({'update_id': 3, 'callback_query': callback})
         self.assertEqual(calls.count(['vtest', '--json']), count + 1)
         edit = next(c for c in calls if c[:2] == ['telegram', 'edit-message'])
-        self.assertIn('UNKNOWN', edit[4])
+        self.assertIn('Нет читаемого отчёта', edit[4])
 
     def test_expired_callback_rejected(self):
         self.poll(self.message())
@@ -305,9 +305,9 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
     def test_explicit_results_label_no_question_mark_wall_or_run_button(self):
         calls = self.nav('vtest')
         edit = [c for c in calls if c[:2] == ['telegram', 'edit-message']][-1]
-        self.assertIn('Нет проверенных результатов', edit[4])
+        self.assertIn('Нет читаемого отчёта', edit[4])
         self.assertNotIn('?', edit[4])
-        self.assertIn('только просмотр', edit[4])
+        self.assertIn('Результаты vtest', edit[4])
         self.assertNotIn('prepare-', edit[5])
 
     def test_identical_refresh_does_not_spam_or_rotate_capability_state(self):
@@ -448,7 +448,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         cap = 'stage\tnode_id\tname\teligible\tgoogle_pass\tchatgpt_pass\topenai_pass\thttps_pass\tloc\n'
         (directory / 'latest-capability.tsv').write_text(cap + 'cap_only\tprivate-id\tPRIVATE_NODE\tNO\t0\t0\t0\t0\tXX\n')
         data = self.inspect()
-        self.assertEqual(data['latest']['summary'], dict(nodes=1, eligible=1))
+        self.assertEqual(data['latest']['summary'], dict(nodes=1, eligible=1, top=[dict(country='XX', mbps=12.1, latency_ms=20)]))
         self.assertEqual(data['latest']['capability'], dict(nodes=1, eligible=0))
 
 

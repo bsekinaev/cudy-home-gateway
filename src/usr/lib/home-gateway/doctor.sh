@@ -274,7 +274,8 @@ hg_vtest_result_json() (
     head -c 262145 "$input" > "$snapshot" 2>/dev/null || exit 1
     hg_vtest_size_within "$snapshot" 262144 || exit 1
     # A provider may be halfway through writing the last record.
-    [ "$(tail -c 1 "$snapshot" | od -An -tu1 | tr -d ' \n')" = 10 ] || exit 1
+    last="$(tail -c 1 "$snapshot" && printf x)" || exit 1
+    [ "$last" = "$(printf '\nx')" ] || exit 1
     if [ "$output" = ranking ]; then
         [ "$kind" = summary ] || exit 1
         case "${3:-}" in ''|*[!a-f0-9]*) exit 1 ;; esac
@@ -292,7 +293,7 @@ hg_vtest_result_json() (
         {
             if (++rows > 4096 || length($0) > 4096) { bad=1; next }
             if (kind == "raw") {
-                if (NF != 15 || (length($1) != 15 || $1 !~ /^[0-9]+-[0-9]+$/ || substr($1,9,1) != "-") || ($7 != "OK" && $7 != "FAIL")) bad=1
+                if (NF != 15 || (length($1) != 15 || $1 !~ /^[0-9]+-[0-9]+$/ || substr($1,9,1) != "-") || ($7 != "OK" && $7 != "FAIL" && $7 != "STALL")) bad=1
                 if (expected != "" && $1 != expected) bad=1
                 if (row_run != "" && $1 != row_run) bad=1
                 row_run=$1
@@ -304,7 +305,14 @@ hg_vtest_result_json() (
                 if (kind == "summary") {
                     for (i=3;i<=15;i++) if (i != 4 && i != 12 && $i !~ /^[0-9]+([.][0-9]+)?$/) bad=1
                 } else for (i=5;i<=8;i++) if ($i !~ /^[0-9]+$/) bad=1
-                if ($col == "YES") eligible++
+                if ($col == "YES") {
+                    eligible++
+                    if (kind == "summary" && eligible <= 3 && $16 ~ /^[A-Z][A-Z]$/ &&
+                        $5 ~ /^[0-9]+([.][0-9]+)?$/ && $6 ~ /^[0-9]+$/) {
+                        top = top separator sprintf("{\"country\":\"%s\",\"mbps\":%s,\"latency_ms\":%s}", $16, $5+0, $6+0)
+                        separator = ","
+                    }
+                }
                 if (output == "ranking") {
                     if (rows > 128 || length($1) > 64 || $1 !~ /^[a-zA-Z0-9_]+$/ || seen[$1]++) bad=1
                     ids[rows]=$1
@@ -320,6 +328,7 @@ hg_vtest_result_json() (
                     printf "%s{\"id\":\"%s\",\"eligible\":%s}", (i==1 ? "" : ","), ids[i], accepted[i]
                 printf "]"
             } else if (kind == "raw") printf "{\"samples\":%d,\"success\":%d,\"failed\":%d}", rows, success, failed
+            else if (kind == "summary") printf "{\"nodes\":%d,\"eligible\":%d,\"top\":[%s]}", rows, eligible, top
             else printf "{\"nodes\":%d,\"eligible\":%d}", rows, eligible
         }
     ' "$snapshot"
