@@ -40,6 +40,8 @@ CUDY Home Gateway
   gateway candidate-check NODE  Проверить настроенный резерв через отдельный SOCKS
   gateway recovery-history  Показать решения наблюдения MAIN
   gateway recovery-review   Оценить необходимость поиска резерва MAIN
+  gateway main-transaction preflight NODE
+                           Живая проверка резерва и текущего владельца MAIN
   gateway main-transaction plan NODE
                            Read-only проверка условий; смена MAIN заблокирована
   gateway actions [show|prepare ACTION USER CHAT MESSAGE|confirm TOKEN USER CHAT MESSAGE]
@@ -144,9 +146,9 @@ main() {
             printf '%s\n' "$snapshot" | ucode "${HG_LIBDIR}/incidents.uc" "$0" recovery-review
             ;;
         main-transaction)
-            if [ "$#" -eq 3 ] && [ "$2" = plan ]; then
+            if [ "$#" -eq 3 ] && { [ "$2" = plan ] || [ "$2" = preflight ]; }; then
                 hg_load_module vpn
-                hg_main_transaction_plan "$3"
+                hg_main_transaction_plan "$3" "$2"
             elif [ "$#" -eq 2 ]; then
                 case "$2" in
                     apply|rollback|recover)

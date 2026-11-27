@@ -44,7 +44,7 @@ print(data[key])
     def run_plan(self, candidate='candidate_private_id', mode='plan'):
         (self.base / 'data').write_text(json.dumps(self.data))
         args = [os.environ.get('HG_TEST_BUSYBOX', 'busybox'), 'ash', str(ROOT / 'src/usr/bin/gateway'), 'main-transaction', mode]
-        if mode == 'plan': args.append(candidate)
+        if mode in ('plan', 'preflight'): args.append(candidate)
         result = subprocess.run(args, env=self.env, capture_output=True, text=True, timeout=10)
         self.assertNotIn('private-credential-detail', result.stdout + result.stderr)
         return result
@@ -116,6 +116,46 @@ print(data[key])
         result = self.run_plan()
         self.assertEqual(json.loads(result.stdout)['status'], 'UCI_READ_FAILED')
         self.assertLess(time.monotonic() - started, 8)
+
+    def test_preflight_checks_reachability_drift_and_runtime_writer(self):
+        private_lib = self.base / 'lib'
+        private_lib.mkdir()
+        runtime_lib = ROOT / 'src/usr/lib/home-gateway'
+        (private_lib / 'common.sh').write_bytes((runtime_lib / 'common.sh').read_bytes())
+        (private_lib / 'vpn.sh').write_text((runtime_lib / 'vpn.sh').read_text() + """
+hg_candidate_check() {
+    case "$HG_PREFLIGHT_TEST" in
+        drift) printf changed > "$HG_MAIN_CONFIG_FILE" ;;
+        failed) return 70 ;;
+    esac
+}
+""")
+        ps = self.base / 'bin' / 'ps'
+        ps.write_text("""#!/bin/sh
+if [ "$HG_PREFLIGHT_TEST" = writer ]; then
+    echo '4321 root /bin/sh /usr/share/passwall2/socks_auto_switch.sh socks_P8ART'
+fi
+""")
+        ps.chmod(0o755)
+        config = self.base / 'passwall2'
+        self.env.update(HG_LIBDIR=str(private_lib), HG_MAIN_CONFIG_FILE=str(config))
+        for case, expected, rc in (
+            ('ok', 'CANDIDATE_REACHABLE', 0),
+            ('drift', 'CONFIG_CHANGED', 70),
+            ('failed', 'CANDIDATE_PROBE_FAILED', 70),
+            ('writer', 'RUNTIME_WRITER_PRESENT_OR_UNKNOWN', 70),
+        ):
+            with self.subTest(case=case):
+                config.write_text('private configuration')
+                self.env['HG_PREFLIGHT_TEST'] = case
+                result = self.run_plan(mode='preflight')
+                self.assertEqual(result.returncode, rc, result.stderr)
+                data = json.loads(result.stdout)
+                self.assertEqual(data['status'], expected)
+                self.assertIs(data['preflight_passed'], rc == 0)
+                self.assertFalse(data['apply_supported'])
+                self.assertFalse(data['snapshot_ready'])
+                self.assertNotIn('private', result.stdout)
 
     def test_mutation_modes_never_touch_uci(self):
         for mode in ('apply', 'rollback', 'recover'):

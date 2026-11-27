@@ -271,6 +271,7 @@ hg_vpn_collect() {
 # before any MAIN mutation can be implemented. No UCI set/commit or restart here.
 hg_main_transaction_plan() (
     candidate="$1"
+    mode="${2:-plan}"
     case "$candidate" in ''|*[!a-zA-Z0-9_]* )
         printf '{"schema_version":1,"status":"INVALID_CANDIDATE","apply_supported":false}\n'
         exit 2 ;;
@@ -300,6 +301,25 @@ hg_main_transaction_plan() (
         case "$value" in *"$newline"*) return 1 ;; esac
         printf '%s' "$value"
     }
+    hg_main_preflight_hash() {
+        [ -f "$source_config" ] && [ ! -L "$source_config" ] || return 1
+        bytes="$(stat -c %s "$source_config")" || return 1
+        case "$bytes" in ''|*[!0-9]*) return 1 ;; esac
+        [ "${#bytes}" -le 6 ] && [ "$bytes" -gt 0 ] && [ "$bytes" -le 262144 ] || return 1
+        sha256sum "$source_config" | awk '{ print $1 }'
+    }
+    hg_main_preflight_writer_clear() {
+        processes="$(ps w 2>/dev/null)" || return 1
+        printf '%s\n' "$processes" | awk '
+            /\/usr\/share\/passwall2\/socks_auto_switch[.]sh[[:space:]]+socks_P8ART([[:space:]]|$)/ { found = 1 }
+            END { exit found ? 1 : 0 }
+        '
+    }
+    if [ "$mode" = preflight ]; then
+        source_config="${HG_MAIN_CONFIG_FILE:-/etc/config/passwall2}"
+        before="$(hg_main_preflight_hash)" || hg_main_plan_blocked CONFIG_READ_FAILED
+        [ "${#before}" -eq 64 ] || hg_main_plan_blocked CONFIG_READ_FAILED
+    fi
     command -v uci >/dev/null 2>&1 || hg_main_plan_blocked UCI_UNAVAILABLE
     pending="$(timeout -k 1 5 uci -q changes passwall2 2>/dev/null | head -c 65)" || hg_main_plan_blocked UCI_READ_FAILED
     [ -z "$pending" ] || hg_main_plan_blocked UNCOMMITTED_CONFIG
@@ -319,6 +339,19 @@ hg_main_transaction_plan() (
     # Re-observe pending edits; still no claim of generation-consistent reads.
     pending="$(timeout -k 1 5 uci -q changes passwall2 2>/dev/null | head -c 65)" || hg_main_plan_blocked UCI_READ_FAILED
     [ -z "$pending" ] || hg_main_plan_blocked UNCOMMITTED_CONFIG
+    if [ "$mode" = preflight ]; then
+        [ "$candidate" != "$current" ] || hg_main_plan_blocked CANDIDATE_ALREADY_CONFIGURED
+        hg_main_preflight_writer_clear || hg_main_plan_blocked RUNTIME_WRITER_PRESENT_OR_UNKNOWN
+        [ "$(hg_main_preflight_hash)" = "$before" ] || hg_main_plan_blocked CONFIG_CHANGED
+        hg_candidate_check "$candidate" >/dev/null 2>&1 || hg_main_plan_blocked CANDIDATE_PROBE_FAILED
+        pending="$(timeout -k 1 5 uci -q changes passwall2 2>/dev/null | head -c 65)" ||
+            hg_main_plan_blocked UCI_READ_FAILED
+        [ -z "$pending" ] || hg_main_plan_blocked UNCOMMITTED_CONFIG
+        hg_main_preflight_writer_clear || hg_main_plan_blocked RUNTIME_WRITER_PRESENT_OR_UNKNOWN
+        [ "$(hg_main_preflight_hash)" = "$before" ] || hg_main_plan_blocked CONFIG_CHANGED
+        printf '{"schema_version":1,"status":"CANDIDATE_REACHABLE","apply_supported":false,"preflight_passed":true,"snapshot_ready":false}\n'
+        exit 0
+    fi
     same=false
     [ "$candidate" != "$current" ] || same=true
     printf '{"schema_version":1,"status":"PREFLIGHT_ADAPTER_REQUIRED","candidate_exists":true,"same_as_configured_main":%s,"observation_only":true,"apply_supported":false,"preflight_passed":false,"snapshot_ready":false,"blockers":["AUDITED_PASSWALL_HELPERS","WRITER_COORDINATION","LAN_TAILSCALE_RECOVERY","TRANSACTION_SNAPSHOT_JOURNAL"]}\n' "$same"
@@ -471,6 +504,7 @@ hg_candidate_check() (
 
     [ "$#" -eq 1 ] || exit 2
     candidate="$1"
+    mode="${2:-plan}"
     case "$candidate" in ''|*[!a-zA-Z0-9_]*) exit 2 ;; esac
     [ "${#candidate}" -le 64 ] || exit 2
 
