@@ -1101,6 +1101,27 @@ function run_selftest() {
     return 0;
 }
 
+function valid_rank_receipt(input, now) {
+    let report = input.report;
+    let receipt = report?.receipt;
+    let expected = input.expected;
+    return receipt?.schema_version == 1 && receipt.exit_code == 0 &&
+        type(expected?.provider_sha256) == 'string' &&
+        match(expected.provider_sha256, /^[a-f0-9]{64}$/) != null &&
+        receipt.provider_sha256 == expected.provider_sha256 &&
+        type(expected?.summary_sha256) == 'string' &&
+        match(expected.summary_sha256, /^[a-f0-9]{64}$/) != null &&
+        receipt.summary_sha256 == expected.summary_sha256 &&
+        type(expected?.boot_id) == 'string' &&
+        match(expected.boot_id, /^[a-f0-9-]{36}$/) != null &&
+        receipt.boot_id == expected.boot_id &&
+        type(receipt.run_id) == 'string' && match(receipt.run_id, /^[0-9]{8}-[0-9]{6}$/) != null &&
+        receipt.context_before == input.context && receipt.context_after == input.context &&
+        type(receipt.started_at) == 'int' && receipt.started_at > 0 &&
+        type(receipt.finished_at) == 'int' && receipt.finished_at == report.generated_at &&
+        receipt.finished_at >= receipt.started_at && receipt.finished_at <= now;
+}
+
 function recovery_order(input, now) {
     let allowed = input?.allowed;
     if (input?.schema_version != 1 || type(allowed) != 'array' || length(allowed) > 32)
@@ -1114,7 +1135,7 @@ function recovery_order(input, now) {
     }
 
     let report = input.report;
-    if (report?.complete != true || report?.schema_version != 1 ||
+    if (report?.complete != true || report?.schema_version != 1 || !valid_rank_receipt(input, now) ||
         type(input.context) != 'string' || match(input.context, /^[a-f0-9]{64}$/) == null ||
         report.context != input.context || type(report.generated_at) != 'int' ||
         report.generated_at <= 0 || report.generated_at > now ||
