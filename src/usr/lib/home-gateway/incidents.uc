@@ -1348,8 +1348,11 @@ function review_applied_main_fixture(current, target, watch) {
 
 function advance_main_fixture(mode, path, current, snapshot, candidate) {
     // Only the disposable fixture uses these writes. No production apply entry point.
-    if (match(STATE_DIR, /^\/tmp\/hg-main-fixture\.[a-zA-Z0-9_]+$/) == null ||
-        current?.candidate_sha256 == null)
+    let temporary_fixture = match(STATE_DIR, /^\/tmp\/hg-main-fixture\.[a-zA-Z0-9_]+$/) != null;
+    let persistent_fixture = STATE_DIR == '/etc/hg-vm-lab/main-boot-fixture' &&
+        trim(fs.readfile('/etc/hg-disposable-vm') ?? '') == 'HG_NETWORKLESS_OPENWRT_VM_V1' &&
+        trim(run_command('/bin/uname -m').output) == 'x86_64';
+    if ((!temporary_fixture && !persistent_fixture) || current?.candidate_sha256 == null)
         return 70;
     let target = STATE_DIR + '/fixture-passwall2';
     if (getenv('HG_MAIN_CONFIG_FILE') != target)

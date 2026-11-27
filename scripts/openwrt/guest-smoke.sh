@@ -279,6 +279,17 @@ SERVICE
     nft -s list ruleset > /tmp/hg-vm-lab/nft.after
     check routes_unchanged cmp -s /tmp/hg-vm-lab/routes.before /tmp/hg-vm-lab/routes.after
     check nft_unchanged cmp -s /tmp/hg-vm-lab/nft.before /tmp/hg-vm-lab/nft.after
+    fixture_before_reboot() {
+        main_fixture="$LAB/main-boot-fixture"
+        mkdir -m 700 "$main_fixture" || return 1
+        cp /etc/config/passwall2 "$main_fixture/fixture-passwall2" &&
+            prepare_main_fixture &&
+            main_intent transaction-stage &&
+            main_intent transaction-fixture-apply &&
+            cmp "$main_fixture/fixture-passwall2" "$main_fixture/main-intent.candidate"
+    }
+    check main_fixture_applied_before_reboot fixture_before_reboot
+
     cat /proc/sys/kernel/random/boot_id > "$LAB/old-boot"
     touch "$LAB/reboot-pending"
     sync
@@ -305,6 +316,13 @@ check admission_hardlink sh -c '! sh /usr/libexec/home-gateway-deploy/migration-
 rm /etc/home-gateway-migration/phase-hardlink
 check interrupted_apply_not_replayed refused ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; let s=open_state("", false, null); s.transition("APPLYING");'
 check reboot_reacquires_fence ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; let s=open_state("", false, null); s.fence();'
+recover_main_after_reboot() {
+    local fixture="$LAB/main-boot-fixture"
+    HG_NOTIFICATION_STATE_DIR="$fixture" HG_MAIN_CONFIG_FILE="$fixture/fixture-passwall2"         ucode /usr/lib/home-gateway/incidents.uc /usr/bin/gateway transaction-fixture-watch || return 1
+    [ "$(json_value "$fixture/main-intent.json" data.phase)" = ROLLED_BACK ] &&
+        cmp "$fixture/fixture-passwall2" /etc/config/passwall2
+}
+check main_fixture_rollback_after_reboot recover_main_after_reboot
 check reboot_changed_boot sh -c '[ "$(cat /etc/hg-vm-lab/old-boot)" != "$(cat /proc/sys/kernel/random/boot_id)" ]'
 check reboot_persisted_hg sh -c 'for area in config secrets state; do [ "$(cat /etc/home-gateway/$area/vm-proof)" = SYNTHETIC_VM_BACKUP_PROOF ] || exit 1; done'
 check recovery_projects_pending action show
