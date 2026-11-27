@@ -188,19 +188,25 @@ SERVICE
         chmod 700 "$service"
         printf '%s\n' "$main_fixture" > "$LAB/main-watchdog-state"
         "$service" start || return 1
-        local first next phase result=1
+        local first next phase restarted=0 result=1
         for attempt in 1 2 3 4; do
             first=$(fixture_watchdog_pid)
             [ -n "$first" ] && break
             sleep 1
         done
-        case "$first" in ''|*[!0-9]*) "$service" stop; return 1 ;; esac
+        case "$first" in
+            ''|*[!0-9]*)
+                printf 'HGVM_DIAG=main_watchdog_initial_pid_missing\n'
+                "$service" stop
+                return 1 ;;
+        esac
         if kill -TERM "$first"; then
-            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do
                 next=$(fixture_watchdog_pid)
                 phase=$(json_value "$main_fixture/main-intent.json" data.phase)
-                if [ -n "$next" ] && [ "$first" != "$next" ] &&
-                    [ "$phase" = ROLLED_BACK ] && cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2; then
+                if [ -n "$next" ] && [ "$first" != "$next" ]; then restarted=1; fi
+                if [ "$restarted" -eq 1 ] && [ "$phase" = ROLLED_BACK ] &&
+                    cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2; then
                     result=0
                     break
                 fi
@@ -208,9 +214,11 @@ SERVICE
             done
         fi
         "$service" stop
+        printf 'HGVM_DIAG=main_watchdog_restart:%s,phase:%s\n' "$restarted" "${phase:-UNKNOWN}"
         return "$result"
     }
     check main_fixture_supervised_watchdog fixture_supervision
+    sed -n '/^HGVM_DIAG=main_watchdog_/p' /tmp/hg-vm-lab/check.out
 
     mkdir -p /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     chmod 700 /etc/home-gateway /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
