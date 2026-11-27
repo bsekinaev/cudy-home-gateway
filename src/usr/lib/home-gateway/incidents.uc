@@ -1256,7 +1256,51 @@ function prepare_main_snapshot(path, expected) {
     return run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code == 0;
 }
 
-function main_intent(prepare) {
+function stage_main_config(snapshot, current) {
+    if (!prepare_main_snapshot(snapshot, current.before_sha256))
+        return null;
+
+    let temporary = run_command('umask 077; mktemp -d ' + shellquote(STATE_DIR + '/main-stage.XXXXXX'));
+    if (temporary.code != 0)
+        return null;
+    let directory = trim(temporary.output);
+    if (index(directory, STATE_DIR + '/main-stage.') != 0 || fs.lstat(directory)?.type != 'directory')
+        return null;
+    let config = directory + '/passwall2';
+    let delta = directory + '/delta';
+    let staged_path = STATE_DIR + '/main-intent.candidate';
+    let staged = null;
+    if (fs.mkdir(delta, 0700) &&
+        run_command('/bin/cp ' + shellquote(snapshot) + ' ' + shellquote(config)).code == 0 &&
+        main_snapshot_matches(config, current.before_sha256)) {
+        let uci = '/sbin/uci -q -c ' + shellquote(directory) + ' -P ' + shellquote(delta);
+        let section = 'passwall2.socks_P8ART';
+        let kind = run_command(uci + ' get ' + shellquote('passwall2.' + current.candidate));
+        let profile = run_command(uci + ' get ' + shellquote(section));
+        let active = run_command(uci + ' get ' + shellquote(section + '.node'));
+        if (kind.code == 0 && trim(kind.output) == 'nodes' &&
+            profile.code == 0 && trim(profile.output) == 'socks' &&
+            active.code == 0 && trim(active.output) != current.candidate &&
+            run_command(uci + ' set ' + shellquote(section + '.node=' + current.candidate)).code == 0 &&
+            run_command(uci + ' commit passwall2').code == 0 && fs.chmod(config, 0600)) {
+            let hash = run_command('/usr/bin/sha256sum ' + shellquote(config));
+            let digest = substr(hash.output, 0, 64);
+            if (hash.code == 0 && digest != current.before_sha256 &&
+                main_snapshot_matches(config, digest) &&
+                run_command('/bin/busybox fsync ' + shellquote(config)).code == 0 &&
+                fs.rename(config, staged_path) &&
+                run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code == 0)
+                staged = digest;
+        }
+    }
+    fs.unlink(config);
+    fs.unlink(delta + '/passwall2');
+    fs.rmdir(delta);
+    fs.rmdir(directory);
+    return staged;
+}
+
+function main_intent(mode) {
     if (fs.lstat(STATE_DIR)?.type != 'directory')
         return 70;
     let path = STATE_DIR + '/main-intent.json';
@@ -1276,7 +1320,7 @@ function main_intent(prepare) {
     if (existing != null && (!valid_prepared_main(current) ||
         !main_snapshot_matches(snapshot, current.before_sha256))) {
         rc = 70;
-    } else if (prepare) {
+    } else if (mode == "prepare") {
         let payload;
         let raw = fs.stdin.read(2049);
         if (type(raw) == 'string' && length(raw) <= 2048) {
@@ -1304,8 +1348,15 @@ function main_intent(prepare) {
                 rc = 70;
         }
     }
-    if (rc == 0)
+    if (rc == 0 && mode == 'stage') {
+        let digest = current == null ? null : stage_main_config(snapshot, current);
+        if (digest == null)
+            rc = 70;
+        else
+            printf('%J\n', { schema_version: 1, candidate_sha256: digest });
+    } else if (rc == 0) {
         printf('%J\n', { schema_version: 1, transaction: current });
+    }
     lock.close();
     return rc;
 }
@@ -1323,10 +1374,13 @@ case 'recovery-review':
     rc = 0;
     break;
 case 'transaction-intent':
-    rc = main_intent(true);
+    rc = main_intent('prepare');
+    break;
+case 'transaction-stage':
+    rc = main_intent('stage');
     break;
 case 'transaction-state':
-    rc = main_intent(false);
+    rc = main_intent('read');
     break;
 case 'transaction-review':
     let transaction;

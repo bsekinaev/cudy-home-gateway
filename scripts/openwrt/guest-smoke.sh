@@ -75,6 +75,26 @@ EOF
     printf 'HGVM_DIAG=planner_status:%s\n' "$(json_value /tmp/hg-vm-lab/plan.json data.status)"
     check planner_preserves_uci test "$(sha256sum /etc/config/passwall2)" = "$before"
 
+    main_fixture="$LAB/main-transaction"
+    mkdir -m 700 "$main_fixture"
+    main_engine=/usr/lib/home-gateway/incidents.uc
+    main_intent() { HG_NOTIFICATION_STATE_DIR="$main_fixture" ucode "$main_engine" /usr/bin/gateway "$@"; }
+    prepare_main_fixture() {
+        printf '{"schema_version":1,"phase":"PREPARED","id":"0123456789abcdef0123456789abcdef","candidate":"trial_node","before_sha256":"%s"}\n' "${before%% *}" |
+            main_intent transaction-intent
+    }
+    check prepare_main_fixture prepare_main_fixture
+    check stage_main_fixture main_intent transaction-stage
+    check main_stage_keeps_live_config test "$(sha256sum /etc/config/passwall2)" = "$before"
+    check main_snapshot_matches_live cmp "$main_fixture/main-intent.passwall2" /etc/config/passwall2
+    main_candidate_dir="$LAB/main-candidate-read"
+    mkdir -m 700 "$main_candidate_dir"
+    if cp "$main_fixture/main-intent.candidate" "$main_candidate_dir/passwall2"; then
+        check main_candidate_node test "$(uci -q -c "$main_candidate_dir" get passwall2.socks_P8ART.node)" = trial_node
+    else
+        check main_candidate_node false
+    fi
+
     mkdir -p /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     chmod 700 /etc/home-gateway /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     printf '111\n' > /etc/home-gateway/secrets/telegram.user_id
