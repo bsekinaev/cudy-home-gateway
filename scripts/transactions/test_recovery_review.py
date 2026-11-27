@@ -155,13 +155,18 @@ class RecoveryReviewTests(unittest.TestCase):
                 })
 
     def test_prepared_intent_survives_process_restart_and_refuses_replacement(self):
+        import hashlib
         import os
         import tempfile
 
         intent = {'schema_version': 1, 'phase': 'PREPARED', 'id': 'a' * 32,
                   'candidate': 'allowed_backup', 'before_sha256': 'b' * 64}
         with tempfile.TemporaryDirectory() as directory:
-            env = dict(os.environ, HG_NOTIFICATION_STATE_DIR=directory)
+            config = Path(directory) / 'config'
+            config.write_bytes(b'config fixture\n')
+            intent['before_sha256'] = hashlib.sha256(config.read_bytes()).hexdigest()
+            env = dict(os.environ, HG_NOTIFICATION_STATE_DIR=directory,
+                       HG_MAIN_CONFIG_FILE=str(config))
 
             def invoke(mode, payload=None):
                 return subprocess.run(
@@ -172,11 +177,18 @@ class RecoveryReviewTests(unittest.TestCase):
 
             first = invoke('transaction-intent', intent)
             self.assertEqual(first.returncode, 0, first.stderr)
+            snapshot = Path(directory) / 'main-intent.passwall2'
+            self.assertEqual(snapshot.read_bytes(), config.read_bytes())
+            self.assertEqual(snapshot.stat().st_mode & 0o777, 0o600)
             read = invoke('transaction-state')
             self.assertEqual(json.loads(read.stdout)['transaction'], intent)
             self.assertEqual(invoke('transaction-intent', intent).returncode, 0)
             conflict = invoke('transaction-intent', {**intent, 'candidate': 'another'})
             self.assertEqual(conflict.returncode, 75)
             self.assertEqual(json.loads(invoke('transaction-state').stdout)['transaction'], intent)
+            config.write_bytes(b'changed')
+            self.assertEqual(invoke('transaction-intent', intent).returncode, 70)
+            snapshot.write_bytes(b'corrupt')
+            self.assertEqual(invoke('transaction-state').returncode, 70)
             (Path(directory) / 'main-intent.json').write_text('partial')
             self.assertEqual(invoke('transaction-intent', intent).returncode, 70)

@@ -1218,10 +1218,49 @@ function valid_prepared_main(value) {
         match(value.candidate, /^[a-zA-Z0-9_]{1,64}$/) != null;
 }
 
+function main_snapshot_matches(path, expected) {
+    let file = fs.lstat(path);
+    if (file?.type != 'file' || file.size <= 0 || file.size > 262144 ||
+        (file.mode & 0777) != 0600)
+        return false;
+    let hash = run_command('/usr/bin/sha256sum ' + shellquote(path));
+    return hash.code == 0 && substr(hash.output, 0, 64) == expected;
+}
+
+function prepare_main_snapshot(path, expected) {
+    let config = getenv('HG_MAIN_CONFIG_FILE') || '/etc/config/passwall2';
+    let source = fs.lstat(config);
+    if (source?.type != 'file' || source.size <= 0 || source.size > 262144)
+        return false;
+    let hash = run_command('/usr/bin/sha256sum ' + shellquote(config));
+    if (hash.code != 0 || substr(hash.output, 0, 64) != expected)
+        return false;
+
+    if (fs.lstat(path) != null)
+        return main_snapshot_matches(path, expected);
+
+    let result = run_command('umask 077; mktemp ' + shellquote(STATE_DIR + '/main-snapshot.XXXXXX'));
+    if (result.code != 0)
+        return false;
+    let temporary = trim(result.output);
+    if (index(temporary, STATE_DIR + '/main-snapshot.') != 0 || fs.lstat(temporary)?.type != 'file')
+        return false;
+    let copied = run_command('/bin/busybox head -c 262145 ' + shellquote(config) +
+        ' > ' + shellquote(temporary));
+    if (copied.code != 0 || !main_snapshot_matches(temporary, expected) ||
+        run_command('/bin/busybox fsync ' + shellquote(temporary)).code != 0 ||
+        !fs.rename(temporary, path)) {
+        fs.unlink(temporary);
+        return false;
+    }
+    return run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code == 0;
+}
+
 function main_intent(prepare) {
     if (fs.lstat(STATE_DIR)?.type != 'directory')
         return 70;
     let path = STATE_DIR + '/main-intent.json';
+    let snapshot = STATE_DIR + '/main-intent.passwall2';
     let lock = fs.open(STATE_DIR + '/main-intent.lock', 'ae');
     if (!lock)
         return 70;
@@ -1234,7 +1273,8 @@ function main_intent(prepare) {
     let current = existing?.type == 'file' && existing.size <= 2048 ?
         read_json_file(path, null) : null;
     let rc = 0;
-    if (existing != null && !valid_prepared_main(current)) {
+    if (existing != null && (!valid_prepared_main(current) ||
+        !main_snapshot_matches(snapshot, current.before_sha256))) {
         rc = 70;
     } else if (prepare) {
         let payload;
@@ -1248,6 +1288,8 @@ function main_intent(prepare) {
                    current.before_sha256 != payload.before_sha256 ||
                    current.candidate != payload.candidate)) {
             rc = 75;
+        } else if (!prepare_main_snapshot(snapshot, payload.before_sha256)) {
+            rc = 70;
         } else {
             if (current == null) {
                 current = {
