@@ -93,3 +93,32 @@ class RecoveryReviewTests(unittest.TestCase):
                 data = json.loads(result.stdout)
                 self.assertEqual(data['order'], expected)
                 self.assertEqual(data['source'], source)
+
+    def test_lan_review_requires_matching_unconsumed_operation_and_successes(self):
+        token = 'a' * 32
+        expected = {'token': token, 'phase': 'VERIFYING', 'consumed': False,
+                    'boot_id': 'current-boot', 'apply_uptime': 10, 'deadline_uptime': 35}
+        checks = [
+            {'Target': url, 'HTTP': '204', 'CurlExit': 0, 'Passed': True}
+            for url in ('https://www.google.com/generate_204', 'https://cp.cloudflare.com/')
+        ]
+        receipt = {'schema_version': 1, 'token': token, 'checks': checks}
+        sample = {'expected': expected, 'receipt': receipt,
+                  'boot_id': 'current-boot', 'received_uptime': 20}
+        for override, accepted in (
+            ({}, True),
+            ({'received_uptime': 36}, False),
+            ({'received_uptime': 9}, False),
+            ({'boot_id': 'new-boot'}, False),
+            ({'expected': {**expected, 'consumed': True}}, False),
+            ({'receipt': {**receipt, 'token': 'b' * 32}}, False),
+            ({'receipt': {**receipt, 'checks': [checks[0], checks[0]]}}, False),
+            ({'receipt': {**receipt, 'checks': [checks[0], {**checks[1], 'HTTP': '500'}]}}, False),
+        ):
+            with self.subTest(override=override):
+                result = subprocess.run(
+                    ['ucode', str(INCIDENTS), '/usr/bin/gateway', 'lan-review'],
+                    input=json.dumps({**sample, **override}), text=True, capture_output=True, timeout=5,
+                )
+                self.assertEqual(result.returncode, 0 if accepted else 2, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['accepted'], accepted)

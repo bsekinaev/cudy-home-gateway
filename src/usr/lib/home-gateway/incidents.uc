@@ -1161,6 +1161,29 @@ function recovery_order(input, now) {
     return { schema_version: 1, source: 'vtest', order: ranked };
 }
 
+function validate_lan_review(input) {
+    let expected = input?.expected;
+    let receipt = input?.receipt;
+    let targets = [ 'https://www.google.com/generate_204', 'https://cp.cloudflare.com/' ];
+    if (expected?.phase != 'VERIFYING' || expected?.consumed != false ||
+        type(expected.token) != 'string' || match(expected.token, /^[a-f0-9]{32}$/) == null ||
+        receipt?.schema_version != 1 || receipt.token != expected.token ||
+        type(expected.boot_id) != 'string' || !length(expected.boot_id) ||
+        input.boot_id != expected.boot_id || type(expected.apply_uptime) != 'int' ||
+        expected.apply_uptime < 0 || type(expected.deadline_uptime) != 'int' ||
+        type(input.received_uptime) != 'int' || input.received_uptime < expected.apply_uptime ||
+        input.received_uptime > expected.deadline_uptime ||
+        type(receipt.checks) != 'array' || length(receipt.checks) != length(targets))
+        return false;
+    for (let i = 0; i < length(targets); i++) {
+        let probe = receipt.checks[i];
+        if (probe?.Target != targets[i] || probe.HTTP != '204' ||
+            probe.CurlExit != 0 || probe.Passed != true)
+            return false;
+    }
+    return true;
+}
+
 let rc;
 
 switch (MODE) {
@@ -1172,6 +1195,16 @@ case 'recovery-review':
         changes_applied: false
     });
     rc = 0;
+    break;
+case 'lan-review':
+    let lan;
+    let lan_raw = fs.stdin.read(8193);
+    if (type(lan_raw) == 'string' && length(lan_raw) <= 8192) {
+        try { lan = json(lan_raw); } catch (err) {}
+    }
+    let accepted = validate_lan_review(lan);
+    printf('%J\n', { schema_version: 1, accepted });
+    rc = accepted ? 0 : 2;
     break;
 case 'recovery-order':
     let input;
