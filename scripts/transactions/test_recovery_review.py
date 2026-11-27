@@ -153,3 +153,30 @@ class RecoveryReviewTests(unittest.TestCase):
                 self.assertEqual(json.loads(result.stdout), {
                     'schema_version': 1, 'decision': decision, 'changes_applied': False,
                 })
+
+    def test_prepared_intent_survives_process_restart_and_refuses_replacement(self):
+        import os
+        import tempfile
+
+        intent = {'schema_version': 1, 'phase': 'PREPARED', 'id': 'a' * 32,
+                  'candidate': 'allowed_backup', 'before_sha256': 'b' * 64}
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, HG_NOTIFICATION_STATE_DIR=directory)
+
+            def invoke(mode, payload=None):
+                return subprocess.run(
+                    ['ucode', str(INCIDENTS), '/usr/bin/gateway', mode],
+                    input=json.dumps(payload), text=True, capture_output=True,
+                    env=env, timeout=5,
+                )
+
+            first = invoke('transaction-intent', intent)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            read = invoke('transaction-state')
+            self.assertEqual(json.loads(read.stdout)['transaction'], intent)
+            self.assertEqual(invoke('transaction-intent', intent).returncode, 0)
+            conflict = invoke('transaction-intent', {**intent, 'candidate': 'another'})
+            self.assertEqual(conflict.returncode, 75)
+            self.assertEqual(json.loads(invoke('transaction-state').stdout)['transaction'], intent)
+            (Path(directory) / 'main-intent.json').write_text('partial')
+            self.assertEqual(invoke('transaction-intent', intent).returncode, 70)

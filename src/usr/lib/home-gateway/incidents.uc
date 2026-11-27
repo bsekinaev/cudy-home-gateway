@@ -1209,6 +1209,65 @@ function main_transaction_decision(input) {
     return 'WAIT_FOR_VERIFICATION';
 }
 
+function valid_prepared_main(value) {
+    return value?.schema_version == 1 && value?.phase == 'PREPARED' &&
+        type(value.id) == 'string' && match(value.id, /^[a-f0-9]{32}$/) != null &&
+        type(value.before_sha256) == 'string' &&
+        match(value.before_sha256, /^[a-f0-9]{64}$/) != null &&
+        type(value.candidate) == 'string' &&
+        match(value.candidate, /^[a-zA-Z0-9_]{1,64}$/) != null;
+}
+
+function main_intent(prepare) {
+    if (fs.lstat(STATE_DIR)?.type != 'directory')
+        return 70;
+    let path = STATE_DIR + '/main-intent.json';
+    let lock = fs.open(STATE_DIR + '/main-intent.lock', 'ae');
+    if (!lock)
+        return 70;
+    if (lock.lock('xn') == null) {
+        lock.close();
+        return 75;
+    }
+
+    let existing = fs.lstat(path);
+    let current = existing?.type == 'file' && existing.size <= 2048 ?
+        read_json_file(path, null) : null;
+    let rc = 0;
+    if (existing != null && !valid_prepared_main(current)) {
+        rc = 70;
+    } else if (prepare) {
+        let payload;
+        let raw = fs.stdin.read(2049);
+        if (type(raw) == 'string' && length(raw) <= 2048) {
+            try { payload = json(raw); } catch (err) {}
+        }
+        if (!valid_prepared_main(payload)) {
+            rc = 2;
+        } else if (current != null && (current.id != payload.id ||
+                   current.before_sha256 != payload.before_sha256 ||
+                   current.candidate != payload.candidate)) {
+            rc = 75;
+        } else {
+            if (current == null) {
+                current = {
+                    schema_version: 1, phase: 'PREPARED', id: payload.id,
+                    before_sha256: payload.before_sha256, candidate: payload.candidate
+                };
+                if (!atomic_write_json(path, current))
+                    rc = 70;
+            }
+            if (rc == 0 && (run_command('/bin/busybox fsync ' + shellquote(path)).code != 0 ||
+                run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code != 0))
+                rc = 70;
+        }
+    }
+    if (rc == 0)
+        printf('%J\n', { schema_version: 1, transaction: current });
+    lock.close();
+    return rc;
+}
+
 let rc;
 
 switch (MODE) {
@@ -1220,6 +1279,12 @@ case 'recovery-review':
         changes_applied: false
     });
     rc = 0;
+    break;
+case 'transaction-intent':
+    rc = main_intent(true);
+    break;
+case 'transaction-state':
+    rc = main_intent(false);
     break;
 case 'transaction-review':
     let transaction;
