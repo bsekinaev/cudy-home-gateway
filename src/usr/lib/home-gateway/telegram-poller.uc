@@ -386,7 +386,12 @@ function build_vtest() {
     }
     if (speed != null)
         push(rows, `Замеры скорости: ${count(speed.samples)}, успешных: ${count(speed.success)}, с ошибкой: ${count(speed.failed)}`);
-    if (cap != null)
+    if (type(cap?.attempts) == 'int' && cap.attempts > 0) {
+        let total = count(cap.attempts);
+        push(rows, `Доступность, успешных попыток из ${total}`);
+        push(rows, `Google ${count(cap.google)} · ChatGPT ${count(cap.chatgpt)} · OpenAI ${count(cap.openai)} · HTTPS ${count(cap.https)}`);
+    }
+    else if (cap != null)
         push(rows, `Проверка доступа: ${count(cap.nodes)}, подходят: ${count(cap.eligible)}`);
     if (speed == null && summary == null && cap == null)
         push(rows, 'Нет читаемого отчёта последнего теста.');

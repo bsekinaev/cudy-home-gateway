@@ -289,10 +289,30 @@ hg_vtest_result_json() (
             summary="node_id\tname\tscore\teligible\tmedian_mbps\tmedian_latency_ms\tsuccess_rate_pct\tspread_pct\tfailures\tstalls\tprovider_good\tcapability\tchatgpt_pass\topenai_pass\thttps_pass\tloc\tsource_stage"
             capability="stage\tnode_id\tname\teligible\tgoogle_pass\tchatgpt_pass\topenai_pass\thttps_pass\tloc"
         }
-        NR == 1 { if ($0 != (kind == "raw" ? raw : kind == "summary" ? summary : capability)) bad=1; next }
+        NR == 1 {
+            attempts_header="run_id\tstage\tnode_id\tname\tattempt\tgoogle_ok\tgoogle_http\tgoogle_sec\tchatgpt_ok\tchatgpt_http\tchatgpt_sec\tloc\topenai_ok\topenai_http\topenai_sec\topenai_reason\thttps_ok\thttps_http\thttps_sec\tnote"
+            attempts = kind == "capability" && $0 == attempts_header
+            if (!attempts && $0 != (kind == "raw" ? raw : kind == "summary" ? summary : capability)) bad=1
+            next
+        }
         {
             if (++rows > 4096 || length($0) > 4096) { bad=1; next }
-            if (kind == "raw") {
+            if (attempts) {
+                if (NF != 20 || $1 !~ /^[0-9]+-[0-9]+$/ || length($1) != 15 ||
+                    (attempt_run != "" && attempt_run != $1) ||
+                    ($2 != "deep_cap" && $2 != "retest_cap" && $2 != "live_main") ||
+                    $3 !~ /^[a-zA-Z0-9_]+$/ || length($3) > 64 || $5 !~ /^[0-9]+$/)
+                    bad=1
+                attempt_run=$1
+                if (duplicate[$2 SUBSEP $3 SUBSEP $5]++) bad=1
+                if (($6 != "YES" && $6 != "NO") || ($9 != "YES" && $9 != "NO") ||
+                    ($13 != "YES" && $13 != "NO") || ($17 != "YES" && $17 != "NO"))
+                    bad=1
+                google += ($6 == "YES")
+                chatgpt += ($9 == "YES")
+                openai += ($13 == "YES")
+                https += ($17 == "YES")
+            } else if (kind == "raw") {
                 if (NF != 15 || (length($1) != 15 || $1 !~ /^[0-9]+-[0-9]+$/ || substr($1,9,1) != "-") || ($7 != "OK" && $7 != "FAIL" && $7 != "STALL")) bad=1
                 if (expected != "" && $1 != expected) bad=1
                 if (row_run != "" && $1 != row_run) bad=1
@@ -322,7 +342,10 @@ hg_vtest_result_json() (
         }
         END {
             if (NR == 0 || bad) exit 1
-            if (output == "ranking") {
+            if (attempts) {
+                if (rows == 0) exit 1
+                printf "{\"attempts\":%d,\"google\":%d,\"chatgpt\":%d,\"openai\":%d,\"https\":%d}", rows, google, chatgpt, openai, https
+            } else if (output == "ranking") {
                 printf "["
                 for (i=1;i<=rows;i++)
                     printf "%s{\"id\":\"%s\",\"eligible\":%s}", (i==1 ? "" : ","), ids[i], accepted[i]
