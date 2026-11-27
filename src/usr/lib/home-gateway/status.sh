@@ -467,6 +467,10 @@ hg_status_print_json() {
     printf '      "config_state": %s,\n' "$(hg_json_string "${HG_VPN_MAIN_CONFIG_STATE:-UNKNOWN}")"
     printf '      "profile": %s,\n' "$(hg_json_string_or_null "${HG_VPN_MAIN_PROFILE:-}")"
     printf '      "profile_enabled": %s,\n' "$profile_enabled_json"
+    printf '      "active_node": {\n'
+    printf '        "id": %s,\n' "$(hg_json_string_or_null "${HG_VPN_ACTIVE_NODE:-}")"
+    printf '        "name": %s\n' "$(hg_json_string_or_null "${HG_VPN_ACTIVE_NAME:-}")"
+    printf '      },\n'
     printf '      "configured_node": {\n'
     printf '        "id": %s,\n' "$(hg_json_string_or_null "${HG_VPN_MAIN_NODE:-}")"
     printf '        "name": %s\n' "$(hg_json_string_or_null "${HG_VPN_MAIN_NAME:-}")"

@@ -339,6 +339,7 @@ function build_status() {
 
 🛡 Служба MAIN VPN: ${main_process}
 Настроенный узел MAIN: ${main_node}
+Активный узел по данным PassWall2: ${status_text(data?.vpn?.main?.active_node?.name, 'неизвестен')}
 Выход MAIN: ${main}
 
 ⬇️ Служба Torrent: ${torrent_process}

@@ -34,6 +34,7 @@ hg_vpn_collect() {
     HG_VPN_MAIN_PROFILE_ENABLED='unknown'
     HG_VPN_MAIN_NODE=''
     HG_VPN_MAIN_NAME=''
+    HG_VPN_ACTIVE_NAME=''
     HG_VPN_MAIN_SOCKS_HOST="${HG_MAIN_SOCKS_HOST:-127.0.0.1}"
     HG_VPN_MAIN_SOCKS_PORT=''
     HG_VPN_MAIN_XRAY_STATE='UNKNOWN'
@@ -118,6 +119,15 @@ hg_vpn_collect() {
         OK)
             if hg_vpn_main_process_running "$HG_VPN_MAIN_PROFILE"; then
                 HG_VPN_MAIN_XRAY_STATE='OK'
+                if [ "$HG_VPN_MAIN_PROFILE" = socks_P8ART ] && [ -r /tmp/etc/passwall2/var ]; then
+                    observed="$(awk '/^socks_P8ART="[a-zA-Z0-9_]+"$/ { split($0, fields, "\""); node=fields[2] } END { print node }' /tmp/etc/passwall2/var 2>/dev/null)" || observed=''
+                    if [ -n "$observed" ] && [ "${#observed}" -le 64 ] &&
+                        [ "$(uci -q get "passwall2.$observed" 2>/dev/null || true)" = nodes ]; then
+                        HG_VPN_ACTIVE_NODE="$observed"
+                        HG_VPN_ACTIVE_NODE_STATE='OK'
+                        HG_VPN_ACTIVE_NAME="$(uci -q get "passwall2.$observed.remarks" 2>/dev/null || true)"
+                    fi
+                fi
             else
                 HG_VPN_MAIN_XRAY_STATE='DOWN'
             fi
