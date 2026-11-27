@@ -89,6 +89,13 @@ else: sys.exit(97)
         self.assertIn('203.0.113.4', text)
         self.assertIn('DNS роутера: OK', text)
 
+    def test_failover_shows_configured_and_active_main_separately(self):
+        data = self.fixture()
+        data['vpn']['main']['active_node'] = {'name': 'RESERVE TEST'}
+        screen = self.render(data)
+        self.assertIn('Настроенный узел MAIN: MAIN TEST', screen)
+        self.assertIn('Активный узел по данным PassWall2: RESERVE TEST', screen)
+
     def test_fresh_cache_is_explicit(self):
         data = self.fixture()
         data['vpn']['main']['egress'].update(source='cache', checked_at=int(time.time())-120)

@@ -152,7 +152,7 @@ hg_vpn_collect() {
             if [ "${#vpn_wan_context}" = 64 ] && [ -f "$vpn_config" ] && [ ! -L "$vpn_config" ]; then
                 vpn_config_hash="$(sha256sum "$vpn_config" 2>/dev/null | awk '{print $1}')"
                 if [ "${#vpn_config_hash}" = 64 ]; then
-                    vpn_cache_context="$(printf '%s\n' "$HG_NETWORK_PATH_CONTEXT" "$vpn_config_hash" "$HG_VPN_MAIN_PROFILE" "$HG_VPN_MAIN_NODE" "$HG_VPN_MAIN_SOCKS_HOST" "$HG_VPN_MAIN_SOCKS_PORT" "$egress_probe_url" "$secondary_probe_url" "$primary_provider" "$secondary_provider" | sha256sum | awk '{print $1}')"
+                    vpn_cache_context="$(printf '%s\n' "$HG_NETWORK_PATH_CONTEXT" "$vpn_config_hash" "$HG_VPN_MAIN_PROFILE" "$HG_VPN_MAIN_NODE" "$HG_VPN_ACTIVE_NODE" "$HG_VPN_MAIN_SOCKS_HOST" "$HG_VPN_MAIN_SOCKS_PORT" "$egress_probe_url" "$secondary_probe_url" "$primary_provider" "$secondary_provider" | sha256sum | awk '{print $1}')"
                 fi
             fi
             ;;
