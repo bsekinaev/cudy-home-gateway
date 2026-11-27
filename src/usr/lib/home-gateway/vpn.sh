@@ -533,3 +533,34 @@ hg_candidate_check() (
     done
     exit "$result"
 )
+
+# Scan the configured reserve list without applying a node.
+hg_recovery_scan() (
+    set -f
+    reserves="$(uci -q get passwall2.socks_P8ART.autoswitch_backup_node)" || return 70
+    configured="$(uci -q get passwall2.socks_P8ART.node)" || return 70
+    set -- $reserves
+    [ "$#" -gt 0 ] && [ "$#" -le 3 ] || return 70
+    seen=' '
+    for node do
+        case "$node" in ''|*[!a-zA-Z0-9_]*) return 70 ;; esac
+        [ "${#node}" -le 64 ] && [ "$node" != "$configured" ] || return 70
+        case "$seen" in *" $node "*) return 70 ;; esac
+        seen="$seen$node "
+    done
+
+    passed=0
+    for node do
+        [ "$(uci -q get passwall2.socks_P8ART.node)" = "$configured" ] &&
+            [ "$(uci -q get passwall2.socks_P8ART.autoswitch_backup_node)" = "$reserves" ] || return 70
+        if hg_candidate_check "$node" >/dev/null 2>&1; then
+            passed=$((passed + 1))
+            printf '%s OK\n' "$node"
+        else
+            printf '%s UNCONFIRMED\n' "$node"
+        fi
+    done
+    [ "$(uci -q get passwall2.socks_P8ART.node)" = "$configured" ] &&
+        [ "$(uci -q get passwall2.socks_P8ART.autoswitch_backup_node)" = "$reserves" ] || return 70
+    [ "$passed" -gt 0 ] || return 70
+)

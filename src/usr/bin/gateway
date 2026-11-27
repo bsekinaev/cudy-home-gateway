@@ -36,6 +36,7 @@ CUDY Home Gateway
   gateway notifications configure mute SECONDS
   gateway notifications configure category COMPONENT on|off
   gateway vtest [--json]   Проверить наличие и fingerprint внешнего vtest
+  gateway recovery-scan     Проверить настроенные резервы MAIN
   gateway candidate-check NODE  Проверить настроенный резерв через отдельный SOCKS
   gateway recovery-history  Показать решения наблюдения MAIN
   gateway recovery-review   Оценить необходимость поиска резерва MAIN
@@ -119,6 +120,11 @@ main() {
                 hg_error 'использование: gateway vtest [--json]'
                 return "$HG_EXIT_USAGE"
             fi
+            ;;
+        recovery-scan)
+            [ "$#" -eq 1 ] || return "$HG_EXIT_USAGE"
+            hg_load_module vpn
+            hg_recovery_scan
             ;;
         candidate-check)
             [ "$#" -eq 2 ] || return "$HG_EXIT_USAGE"
