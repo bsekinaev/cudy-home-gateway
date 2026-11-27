@@ -367,6 +367,71 @@ hg_main_transaction_plan() (
     exit 70
 )
 
+# The cache identifies PassWall2's selected node. The listener, executable,
+# arguments, process start time and generated file identify its SOCKS instance.
+hg_main_runtime_identity() (
+    set -o pipefail
+    expected="$1"
+    runtime_dir=/tmp/etc/passwall2
+    config_path="$runtime_dir/socks_P8ART.json"
+    [ "$(timeout -k 1 5 uci -q get passwall2.rulenode.default_node)" = socks_P8ART ] || return 1
+    awk -v expected="socks_P8ART=\"$expected\"" '
+        /^socks_P8ART=/ { count++; if ($0 == expected) matched++ }
+        END { exit !(count == 1 && matched == 1) }
+    ' "$runtime_dir/var" || return 1
+
+    pid="$(timeout -k 1 5 netstat -lntp | awk '
+        $4 == "127.0.0.1:1082" && $6 == "LISTEN" {
+            count++
+            if ($7 ~ /^[0-9]+\/xray$/) { split($7, fields, "/"); pid=fields[1] }
+        }
+        END { if (count != 1 || !pid) exit 1; print pid }
+    ')" || return 1
+    [ "$(readlink "/proc/$pid/exe")" = /usr/bin/xray ] || return 1
+    tr '\000' '\n' < "/proc/$pid/cmdline" | awk -v config="$config_path" '
+        previous == "-c" && $0 == config { found=1 }
+        { previous=$0 }
+        END { exit !found }
+    ' || return 1
+    start="$(awk '$2 == "(xray)" && $22 ~ /^[0-9]+$/ { print $22 }' "/proc/$pid/stat")" || return 1
+    [ -n "$start" ] && [ -f "$config_path" ] && [ ! -L "$config_path" ] || return 1
+    digest="$(sha256sum "$config_path" | awk '{ print $1 }')" || return 1
+    [ "${#digest}" -eq 64 ] || return 1
+    printf '%s:%s:%s\n' "$pid" "$start" "$digest"
+)
+
+hg_vpn_probe_socks() (
+    port="$1"
+    result=0
+    for url in https://www.google.com/generate_204 https://cp.cloudflare.com/; do
+        code="$(curl -q --noproxy '' --socks5-hostname "127.0.0.1:$port" \
+            --connect-timeout 3 --max-time 4 -s -o /dev/null -w '%{http_code}' "$url")" || code=000
+        printf '%s HTTP=%s\n' "$url" "$code"
+        [ "$code" = 204 ] || result=70
+    done
+    exit "$result"
+)
+
+hg_main_verify_runtime() (
+    hg_main_runtime_result() {
+        printf '{"schema_version":1,"status":"%s","runtime_verified":%s}\n' "$1" "${3:-false}"
+        exit "$2"
+    }
+    case "$1" in
+        ''|*[!a-zA-Z0-9_]*) hg_main_runtime_result INVALID_CANDIDATE 2 ;;
+    esac
+    [ "${#1}" -le 64 ] || hg_main_runtime_result INVALID_CANDIDATE 2
+    before="$(hg_main_runtime_identity "$1" 2>/dev/null)" ||
+        hg_main_runtime_result MAIN_RUNTIME_UNVERIFIED 70
+    probe_rc=0
+    hg_vpn_probe_socks 1082 >/dev/null 2>&1 || probe_rc=$?
+    after="$(hg_main_runtime_identity "$1" 2>/dev/null)" ||
+        hg_main_runtime_result MAIN_RUNTIME_CHANGED 70
+    [ "$before" = "$after" ] || hg_main_runtime_result MAIN_RUNTIME_CHANGED 70
+    [ "$probe_rc" -eq 0 ] || hg_main_runtime_result MAIN_SOCKS_PROBE_FAILED 70
+    hg_main_runtime_result MAIN_RUNTIME_VERIFIED 0 true
+)
+
 # Candidate probes share the VPN module tracked by the deployment inventory.
 hg_candidate_renderer() {
     cat <<'HG_CANDIDATE_UCODE'
@@ -567,14 +632,7 @@ hg_candidate_check() (
         exit 70
     fi
 
-    result=0
-    for url in https://www.google.com/generate_204 https://cp.cloudflare.com/; do
-        code="$(curl -q --noproxy '' --socks5-hostname "127.0.0.1:$port" \
-            --connect-timeout 3 --max-time 4 -s -o /dev/null -w '%{http_code}' "$url")" || code=000
-        printf '%s HTTP=%s\n' "$url" "$code"
-        [ "$code" = 204 ] || result=70
-    done
-    exit "$result"
+    hg_vpn_probe_socks "$port"
 )
 
 # Scan the configured reserve list without applying a node.

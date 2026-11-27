@@ -43,6 +43,8 @@ CUDY Home Gateway
   gateway main-transaction preflight NODE
                            Живая проверка резерва и текущего владельца MAIN
   gateway main-transaction prepare NODE
+  gateway main-transaction verify-runtime NODE
+                           Проверить рабочий узел MAIN и выход через его SOCKS
   gateway main-transaction cancel ID
   gateway main-transaction status
   gateway main-transaction plan NODE
@@ -152,6 +154,9 @@ main() {
             if [ "$#" -eq 3 ] && { [ "$2" = plan ] || [ "$2" = preflight ] || [ "$2" = prepare ]; }; then
                 hg_load_module vpn
                 hg_main_transaction_plan "$3" "$2"
+            elif [ "$#" -eq 3 ] && [ "$2" = verify-runtime ]; then
+                hg_load_module vpn
+                hg_main_verify_runtime "$3"
             elif [ "$#" -eq 3 ] && [ "$2" = cancel ]; then
                 [ "$(id -u)" -eq 0 ] || return "$HG_EXIT_SOFTWARE"
                 case "$3" in *[!a-f0-9]*) return "$HG_EXIT_USAGE" ;; esac
