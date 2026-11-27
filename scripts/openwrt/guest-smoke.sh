@@ -220,6 +220,74 @@ SERVICE
     check main_fixture_supervised_watchdog fixture_supervision
     sed -n '/^HGVM_DIAG=main_watchdog_/p' /tmp/hg-vm-lab/check.out
 
+    fixture_passwall_restart() {
+        fresh_main_fixture || return 1
+        local service="$LAB/main-passwall-fixture"
+        printf '%s\n' "$main_fixture" > "$LAB/main-passwall-state"
+        cat > "$service" <<'SERVICE'
+#!/bin/sh /etc/rc.common
+USE_PROCD=1
+start_service() {
+    [ "$(cat /etc/hg-disposable-vm)" = HG_NETWORKLESS_OPENWRT_VM_V1 ] || return 1
+    local state
+    state=$(cat /etc/hg-vm-lab/main-passwall-state) || return 1
+    procd_open_instance
+    procd_set_param command /bin/sh /etc/hg-vm-lab/main-passwall-worker "$state"
+    procd_close_instance
+}
+stop_service() {
+    local state
+    state=$(cat /etc/hg-vm-lab/main-passwall-state) || return 1
+    rm -f "$state/fixture-service-hash" "$state/fixture-service-node"
+}
+SERVICE
+        cat > "$LAB/main-passwall-worker" <<'WORKER'
+set -eu
+state=$1
+mkdir -p "$state/inspection"
+cp "$state/fixture-passwall2" "$state/inspection/passwall2"
+node=$(uci -q -c "$state/inspection" get passwall2.socks_P8ART.node)
+if [ "$node" = trial_node ] && [ -f "$state/reject-trial" ]; then exit 1; fi
+printf '%s\n' "$node" > "$state/fixture-service-node"
+sha256sum "$state/inspection/passwall2" | cut -d ' ' -f1 > "$state/fixture-service-hash"
+exec /bin/sleep 600
+WORKER
+        chmod 700 "$service" "$LAB/main-passwall-worker"
+        local phase result=0
+        "$service" start || return 1
+        touch "$main_fixture/reject-trial"
+        HG_MAIN_FIXTURE_PROCD=1 main_intent transaction-fixture-apply || result=$?
+        phase=$(json_value "$main_fixture/main-intent.json" data.phase)
+        if [ "$result" -eq 70 ] && [ "$phase" = APPLYING ] &&
+            main_intent transaction-fixture-watch &&
+            [ "$(cat "$main_fixture/fixture-service-node")" = old_node ] &&
+            cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2; then
+            result=0
+        else
+            result=1
+        fi
+        "$service" stop
+        return "$result"
+    }
+    check main_fixture_passwall_restart_failure fixture_passwall_restart
+    fixture_passwall_reload_and_restore() {
+        fresh_main_fixture || return 1
+        local service="$LAB/main-passwall-fixture"
+        printf '%s\n' "$main_fixture" > "$LAB/main-passwall-state"
+        local result=1
+        if "$service" start &&
+            HG_MAIN_FIXTURE_WINDOW=2 HG_MAIN_FIXTURE_PROCD=1 main_intent transaction-fixture-apply &&
+            [ "$(cat "$main_fixture/fixture-service-node")" = trial_node ] &&
+            main_intent transaction-fixture-watch &&
+            [ "$(cat "$main_fixture/fixture-service-node")" = old_node ] &&
+            cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2; then
+            result=0
+        fi
+        "$service" stop
+        return "$result"
+    }
+    check main_fixture_passwall_reload_restore fixture_passwall_reload_and_restore
+
     mkdir -p /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     chmod 700 /etc/home-gateway /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     printf '111\n' > /etc/home-gateway/secrets/telegram.user_id

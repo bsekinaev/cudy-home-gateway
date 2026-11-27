@@ -1349,9 +1349,9 @@ function review_applied_main_fixture(current, target, watch) {
 function advance_main_fixture(mode, path, current, snapshot, candidate) {
     // Only the disposable fixture uses these writes. No production apply entry point.
     let temporary_fixture = match(STATE_DIR, /^\/tmp\/hg-main-fixture\.[a-zA-Z0-9_]+$/) != null;
-    let persistent_fixture = STATE_DIR == '/etc/hg-vm-lab/main-boot-fixture' &&
-        trim(fs.readfile('/etc/hg-disposable-vm') ?? '') == 'HG_NETWORKLESS_OPENWRT_VM_V1' &&
+    let isolated_vm = trim(fs.readfile('/etc/hg-disposable-vm') ?? '') == 'HG_NETWORKLESS_OPENWRT_VM_V1' &&
         trim(run_command('/bin/uname -m').output) == 'x86_64';
+    let persistent_fixture = STATE_DIR == '/etc/hg-vm-lab/main-boot-fixture' && isolated_vm;
     if ((!temporary_fixture && !persistent_fixture) || current?.candidate_sha256 == null)
         return 70;
     let target = STATE_DIR + '/fixture-passwall2';
@@ -1411,6 +1411,11 @@ function advance_main_fixture(mode, path, current, snapshot, candidate) {
         if (match(window, /^[0-9]{1,2}$/) == null || int(window) < 1 || int(window) > 30)
             return 70;
         current.deadline_uptime = uptime + int(window);
+        if (getenv('HG_MAIN_FIXTURE_PROCD') == '1') {
+            if (!isolated_vm)
+                return 70;
+            current.fixture_service = true;
+        }
     }
     if (!persist_main_fixture_phase(path, current, pending))
         return 70;
@@ -1430,8 +1435,19 @@ function advance_main_fixture(mode, path, current, snapshot, candidate) {
             return 70;
         }
     }
-    if (run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code != 0 ||
-        !persist_main_fixture_phase(path, current, finished))
+    if (run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code != 0)
+        return 70;
+    if (current.fixture_service == true) {
+        if (!isolated_vm ||
+            run_command('timeout -k 2 10 /etc/hg-vm-lab/main-passwall-fixture restart').code != 0)
+            return 70;
+        let loaded = STATE_DIR + '/fixture-service-hash';
+        for (let attempt = 0; attempt < 4 && trim(fs.readfile(loaded) ?? '') != to; attempt++)
+            run_command('/bin/busybox sleep 1');
+        if (trim(fs.readfile(loaded) ?? '') != to)
+            return 70;
+    }
+    if (!main_snapshot_matches(target, to) || !persist_main_fixture_phase(path, current, finished))
         return 70;
     return 0;
 }
