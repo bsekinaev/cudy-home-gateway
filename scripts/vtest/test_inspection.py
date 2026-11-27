@@ -88,6 +88,29 @@ else:
         return {'update_id': 1, 'message': {'from': {'id': user}, 'chat': {'id': chat},
                 'date': int(time.time()) if at is None else at, 'text': '/vtest'}}
 
+    def test_ranked_summary_requires_digest_of_the_parsed_snapshot(self):
+        import hashlib
+
+        path = self.base / 'rank.tsv'
+        payload = (
+            'node_id\tname\tscore\teligible\tmedian_mbps\tmedian_latency_ms\t'
+            'success_rate_pct\tspread_pct\tfailures\tstalls\tprovider_good\t'
+            'capability\tchatgpt_pass\topenai_pass\thttps_pass\tloc\tsource_stage\n'
+            'node_A\tprivate name\t90\tYES\t10\t100\t100\t10\t0\t0\t2\tYES\t3\t3\t3\tCH\tdeep\n'
+        ).encode()
+        path.write_bytes(payload)
+        digest = hashlib.sha256(payload).hexdigest()
+        command = [self.busybox, 'ash', '-c',
+                   '. "$1"; hg_vtest_result_json "$2" summary "$3" ranking',
+                   'rank', str(ROOT / 'src/usr/lib/home-gateway/doctor.sh'),
+                   str(path), digest]
+        result = subprocess.run(command, capture_output=True, check=True, text=True)
+        self.assertEqual(json.loads(result.stdout), [{'id': 'node_A', 'eligible': True}])
+        path.write_bytes(payload.replace(b'90', b'91'))
+        result = subprocess.run(command, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(result.stdout)
+
     def test_fingerprint_cron_and_explicit_unknown_results(self):
         data = self.inspect()
         self.assertEqual(data['provider']['sha256'], hashlib.sha256(self.provider.read_bytes()).hexdigest())

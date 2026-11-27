@@ -265,6 +265,7 @@ hg_vtest_result_json() (
     umask 077
     input="$1"
     kind="$2"
+    output="${4:-counts}"
     [ -f "$input" ] && [ ! -L "$input" ] && [ -r "$input" ] || exit 1
     hg_vtest_size_within "$input" 262144 || exit 1
     snapshot="$(mktemp /tmp/hg-vtest-result.XXXXXX)" || exit 1
@@ -274,7 +275,14 @@ hg_vtest_result_json() (
     hg_vtest_size_within "$snapshot" 262144 || exit 1
     # A provider may be halfway through writing the last record.
     [ "$(tail -c 1 "$snapshot" | od -An -tu1 | tr -d ' \n')" = 10 ] || exit 1
-    awk -F '\t' -v kind="$kind" -v expected="${3:-}" '
+    if [ "$output" = ranking ]; then
+        [ "$kind" = summary ] || exit 1
+        case "${3:-}" in ''|*[!a-f0-9]*) exit 1 ;; esac
+        [ "${#3}" -eq 64 ] || exit 1
+        digest="$(sha256sum "$snapshot")" || exit 1
+        [ "${digest%% *}" = "$3" ] || exit 1
+    fi
+    awk -F '\t' -v kind="$kind" -v expected="${3:-}" -v output="$output" '
         BEGIN {
             raw="run_id\tstage\tnode_id\tname\tround\tprovider\tstatus\tcurl_rc\thttp_code\tlatency_ms\tttfb_ms\tspeed_mbps\ttotal_sec\tbytes\terror"
             summary="node_id\tname\tscore\teligible\tmedian_mbps\tmedian_latency_ms\tsuccess_rate_pct\tspread_pct\tfailures\tstalls\tprovider_good\tcapability\tchatgpt_pass\topenai_pass\thttps_pass\tloc\tsource_stage"
@@ -297,11 +305,21 @@ hg_vtest_result_json() (
                     for (i=3;i<=15;i++) if (i != 4 && i != 12 && $i !~ /^[0-9]+([.][0-9]+)?$/) bad=1
                 } else for (i=5;i<=8;i++) if ($i !~ /^[0-9]+$/) bad=1
                 if ($col == "YES") eligible++
+                if (output == "ranking") {
+                    if (rows > 128 || length($1) > 64 || $1 !~ /^[a-zA-Z0-9_]+$/ || seen[$1]++) bad=1
+                    ids[rows]=$1
+                    accepted[rows]=($col == "YES" ? "true" : "false")
+                }
             }
         }
         END {
             if (NR == 0 || bad) exit 1
-            if (kind == "raw") printf "{\"samples\":%d,\"success\":%d,\"failed\":%d}", rows, success, failed
+            if (output == "ranking") {
+                printf "["
+                for (i=1;i<=rows;i++)
+                    printf "%s{\"id\":\"%s\",\"eligible\":%s}", (i==1 ? "" : ","), ids[i], accepted[i]
+                printf "]"
+            } else if (kind == "raw") printf "{\"samples\":%d,\"success\":%d,\"failed\":%d}", rows, success, failed
             else printf "{\"nodes\":%d,\"eligible\":%d}", rows, eligible
         }
     ' "$snapshot"
