@@ -1268,12 +1268,13 @@ function stage_main_config(snapshot, current) {
         return null;
     let config = directory + '/passwall2';
     let delta = directory + '/delta';
+    let overrides = directory + '/overrides';
     let staged_path = STATE_DIR + '/main-intent.candidate';
     let staged = null;
-    if (fs.mkdir(delta, 0700) &&
+    if (fs.mkdir(delta, 0700) && fs.mkdir(overrides, 0700) &&
         run_command('/bin/cp ' + shellquote(snapshot) + ' ' + shellquote(config)).code == 0 &&
         main_snapshot_matches(config, current.before_sha256)) {
-        let uci = '/sbin/uci -q -c ' + shellquote(directory) + ' -P ' + shellquote(delta);
+        let uci = '/sbin/uci -q -c ' + shellquote(directory) + ' -C ' + shellquote(overrides) + ' -t ' + shellquote(delta);
         let section = 'passwall2.socks_P8ART';
         let kind = run_command(uci + ' get ' + shellquote('passwall2.' + current.candidate));
         let profile = run_command(uci + ' get ' + shellquote(section));
@@ -1296,6 +1297,7 @@ function stage_main_config(snapshot, current) {
     fs.unlink(config);
     fs.unlink(delta + '/passwall2');
     fs.rmdir(delta);
+    fs.rmdir(overrides);
     fs.rmdir(directory);
     return staged;
 }
