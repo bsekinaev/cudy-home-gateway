@@ -95,6 +95,21 @@ EOF
         check main_candidate_node false
     fi
 
+    main_round_trip() {
+        local target="$main_candidate_dir/passwall2"
+        main_intent transaction-state > /tmp/hg-vm-lab/main-state.json || return 1
+        local candidate_hash
+        candidate_hash="$(json_value /tmp/hg-vm-lab/main-state.json data.transaction.candidate_sha256)"
+        local actual
+        actual="$(sha256sum "$target")" || return 1
+        [ "${actual%% *}" = "$candidate_hash" ] || return 1
+        cp "$main_fixture/main-intent.passwall2" "$target.restore" &&
+            mv "$target.restore" "$target" &&
+            cmp "$target" /etc/config/passwall2 &&
+            [ "$(uci -q -c "$main_candidate_dir" get passwall2.socks_P8ART.node)" = old_node ]
+    }
+    check main_snapshot_round_trip main_round_trip
+
     mkdir -p /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     chmod 700 /etc/home-gateway /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     printf '111\n' > /etc/home-gateway/secrets/telegram.user_id

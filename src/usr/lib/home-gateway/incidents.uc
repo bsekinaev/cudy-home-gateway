@@ -1307,6 +1307,7 @@ function main_intent(mode) {
         return 70;
     let path = STATE_DIR + '/main-intent.json';
     let snapshot = STATE_DIR + '/main-intent.passwall2';
+    let staged_path = STATE_DIR + '/main-intent.candidate';
     let lock = fs.open(STATE_DIR + '/main-intent.lock', 'ae');
     if (!lock)
         return 70;
@@ -1320,7 +1321,10 @@ function main_intent(mode) {
         read_json_file(path, null) : null;
     let rc = 0;
     if (existing != null && (!valid_prepared_main(current) ||
-        !main_snapshot_matches(snapshot, current.before_sha256))) {
+        !main_snapshot_matches(snapshot, current.before_sha256) ||
+        (current.candidate_sha256 != null &&
+         (type(current.candidate_sha256) != 'string' || match(current.candidate_sha256, /^[a-f0-9]{64}$/) == null ||
+          !main_snapshot_matches(staged_path, current.candidate_sha256))))) {
         rc = 70;
     } else if (mode == "prepare") {
         let payload;
@@ -1351,7 +1355,19 @@ function main_intent(mode) {
         }
     }
     if (rc == 0 && mode == 'stage') {
-        let digest = current == null ? null : stage_main_config(snapshot, current);
+        let digest = current?.candidate_sha256;
+        if (digest == null && current != null) {
+            digest = stage_main_config(snapshot, current);
+            if (digest != null) {
+                current.candidate_sha256 = digest;
+                if (!atomic_write_json(path, current))
+                    digest = null;
+            }
+        }
+        if (digest != null &&
+            (run_command('/bin/busybox fsync ' + shellquote(path)).code != 0 ||
+             run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code != 0))
+            digest = null;
         if (digest == null)
             rc = 70;
         else
