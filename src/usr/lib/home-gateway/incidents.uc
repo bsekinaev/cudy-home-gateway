@@ -1315,13 +1315,16 @@ function main_fixture_uptime() {
     return match(raw, /^[0-9]+([.][0-9]+)?$/) != null ? int(raw) : null;
 }
 
-function review_applied_main_fixture(current, target) {
+function review_applied_main_fixture(current, target, watch) {
     if (current.phase != 'APPLIED')
         return 'STOP_CONFIG_CONFLICT';
-    let sample;
-    let raw = fs.stdin.read(4097);
-    if (type(raw) == 'string' && length(raw) <= 4096) {
-        try { sample = json(raw); } catch (err) {}
+    let sample = { socks: 'UNKNOWN' };
+    if (!watch) {
+        let raw = fs.stdin.read(4097);
+        sample = null;
+        if (type(raw) == 'string' && length(raw) <= 4096) {
+            try { sample = json(raw); } catch (err) {}
+        }
     }
     if (type(sample) != 'object' || index([ 'OK', 'FAILED', 'UNKNOWN' ], sample.socks) < 0)
         return 'INVALID_INPUT';
@@ -1352,8 +1355,13 @@ function advance_main_fixture(mode, path, current, snapshot, candidate) {
     if (getenv('HG_MAIN_CONFIG_FILE') != target)
         return 70;
 
-    if (mode == 'fixture-verify') {
-        let decision = review_applied_main_fixture(current, target);
+    let watch = mode == 'fixture-watch';
+    if (watch && current.phase == 'COMMITTED')
+        return main_snapshot_matches(target, current.candidate_sha256) ? 0 : 75;
+    if (watch && current.phase == 'ROLLED_BACK')
+        return main_snapshot_matches(target, current.before_sha256) ? 0 : 75;
+    if (mode == 'fixture-verify' || watch) {
+        let decision = review_applied_main_fixture(current, target, watch);
         switch (decision) {
         case 'ROLLBACK':
             mode = 'fixture-restore';
@@ -1361,6 +1369,7 @@ function advance_main_fixture(mode, path, current, snapshot, candidate) {
         case 'COMMIT':
             return persist_main_fixture_phase(path, current, 'COMMITTED') ? 0 : 70;
         case 'WAIT_FOR_VERIFICATION':
+            return watch ? 76 : 75;
         case 'STOP_CONFIG_CONFLICT':
             return 75;
         case 'INVALID_INPUT':
@@ -1393,7 +1402,10 @@ function advance_main_fixture(mode, path, current, snapshot, candidate) {
         current.token = token;
         current.boot_id = boot;
         current.apply_uptime = uptime;
-        current.deadline_uptime = uptime + 30;
+        let window = getenv('HG_MAIN_FIXTURE_WINDOW') ?? '30';
+        if (match(window, /^[0-9]{1,2}$/) == null || int(window) < 1 || int(window) > 30)
+            return 70;
+        current.deadline_uptime = uptime + int(window);
     }
     if (!persist_main_fixture_phase(path, current, pending))
         return 70;
@@ -1447,7 +1459,7 @@ function main_intent(mode) {
          (type(current.candidate_sha256) != 'string' || match(current.candidate_sha256, /^[a-f0-9]{64}$/) == null ||
           !main_snapshot_matches(staged_path, current.candidate_sha256))))) {
         rc = 70;
-    } else if (mode == 'fixture-apply' || mode == 'fixture-restore' || mode == 'fixture-verify') {
+    } else if (mode == 'fixture-apply' || mode == 'fixture-restore' || mode == 'fixture-verify' || mode == 'fixture-watch') {
         rc = advance_main_fixture(mode, path, current, snapshot, staged_path);
     } else if (current != null && current.phase != 'PREPARED' &&
                (mode == 'prepare' || mode == 'stage')) {
@@ -1505,6 +1517,17 @@ function main_intent(mode) {
     return rc;
 }
 
+function watch_main_fixture() {
+    for (let attempt = 0; attempt < 34; attempt++) {
+        let rc = main_intent('fixture-watch');
+        if (rc != 76)
+            return rc;
+        if (run_command('/bin/busybox sleep 1').code != 0)
+            return 70;
+    }
+    return 70;
+}
+
 let rc;
 
 switch (MODE) {
@@ -1519,6 +1542,9 @@ case 'recovery-review':
     break;
 case 'transaction-intent':
     rc = main_intent('prepare');
+    break;
+case 'transaction-fixture-watch':
+    rc = watch_main_fixture();
     break;
 case 'transaction-fixture-verify':
     rc = main_intent('fixture-verify');

@@ -126,6 +126,33 @@ EOF
     check main_fixture_lan_timeout_rollback fixture_lan_timeout_rollback
     check main_snapshot_round_trip main_round_trip
 
+    fresh_main_fixture() {
+        main_fixture=$(mktemp -d /tmp/hg-main-fixture.XXXXXX) || return 1
+        cp /etc/config/passwall2 "$main_fixture/fixture-passwall2" &&
+            prepare_main_fixture &&
+            main_intent transaction-stage
+    }
+    fixture_watchdog() {
+        fresh_main_fixture || return 1
+        HG_MAIN_FIXTURE_WINDOW=1 main_intent transaction-fixture-apply || return 1
+        main_intent transaction-fixture-watch || return 1
+        cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2
+    }
+    fixture_confirm_once() {
+        fresh_main_fixture || return 1
+        HG_MAIN_FIXTURE_UPTIME=100 main_intent transaction-fixture-apply > /tmp/hg-vm-lab/main-applied.json || return 1
+        local token receipt
+        token=$(json_value /tmp/hg-vm-lab/main-applied.json data.transaction.token) || return 1
+        receipt=$(printf '{"socks":"OK","receipt":{"schema_version":1,"token":"%s","checks":[{"Target":"https://www.google.com/generate_204","HTTP":"204","CurlExit":0,"Passed":true},{"Target":"https://cp.cloudflare.com/","HTTP":"204","CurlExit":0,"Passed":true}]}}' "$token")
+        printf '%s' "$receipt" | HG_MAIN_FIXTURE_UPTIME=101 main_intent transaction-fixture-verify > /tmp/hg-vm-lab/main-confirmed.json || return 1
+        [ "$(json_value /tmp/hg-vm-lab/main-confirmed.json data.transaction.phase)" = COMMITTED ] || return 1
+        local replay=0
+        printf '%s' "$receipt" | HG_MAIN_FIXTURE_UPTIME=102 main_intent transaction-fixture-verify || replay=$?
+        [ "$replay" -eq 75 ] && cmp "$main_fixture/fixture-passwall2" "$main_fixture/main-intent.candidate"
+    }
+    check main_fixture_watchdog fixture_watchdog
+    check main_fixture_confirm_once fixture_confirm_once
+
     mkdir -p /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     chmod 700 /etc/home-gateway /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     printf '111\n' > /etc/home-gateway/secrets/telegram.user_id
