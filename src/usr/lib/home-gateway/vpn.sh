@@ -315,7 +315,7 @@ hg_main_transaction_plan() (
             END { exit found ? 1 : 0 }
         '
     }
-    if [ "$mode" = preflight ]; then
+    if [ "$mode" != plan ]; then
         source_config="${HG_MAIN_CONFIG_FILE:-/etc/config/passwall2}"
         before="$(hg_main_preflight_hash)" || hg_main_plan_blocked CONFIG_READ_FAILED
         [ "${#before}" -eq 64 ] || hg_main_plan_blocked CONFIG_READ_FAILED
@@ -339,7 +339,7 @@ hg_main_transaction_plan() (
     # Re-observe pending edits; still no claim of generation-consistent reads.
     pending="$(timeout -k 1 5 uci -q changes passwall2 2>/dev/null | head -c 65)" || hg_main_plan_blocked UCI_READ_FAILED
     [ -z "$pending" ] || hg_main_plan_blocked UNCOMMITTED_CONFIG
-    if [ "$mode" = preflight ]; then
+    if [ "$mode" != plan ]; then
         [ "$candidate" != "$current" ] || hg_main_plan_blocked CANDIDATE_ALREADY_CONFIGURED
         hg_main_preflight_writer_clear || hg_main_plan_blocked RUNTIME_WRITER_PRESENT_OR_UNKNOWN
         [ "$(hg_main_preflight_hash)" = "$before" ] || hg_main_plan_blocked CONFIG_CHANGED
@@ -349,6 +349,15 @@ hg_main_transaction_plan() (
         [ -z "$pending" ] || hg_main_plan_blocked UNCOMMITTED_CONFIG
         hg_main_preflight_writer_clear || hg_main_plan_blocked RUNTIME_WRITER_PRESENT_OR_UNKNOWN
         [ "$(hg_main_preflight_hash)" = "$before" ] || hg_main_plan_blocked CONFIG_CHANGED
+        if [ "$mode" = prepare ]; then
+            [ "$(id -u)" -eq 0 ] || hg_main_plan_blocked ROOT_REQUIRED
+            transaction_id="$(tr -d '-' </proc/sys/kernel/random/uuid)" ||
+                hg_main_plan_blocked TRANSACTION_ID_UNAVAILABLE
+            umask 077
+            printf '{"schema_version":1,"phase":"PREPARED","id":"%s","candidate":"%s","before_sha256":"%s"}\n'                 "$transaction_id" "$candidate" "$before" |
+                ucode "${HG_LIBDIR}/incidents.uc" "$0" transaction-prepare
+            exit "$?"
+        fi
         printf '{"schema_version":1,"status":"CANDIDATE_REACHABLE","apply_supported":false,"preflight_passed":true,"snapshot_ready":false}\n'
         exit 0
     fi

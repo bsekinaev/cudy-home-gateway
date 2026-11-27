@@ -42,6 +42,9 @@ CUDY Home Gateway
   gateway recovery-review   Оценить необходимость поиска резерва MAIN
   gateway main-transaction preflight NODE
                            Живая проверка резерва и текущего владельца MAIN
+  gateway main-transaction prepare NODE
+  gateway main-transaction cancel ID
+  gateway main-transaction status
   gateway main-transaction plan NODE
                            Read-only проверка условий; смена MAIN заблокирована
   gateway actions [show|prepare ACTION USER CHAT MESSAGE|confirm TOKEN USER CHAT MESSAGE]
@@ -146,11 +149,19 @@ main() {
             printf '%s\n' "$snapshot" | ucode "${HG_LIBDIR}/incidents.uc" "$0" recovery-review
             ;;
         main-transaction)
-            if [ "$#" -eq 3 ] && { [ "$2" = plan ] || [ "$2" = preflight ]; }; then
+            if [ "$#" -eq 3 ] && { [ "$2" = plan ] || [ "$2" = preflight ] || [ "$2" = prepare ]; }; then
                 hg_load_module vpn
                 hg_main_transaction_plan "$3" "$2"
+            elif [ "$#" -eq 3 ] && [ "$2" = cancel ]; then
+                [ "$(id -u)" -eq 0 ] || return "$HG_EXIT_SOFTWARE"
+                case "$3" in *[!a-f0-9]*) return "$HG_EXIT_USAGE" ;; esac
+                [ "${#3}" -eq 32 ] || return "$HG_EXIT_USAGE"
+                ucode "${HG_LIBDIR}/incidents.uc" "$0" transaction-cancel "$3"
             elif [ "$#" -eq 2 ]; then
                 case "$2" in
+                    status)
+                        [ "$(id -u)" -eq 0 ] || return "$HG_EXIT_SOFTWARE"
+                        ucode "${HG_LIBDIR}/incidents.uc" "$0" transaction-status ;;
                     apply|rollback|recover)
                         printf '{"schema_version":1,"status":"TRANSACTION_NOT_IMPLEMENTED","apply_supported":false}\n'
                         return "$HG_EXIT_SOFTWARE" ;;

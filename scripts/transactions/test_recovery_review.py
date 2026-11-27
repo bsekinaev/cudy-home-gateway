@@ -154,6 +154,40 @@ class RecoveryReviewTests(unittest.TestCase):
                     'schema_version': 1, 'decision': decision, 'changes_applied': False,
                 })
 
+    def test_cancel_prepared_checks_id_and_allows_a_new_snapshot(self):
+        import hashlib
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config'
+            config.write_bytes(b'original')
+            env = dict(os.environ, HG_NOTIFICATION_STATE_DIR=directory,
+                       HG_MAIN_CONFIG_FILE=str(config))
+
+            def invoke(mode, *args, payload=None):
+                return subprocess.run(
+                    ['ucode', str(INCIDENTS), '/usr/bin/gateway', mode, *args],
+                    input=json.dumps(payload), text=True, capture_output=True,
+                    env=env, timeout=5,
+                )
+
+            first = {'schema_version': 1, 'phase': 'PREPARED', 'id': 'a' * 32,
+                     'candidate': 'backup', 'before_sha256': hashlib.sha256(b'original').hexdigest()}
+            self.assertEqual(invoke('transaction-intent', payload=first).returncode, 0)
+            self.assertEqual(invoke('transaction-cancel', 'b' * 32).returncode, 75)
+            cancelled = invoke('transaction-cancel', first['id'])
+            self.assertEqual(cancelled.returncode, 0, cancelled.stderr)
+            self.assertEqual(json.loads(cancelled.stdout)['phase'], 'CANCELLED')
+            self.assertEqual(invoke('transaction-intent', payload=first).returncode, 75)
+            public = json.loads(invoke('transaction-status').stdout)
+            self.assertEqual(public['transaction_id'], first['id'])
+            self.assertNotIn('before_sha256', public)
+            config.write_bytes(b'updated')
+            second = {**first, 'id': 'b' * 32, 'before_sha256': hashlib.sha256(b'updated').hexdigest()}
+            self.assertEqual(invoke('transaction-intent', payload=second).returncode, 0)
+            self.assertEqual((Path(directory) / 'main-intent.passwall2').read_bytes(), b'updated')
+
     def test_prepared_intent_survives_process_restart_and_refuses_replacement(self):
         import hashlib
         import os

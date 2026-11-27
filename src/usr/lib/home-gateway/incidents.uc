@@ -1455,21 +1455,29 @@ function main_intent(mode) {
         read_json_file(path, null) : null;
     let rc = 0;
     let fixture_phase = current == null ? null : current.phase;
+    let cancelled = fixture_phase == 'CANCELLED';
+    let preparing = mode == 'prepare' || mode == 'prepare-stage';
     let prepared_fields = current == null ? null : { ...current, phase: 'PREPARED' };
     if (existing != null && (!valid_prepared_main(prepared_fields) ||
-        index([ 'PREPARED', 'APPLYING', 'APPLIED', 'RESTORING', 'ROLLED_BACK', 'COMMITTED' ], fixture_phase) < 0 ||
-        (fixture_phase != 'PREPARED' && current.candidate_sha256 == null) ||
-        !main_snapshot_matches(snapshot, current.before_sha256) ||
-        (current.candidate_sha256 != null &&
+        index([ 'PREPARED', 'APPLYING', 'APPLIED', 'RESTORING', 'ROLLED_BACK', 'COMMITTED', 'CANCELLED' ], fixture_phase) < 0 ||
+        (!cancelled && fixture_phase != 'PREPARED' && current.candidate_sha256 == null) ||
+        (!cancelled && !main_snapshot_matches(snapshot, current.before_sha256)) ||
+        (!cancelled && current.candidate_sha256 != null &&
          (type(current.candidate_sha256) != 'string' || match(current.candidate_sha256, /^[a-f0-9]{64}$/) == null ||
           !main_snapshot_matches(staged_path, current.candidate_sha256))))) {
         rc = 70;
+    } else if (mode == 'cancel') {
+        if (current == null || ARGV[2] != current.id ||
+            index([ 'PREPARED', 'CANCELLED' ], current.phase) < 0)
+            rc = 75;
+        else if (!persist_main_fixture_phase(path, current, 'CANCELLED'))
+            rc = 70;
     } else if (mode == 'fixture-apply' || mode == 'fixture-restore' || mode == 'fixture-verify' || mode == 'fixture-watch') {
         rc = advance_main_fixture(mode, path, current, snapshot, staged_path);
-    } else if (current != null && current.phase != 'PREPARED' &&
-               (mode == 'prepare' || mode == 'stage')) {
+    } else if (current != null && current.phase != 'PREPARED' && !cancelled &&
+               (preparing || mode == 'stage')) {
         rc = 75;
-    } else if (mode == 'prepare') {
+    } else if (preparing) {
         let payload;
         let raw = fs.stdin.read(2049);
         if (type(raw) == 'string' && length(raw) <= 2048) {
@@ -1477,14 +1485,18 @@ function main_intent(mode) {
         }
         if (!valid_prepared_main(payload)) {
             rc = 2;
-        } else if (current != null && (current.id != payload.id ||
+        } else if (!cancelled && current != null && (current.id != payload.id ||
                    current.before_sha256 != payload.before_sha256 ||
                    current.candidate != payload.candidate)) {
+            rc = 75;
+        } else if (cancelled && (current.id == payload.id ||
+                   (fs.lstat(snapshot) != null && !fs.unlink(snapshot)) ||
+                   (fs.lstat(staged_path) != null && !fs.unlink(staged_path)))) {
             rc = 75;
         } else if (!prepare_main_snapshot(snapshot, payload.before_sha256)) {
             rc = 70;
         } else {
-            if (current == null) {
+            if (current == null || cancelled) {
                 current = {
                     schema_version: 1, phase: 'PREPARED', id: payload.id,
                     before_sha256: payload.before_sha256, candidate: payload.candidate
@@ -1497,9 +1509,9 @@ function main_intent(mode) {
                 rc = 70;
         }
     }
-    if (rc == 0 && mode == 'stage') {
-        let digest = current?.candidate_sha256;
-        if (digest == null && current != null) {
+    if (rc == 0 && (mode == 'stage' || mode == 'prepare-stage')) {
+        let digest = current?.phase == 'PREPARED' ? current?.candidate_sha256 : null;
+        if (digest == null && current?.phase == 'PREPARED') {
             digest = stage_main_config(snapshot, current);
             if (digest != null) {
                 current.candidate_sha256 = digest;
@@ -1511,10 +1523,20 @@ function main_intent(mode) {
             (run_command('/bin/busybox fsync ' + shellquote(path)).code != 0 ||
              run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code != 0))
             digest = null;
-        if (digest == null)
+        if (digest == null) {
+            if (mode == 'prepare-stage' && current?.phase == 'PREPARED')
+                printf('%J\n', { schema_version: 1, status: 'STAGING_FAILED', transaction_id: current.id, apply_supported: false });
             rc = 70;
-        else
+        } else if (mode == 'prepare-stage') {
+            printf('%J\n', { schema_version: 1, status: 'PREPARED', transaction_id: current.id,
+                            apply_supported: false, preflight_passed: true, snapshot_ready: true });
+        } else {
             printf('%J\n', { schema_version: 1, candidate_sha256: digest });
+        }
+    } else if (rc == 0 && (mode == 'public-read' || mode == 'cancel')) {
+        printf('%J\n', { schema_version: 1, transaction_id: current?.id,
+                        phase: current?.phase, snapshot_ready: current?.phase == 'PREPARED' &&
+                            current?.candidate_sha256 != null, apply_supported: false });
     } else if (rc == 0) {
         printf('%J\n', { schema_version: 1, transaction: current });
     }
@@ -1545,6 +1567,12 @@ case 'recovery-review':
     });
     rc = 0;
     break;
+case 'transaction-prepare':
+    rc = main_intent('prepare-stage');
+    break;
+case 'transaction-cancel':
+    rc = main_intent('cancel');
+    break;
 case 'transaction-intent':
     rc = main_intent('prepare');
     break;
@@ -1562,6 +1590,9 @@ case 'transaction-fixture-restore':
     break;
 case 'transaction-stage':
     rc = main_intent('stage');
+    break;
+case 'transaction-status':
+    rc = main_intent('public-read');
     break;
 case 'transaction-state':
     rc = main_intent('read');
