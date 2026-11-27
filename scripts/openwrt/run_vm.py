@@ -32,7 +32,7 @@ ROOTFS_SHA = 'a1cb366a0af03d0f4afbce90aed9b4db35b07140629eabf7ae21c45dc08eeb23'
 RESULT = re.compile(r'^HGVM_RESULT=(PASS|FAIL) TOTAL=([0-9]+) FAILED=([0-9]+) SCOPE=ISOLATED_X86_NOT_CUDY$', re.M)
 CHECK = re.compile(r'^HGVM_CHECK=([a-z0-9_]+):(PASS|FAIL)$', re.M)
 REBOOT_SCENARIOS = ('owner-wan', 'owner-monitor', 'owner-series', 'owner-update', 'rc-b-crash-apply', 'rc-b-crash-restore', 'retirement-reboot',
-                    'overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase')
+                    'baseline', 'overlay-identity', 'runtime-crash-apply', 'runtime-crash-restore', 'runtime-crash-phase')
 
 
 def require(ok, reason):
@@ -399,10 +399,10 @@ def run(args):
             command.remove('-snapshot'); command += ['-no-reboot']
         if args.qemu_data: command += ['-L', str(args.qemu_data)]
         if args.bios: command += ['-bios', str(args.bios)]
-        # The control scenario snapshots runtime plus its dependency closure.
+        # The baseline includes two guest boots and PassWall recovery fixtures.
         # TCG-only hosts need a separate bounded budget; assertions are unchanged.
         console = bytearray(); progress = 0
-        deadline = time.monotonic() + (7200 if args.scenario in ('owner-series','owner-monitor','owner-wan') else 1800 if args.scenario=='owner-update' else 900 if args.scenario=='retirement-reboot' else 600 if args.scenario in ('rc-b-crash-apply','rc-b-crash-restore') else 300 if args.scenario in ('rc-b-root-cycle','control-cycle','service-cycle') else 180)
+        deadline = time.monotonic() + (7200 if args.scenario in ('owner-series','owner-monitor','owner-wan') else 1800 if args.scenario=='owner-update' else 900 if args.scenario=='retirement-reboot' else 600 if args.scenario in ('rc-b-crash-apply','rc-b-crash-restore') else 300 if args.scenario in ('baseline','rc-b-root-cycle','control-cycle','service-cycle') else 180)
         try:
             for boot in range(2 if args.scenario in REBOOT_SCENARIOS else 1):
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,

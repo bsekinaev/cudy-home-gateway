@@ -230,6 +230,12 @@ jobs:
       fail-fast: false
       matrix:
         scenario: [owner-wan, owner-monitor, owner-series, owner-update, retirement-reboot, rc-b-root-cycle, rc-b-crash-apply, rc-b-crash-restore, runtime-crash-apply, runtime-crash-restore, runtime-crash-phase, rc-a-package, control-cycle, service-cycle]
+        include:
+          # These package formats admit only their historical runtime deltas.
+          - scenario: owner-monitor
+            historical_sha: 1fc822c3bddc1021a1d641c7d7cce71fab7332b8
+          - scenario: owner-wan
+            historical_sha: a277d07486ae10844aa76f10dac39f60d4b1d1d7
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -255,19 +261,23 @@ jobs:
         shell: bash
         env:
           HG_SCENARIO: ${{ matrix.scenario }}
+          HG_VM_SHA: ${{ matrix.historical_sha || env.HG_CANDIDATE_SHA }}
         run: |
           set -euo pipefail
           # Inputs and redirected reports are untracked workspace files. Build
           # only from an independent clean checkout, preserving SOURCE_DIRTY.
           clean=$(mktemp -d)
           git clone --quiet --no-hardlinks . "$clean/source"
-          python3 "$clean/source/scripts/openwrt/run_vm.py" --kernel "$GITHUB_WORKSPACE/vm-inputs/kernel.bin" --rootfs "$GITHUB_WORKSPACE/vm-inputs/rootfs.img.gz" --packages-directory "$GITHUB_WORKSPACE/vm-inputs" --ref "$HG_CANDIDATE_SHA" --scenario "$HG_SCENARIO" > vm-crash-report.json || { cat vm-crash-report.json; exit 1; }
+          git -C "$clean/source" checkout --quiet --detach "$HG_VM_SHA"
+          test "$(git -C "$clean/source" rev-parse HEAD)" = "$HG_VM_SHA"
+          python3 "$clean/source/scripts/openwrt/run_vm.py" --kernel "$GITHUB_WORKSPACE/vm-inputs/kernel.bin" --rootfs "$GITHUB_WORKSPACE/vm-inputs/rootfs.img.gz" --packages-directory "$GITHUB_WORKSPACE/vm-inputs" --ref "$HG_VM_SHA" --scenario "$HG_SCENARIO" > vm-crash-report.json || { cat vm-crash-report.json; exit 1; }
+          jq -e --arg sha "$HG_VM_SHA" --arg scenario "$HG_SCENARIO" '.commit == $sha and .scenario == $scenario and .status == "PASS"' vm-crash-report.json >/dev/null
           cat vm-crash-report.json
       - name: Upload public report only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: native-crash-${{ matrix.scenario }}-${{ env.HG_CANDIDATE_SHA }}-${{ github.run_attempt }}
+          name: native-crash-${{ matrix.scenario }}-${{ matrix.historical_sha || env.HG_CANDIDATE_SHA }}-${{ github.run_attempt }}
           path: vm-crash-report.json
           retention-days: 30
 
