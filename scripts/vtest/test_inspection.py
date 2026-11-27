@@ -269,10 +269,13 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         calls = self.poll(self.message())
         sent = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
         buttons = [b for row in json.loads(sent[4])['inline_keyboard'] for b in row]
-        refresh = next(b for b in buttons if b['text'] == '🔄 Обновить результаты')
+        refresh = buttons[0]
+        self.assertEqual(refresh['text'], '🔄 Обновить результаты')
+        self.assertEqual(refresh['style'], 'primary')
         calls = self.nav(refresh['callback_data'].split(':')[1])
         edit = [c for c in calls if c[:2] == ['telegram', 'edit-message']][-1]
         self.assertIn('Результаты vtest', edit[4])
+        self.assertIn('Обновление перечитывает сохранённый отчёт.', edit[4])
         self.assertNotIn(['status', '--json'], calls)
         calls = self.nav('status')
         self.assertIn(['status', '--json'], calls)

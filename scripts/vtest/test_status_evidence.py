@@ -158,7 +158,16 @@ else: sys.exit(97)
         data = self.fixture()
         data['redmi']['dns'] = dict(state='DOWN', source='live_probe', scope='profile_resolver',
                                     port=2004, checked_at=int(time.time())-2)
-        self.assertIn('DNS профиля: проверка неуспешна', self.render(data))
+        text = self.render(data)
+        self.assertIn('DNS профиля: проверка неуспешна', text)
+        self.assertLess(text.index('⚠️ REDMI: DNS профиля не отвечает'), text.index('Канал провайдера'))
+        self.assertIn('Интернет REDMI: не проверен', text)
+
+    def test_wan_failure_is_visible_before_individual_services(self):
+        data = self.fixture()
+        data['network']['wan']['state'] = 'DOWN'
+        text = self.render(data)
+        self.assertLess(text.index('⚠️ WAN: канал провайдера недоступен'), text.index('Служба MAIN VPN'))
 
     def test_stale_or_wrong_scope_dns_not_shown_as_success(self):
         for scope, age in [('profile_resolver', 500), ('router', 2)]:
