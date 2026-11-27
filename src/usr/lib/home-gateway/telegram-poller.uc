@@ -386,6 +386,23 @@ function build_vtest() {
     push(rows, `История наблюдений: ${type(data?.history) == 'array' ? length(data.history) : 'нет данных'}`);
     push(rows, 'Состояние запуска: UNKNOWN — по файлам не определяется.');
     push(rows, 'Эта панель показывает сохранённые результаты Smart Test.');
+    let recovery = run_gateway([ 'recovery-history' ]);
+    if (recovery.code == 0) {
+        let observed;
+        try { observed = json(recovery.output); } catch (err) {}
+        let reviews = observed?.reviews;
+        if (observed?.schema_version == 1 && type(reviews) == 'array' && length(reviews) > 0) {
+            let decision = reviews[length(reviews) - 1]?.decision;
+            let labels = {
+                KEEP_MAIN: 'оставить текущий узел',
+                WAIT_FOR_WAN: 'дождаться проверки WAN',
+                REVIEW_CANDIDATES: 'проверить резервы',
+                INSUFFICIENT_EVIDENCE: 'недостаточно данных'
+            };
+            if (type(decision) == 'string' && index(keys(labels), decision) >= 0)
+                push(rows, 'Последнее наблюдение MAIN — ' + labels[decision]);
+        }
+    }
     push(rows, 'Автовосстановление MAIN в Home Gateway ещё не включено.');
     return join('\n', rows);
 }

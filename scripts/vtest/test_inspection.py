@@ -41,6 +41,9 @@ class VtestInspectionTests(unittest.TestCase):
 base = pathlib.Path(os.environ['HG_VTEST_TEST_BASE'])
 args = sys.argv[1:]
 with (base / 'calls').open('a') as out: out.write(json.dumps(args) + '\\n')
+if args == ['recovery-history']:
+    print(json.dumps({'schema_version': 1, 'reviews': [{'decision': 'REVIEW_CANDIDATES'}]}))
+    sys.exit(0)
 if args[0] == 'vtest':
     result = subprocess.run([os.environ['HG_VTEST_TEST_BUSYBOX'], 'ash', os.environ['HG_VTEST_REAL_GATEWAY'], *args], capture_output=True)
     sys.stdout.buffer.write(result.stdout)
@@ -189,6 +192,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         sent = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
         self.assertIn('UNKNOWN', sent[3])
         self.assertIn('Автовосстановление MAIN в Home Gateway ещё не включено.', sent[3])
+        self.assertIn('Последнее наблюдение MAIN — проверить резервы', sent[3])
         self.assertNotIn('PRIVATE_', sent[3])
         buttons = json.loads(sent[4])['inline_keyboard'][0]
         self.assertTrue(any(b['callback_data'] == 'nav:vtest' for b in buttons))
