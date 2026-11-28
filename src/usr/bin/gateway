@@ -36,6 +36,17 @@ CUDY Home Gateway
   gateway notifications configure mute SECONDS
   gateway notifications configure category COMPONENT on|off
   gateway vtest [--json]   Проверить наличие и fingerprint внешнего vtest
+  gateway recovery-scan     Проверить настроенные резервы MAIN
+  gateway candidate-check NODE  Проверить настроенный резерв через отдельный SOCKS
+  gateway recovery-history  Показать решения наблюдения MAIN
+  gateway recovery-review   Оценить необходимость поиска резерва MAIN
+  gateway main-transaction preflight NODE
+                           Живая проверка резерва и текущего владельца MAIN
+  gateway main-transaction prepare NODE
+  gateway main-transaction verify-runtime NODE
+                           Проверить рабочий узел MAIN и выход через его SOCKS
+  gateway main-transaction cancel ID
+  gateway main-transaction status
   gateway main-transaction plan NODE
                            Read-only проверка условий; смена MAIN заблокирована
   gateway actions [show|prepare ACTION USER CHAT MESSAGE|confirm TOKEN USER CHAT MESSAGE]
@@ -117,12 +128,45 @@ main() {
                 return "$HG_EXIT_USAGE"
             fi
             ;;
+        recovery-scan)
+            [ "$#" -eq 1 ] || return "$HG_EXIT_USAGE"
+            hg_load_module vpn
+            hg_recovery_scan
+            ;;
+        candidate-check)
+            [ "$#" -eq 2 ] || return "$HG_EXIT_USAGE"
+            hg_load_module vpn
+            hg_candidate_check "$2"
+            ;;
+        recovery-history)
+            [ "$#" -eq 1 ] || return "$HG_EXIT_USAGE"
+            ucode "${HG_LIBDIR}/incidents.uc" "$0" recovery-history
+            ;;
+        recovery-review)
+            [ "$#" -eq 1 ] || return "$HG_EXIT_USAGE"
+            hg_load_module vpn
+            health_rc=0
+            snapshot="$(timeout -k 2 45 "$0" health --json)" || health_rc=$?
+            [ "$health_rc" -le 1 ] || return "$HG_EXIT_SOFTWARE"
+            printf '%s\n' "$snapshot" | ucode "${HG_LIBDIR}/incidents.uc" "$0" recovery-review
+            ;;
         main-transaction)
-            if [ "$#" -eq 3 ] && [ "$2" = plan ]; then
+            if [ "$#" -eq 3 ] && { [ "$2" = plan ] || [ "$2" = preflight ] || [ "$2" = prepare ]; }; then
                 hg_load_module vpn
-                hg_main_transaction_plan "$3"
+                hg_main_transaction_plan "$3" "$2"
+            elif [ "$#" -eq 3 ] && [ "$2" = verify-runtime ]; then
+                hg_load_module vpn
+                hg_main_verify_runtime "$3"
+            elif [ "$#" -eq 3 ] && [ "$2" = cancel ]; then
+                [ "$(id -u)" -eq 0 ] || return "$HG_EXIT_SOFTWARE"
+                case "$3" in *[!a-f0-9]*) return "$HG_EXIT_USAGE" ;; esac
+                [ "${#3}" -eq 32 ] || return "$HG_EXIT_USAGE"
+                ucode "${HG_LIBDIR}/incidents.uc" "$0" transaction-cancel "$3"
             elif [ "$#" -eq 2 ]; then
                 case "$2" in
+                    status)
+                        [ "$(id -u)" -eq 0 ] || return "$HG_EXIT_SOFTWARE"
+                        ucode "${HG_LIBDIR}/incidents.uc" "$0" transaction-status ;;
                     apply|rollback|recover)
                         printf '{"schema_version":1,"status":"TRANSACTION_NOT_IMPLEMENTED","apply_supported":false}\n'
                         return "$HG_EXIT_SOFTWARE" ;;

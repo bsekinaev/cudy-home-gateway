@@ -265,6 +265,7 @@ hg_vtest_result_json() (
     umask 077
     input="$1"
     kind="$2"
+    output="${4:-counts}"
     [ -f "$input" ] && [ ! -L "$input" ] && [ -r "$input" ] || exit 1
     hg_vtest_size_within "$input" 262144 || exit 1
     snapshot="$(mktemp /tmp/hg-vtest-result.XXXXXX)" || exit 1
@@ -273,18 +274,46 @@ hg_vtest_result_json() (
     head -c 262145 "$input" > "$snapshot" 2>/dev/null || exit 1
     hg_vtest_size_within "$snapshot" 262144 || exit 1
     # A provider may be halfway through writing the last record.
-    [ "$(tail -c 1 "$snapshot" | od -An -tu1 | tr -d ' \n')" = 10 ] || exit 1
-    awk -F '\t' -v kind="$kind" -v expected="${3:-}" '
+    last="$(tail -c 1 "$snapshot" && printf x)" || exit 1
+    [ "$last" = "$(printf '\nx')" ] || exit 1
+    if [ "$output" = ranking ]; then
+        [ "$kind" = summary ] || exit 1
+        case "${3:-}" in ''|*[!a-f0-9]*) exit 1 ;; esac
+        [ "${#3}" -eq 64 ] || exit 1
+        digest="$(sha256sum "$snapshot")" || exit 1
+        [ "${digest%% *}" = "$3" ] || exit 1
+    fi
+    awk -F '\t' -v kind="$kind" -v expected="${3:-}" -v output="$output" '
         BEGIN {
             raw="run_id\tstage\tnode_id\tname\tround\tprovider\tstatus\tcurl_rc\thttp_code\tlatency_ms\tttfb_ms\tspeed_mbps\ttotal_sec\tbytes\terror"
             summary="node_id\tname\tscore\teligible\tmedian_mbps\tmedian_latency_ms\tsuccess_rate_pct\tspread_pct\tfailures\tstalls\tprovider_good\tcapability\tchatgpt_pass\topenai_pass\thttps_pass\tloc\tsource_stage"
             capability="stage\tnode_id\tname\teligible\tgoogle_pass\tchatgpt_pass\topenai_pass\thttps_pass\tloc"
         }
-        NR == 1 { if ($0 != (kind == "raw" ? raw : kind == "summary" ? summary : capability)) bad=1; next }
+        NR == 1 {
+            attempts_header="run_id\tstage\tnode_id\tname\tattempt\tgoogle_ok\tgoogle_http\tgoogle_sec\tchatgpt_ok\tchatgpt_http\tchatgpt_sec\tloc\topenai_ok\topenai_http\topenai_sec\topenai_reason\thttps_ok\thttps_http\thttps_sec\tnote"
+            attempts = kind == "capability" && $0 == attempts_header
+            if (!attempts && $0 != (kind == "raw" ? raw : kind == "summary" ? summary : capability)) bad=1
+            next
+        }
         {
             if (++rows > 4096 || length($0) > 4096) { bad=1; next }
-            if (kind == "raw") {
-                if (NF != 15 || (length($1) != 15 || $1 !~ /^[0-9]+-[0-9]+$/ || substr($1,9,1) != "-") || ($7 != "OK" && $7 != "FAIL")) bad=1
+            if (attempts) {
+                if (NF != 20 || $1 !~ /^[0-9]+-[0-9]+$/ || length($1) != 15 ||
+                    (attempt_run != "" && attempt_run != $1) ||
+                    ($2 != "deep_cap" && $2 != "retest_cap" && $2 != "live_main") ||
+                    $3 !~ /^[a-zA-Z0-9_]+$/ || length($3) > 64 || $5 !~ /^[0-9]+$/)
+                    bad=1
+                attempt_run=$1
+                if (duplicate[$2 SUBSEP $3 SUBSEP $5]++) bad=1
+                if (($6 != "YES" && $6 != "NO") || ($9 != "YES" && $9 != "NO") ||
+                    ($13 != "YES" && $13 != "NO") || ($17 != "YES" && $17 != "NO"))
+                    bad=1
+                google += ($6 == "YES")
+                chatgpt += ($9 == "YES")
+                openai += ($13 == "YES")
+                https += ($17 == "YES")
+            } else if (kind == "raw") {
+                if (NF != 15 || (length($1) != 15 || $1 !~ /^[0-9]+-[0-9]+$/ || substr($1,9,1) != "-") || ($7 != "OK" && $7 != "FAIL" && $7 != "STALL")) bad=1
                 if (expected != "" && $1 != expected) bad=1
                 if (row_run != "" && $1 != row_run) bad=1
                 row_run=$1
@@ -296,12 +325,33 @@ hg_vtest_result_json() (
                 if (kind == "summary") {
                     for (i=3;i<=15;i++) if (i != 4 && i != 12 && $i !~ /^[0-9]+([.][0-9]+)?$/) bad=1
                 } else for (i=5;i<=8;i++) if ($i !~ /^[0-9]+$/) bad=1
-                if ($col == "YES") eligible++
+                if ($col == "YES") {
+                    eligible++
+                    if (kind == "summary" && eligible <= 3 && $16 ~ /^[A-Z][A-Z]$/ &&
+                        $5 ~ /^[0-9]+([.][0-9]+)?$/ && $6 ~ /^[0-9]+$/) {
+                        top = top separator sprintf("{\"country\":\"%s\",\"mbps\":%s,\"latency_ms\":%s}", $16, $5+0, $6+0)
+                        separator = ","
+                    }
+                }
+                if (output == "ranking") {
+                    if (rows > 128 || length($1) > 64 || $1 !~ /^[a-zA-Z0-9_]+$/ || seen[$1]++) bad=1
+                    ids[rows]=$1
+                    accepted[rows]=($col == "YES" ? "true" : "false")
+                }
             }
         }
         END {
             if (NR == 0 || bad) exit 1
-            if (kind == "raw") printf "{\"samples\":%d,\"success\":%d,\"failed\":%d}", rows, success, failed
+            if (attempts) {
+                if (rows == 0) exit 1
+                printf "{\"attempts\":%d,\"google\":%d,\"chatgpt\":%d,\"openai\":%d,\"https\":%d}", rows, google, chatgpt, openai, https
+            } else if (output == "ranking") {
+                printf "["
+                for (i=1;i<=rows;i++)
+                    printf "%s{\"id\":\"%s\",\"eligible\":%s}", (i==1 ? "" : ","), ids[i], accepted[i]
+                printf "]"
+            } else if (kind == "raw") printf "{\"samples\":%d,\"success\":%d,\"failed\":%d}", rows, success, failed
+            else if (kind == "summary") printf "{\"nodes\":%d,\"eligible\":%d,\"top\":[%s]}", rows, eligible, top
             else printf "{\"nodes\":%d,\"eligible\":%d}", rows, eligible
         }
     ' "$snapshot"

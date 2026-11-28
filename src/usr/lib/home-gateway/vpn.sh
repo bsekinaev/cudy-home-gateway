@@ -34,6 +34,7 @@ hg_vpn_collect() {
     HG_VPN_MAIN_PROFILE_ENABLED='unknown'
     HG_VPN_MAIN_NODE=''
     HG_VPN_MAIN_NAME=''
+    HG_VPN_ACTIVE_NAME=''
     HG_VPN_MAIN_SOCKS_HOST="${HG_MAIN_SOCKS_HOST:-127.0.0.1}"
     HG_VPN_MAIN_SOCKS_PORT=''
     HG_VPN_MAIN_XRAY_STATE='UNKNOWN'
@@ -118,6 +119,15 @@ hg_vpn_collect() {
         OK)
             if hg_vpn_main_process_running "$HG_VPN_MAIN_PROFILE"; then
                 HG_VPN_MAIN_XRAY_STATE='OK'
+                if [ "$HG_VPN_MAIN_PROFILE" = socks_P8ART ] && [ -r /tmp/etc/passwall2/var ]; then
+                    observed="$(awk '/^socks_P8ART="[a-zA-Z0-9_]+"$/ { split($0, fields, "\""); node=fields[2] } END { print node }' /tmp/etc/passwall2/var 2>/dev/null)" || observed=''
+                    if [ -n "$observed" ] && [ "${#observed}" -le 64 ] &&
+                        [ "$(uci -q get "passwall2.$observed" 2>/dev/null || true)" = nodes ]; then
+                        HG_VPN_ACTIVE_NODE="$observed"
+                        HG_VPN_ACTIVE_NODE_STATE='OK'
+                        HG_VPN_ACTIVE_NAME="$(uci -q get "passwall2.$observed.remarks" 2>/dev/null || true)"
+                    fi
+                fi
             else
                 HG_VPN_MAIN_XRAY_STATE='DOWN'
             fi
@@ -142,7 +152,7 @@ hg_vpn_collect() {
             if [ "${#vpn_wan_context}" = 64 ] && [ -f "$vpn_config" ] && [ ! -L "$vpn_config" ]; then
                 vpn_config_hash="$(sha256sum "$vpn_config" 2>/dev/null | awk '{print $1}')"
                 if [ "${#vpn_config_hash}" = 64 ]; then
-                    vpn_cache_context="$(printf '%s\n' "$HG_NETWORK_PATH_CONTEXT" "$vpn_config_hash" "$HG_VPN_MAIN_PROFILE" "$HG_VPN_MAIN_NODE" "$HG_VPN_MAIN_SOCKS_HOST" "$HG_VPN_MAIN_SOCKS_PORT" "$egress_probe_url" "$secondary_probe_url" "$primary_provider" "$secondary_provider" | sha256sum | awk '{print $1}')"
+                    vpn_cache_context="$(printf '%s\n' "$HG_NETWORK_PATH_CONTEXT" "$vpn_config_hash" "$HG_VPN_MAIN_PROFILE" "$HG_VPN_MAIN_NODE" "$HG_VPN_ACTIVE_NODE" "$HG_VPN_MAIN_SOCKS_HOST" "$HG_VPN_MAIN_SOCKS_PORT" "$egress_probe_url" "$secondary_probe_url" "$primary_provider" "$secondary_provider" | sha256sum | awk '{print $1}')"
                 fi
             fi
             ;;
@@ -261,6 +271,7 @@ hg_vpn_collect() {
 # before any MAIN mutation can be implemented. No UCI set/commit or restart here.
 hg_main_transaction_plan() (
     candidate="$1"
+    mode="${2:-plan}"
     case "$candidate" in ''|*[!a-zA-Z0-9_]* )
         printf '{"schema_version":1,"status":"INVALID_CANDIDATE","apply_supported":false}\n'
         exit 2 ;;
@@ -290,6 +301,25 @@ hg_main_transaction_plan() (
         case "$value" in *"$newline"*) return 1 ;; esac
         printf '%s' "$value"
     }
+    hg_main_preflight_hash() {
+        [ -f "$source_config" ] && [ ! -L "$source_config" ] || return 1
+        bytes="$(stat -c %s "$source_config")" || return 1
+        case "$bytes" in ''|*[!0-9]*) return 1 ;; esac
+        [ "${#bytes}" -le 6 ] && [ "$bytes" -gt 0 ] && [ "$bytes" -le 262144 ] || return 1
+        sha256sum "$source_config" | awk '{ print $1 }'
+    }
+    hg_main_preflight_writer_clear() {
+        processes="$(ps w 2>/dev/null)" || return 1
+        printf '%s\n' "$processes" | awk '
+            /\/usr\/share\/passwall2\/socks_auto_switch[.]sh[[:space:]]+socks_P8ART([[:space:]]|$)/ { found = 1 }
+            END { exit found ? 1 : 0 }
+        '
+    }
+    if [ "$mode" != plan ]; then
+        source_config="${HG_MAIN_CONFIG_FILE:-/etc/config/passwall2}"
+        before="$(hg_main_preflight_hash)" || hg_main_plan_blocked CONFIG_READ_FAILED
+        [ "${#before}" -eq 64 ] || hg_main_plan_blocked CONFIG_READ_FAILED
+    fi
     command -v uci >/dev/null 2>&1 || hg_main_plan_blocked UCI_UNAVAILABLE
     pending="$(timeout -k 1 5 uci -q changes passwall2 2>/dev/null | head -c 65)" || hg_main_plan_blocked UCI_READ_FAILED
     [ -z "$pending" ] || hg_main_plan_blocked UNCOMMITTED_CONFIG
@@ -309,8 +339,329 @@ hg_main_transaction_plan() (
     # Re-observe pending edits; still no claim of generation-consistent reads.
     pending="$(timeout -k 1 5 uci -q changes passwall2 2>/dev/null | head -c 65)" || hg_main_plan_blocked UCI_READ_FAILED
     [ -z "$pending" ] || hg_main_plan_blocked UNCOMMITTED_CONFIG
+    if [ "$mode" != plan ]; then
+        [ "$candidate" != "$current" ] || hg_main_plan_blocked CANDIDATE_ALREADY_CONFIGURED
+        hg_main_preflight_writer_clear || hg_main_plan_blocked RUNTIME_WRITER_PRESENT_OR_UNKNOWN
+        [ "$(hg_main_preflight_hash)" = "$before" ] || hg_main_plan_blocked CONFIG_CHANGED
+        hg_candidate_check "$candidate" >/dev/null 2>&1 || hg_main_plan_blocked CANDIDATE_PROBE_FAILED
+        pending="$(timeout -k 1 5 uci -q changes passwall2 2>/dev/null | head -c 65)" ||
+            hg_main_plan_blocked UCI_READ_FAILED
+        [ -z "$pending" ] || hg_main_plan_blocked UNCOMMITTED_CONFIG
+        hg_main_preflight_writer_clear || hg_main_plan_blocked RUNTIME_WRITER_PRESENT_OR_UNKNOWN
+        [ "$(hg_main_preflight_hash)" = "$before" ] || hg_main_plan_blocked CONFIG_CHANGED
+        if [ "$mode" = prepare ]; then
+            [ "$(id -u)" -eq 0 ] || hg_main_plan_blocked ROOT_REQUIRED
+            transaction_id="$(tr -d '-' </proc/sys/kernel/random/uuid)" ||
+                hg_main_plan_blocked TRANSACTION_ID_UNAVAILABLE
+            umask 077
+            printf '{"schema_version":1,"phase":"PREPARED","id":"%s","candidate":"%s","before_sha256":"%s"}\n'                 "$transaction_id" "$candidate" "$before" |
+                ucode "${HG_LIBDIR}/incidents.uc" "$0" transaction-prepare
+            exit "$?"
+        fi
+        printf '{"schema_version":1,"status":"CANDIDATE_REACHABLE","apply_supported":false,"preflight_passed":true,"snapshot_ready":false}\n'
+        exit 0
+    fi
     same=false
     [ "$candidate" != "$current" ] || same=true
     printf '{"schema_version":1,"status":"PREFLIGHT_ADAPTER_REQUIRED","candidate_exists":true,"same_as_configured_main":%s,"observation_only":true,"apply_supported":false,"preflight_passed":false,"snapshot_ready":false,"blockers":["AUDITED_PASSWALL_HELPERS","WRITER_COORDINATION","LAN_TAILSCALE_RECOVERY","TRANSACTION_SNAPSHOT_JOURNAL"]}\n' "$same"
     exit 70
+)
+
+# The cache identifies PassWall2's selected node. The listener, executable,
+# arguments, process start time and generated file identify its SOCKS instance.
+hg_main_runtime_identity() (
+    set -o pipefail
+    expected="$1"
+    runtime_dir=/tmp/etc/passwall2
+    config_path="$runtime_dir/socks_P8ART.json"
+    [ "$(timeout -k 1 5 uci -q get passwall2.rulenode.default_node)" = socks_P8ART ] || return 1
+    awk -v expected="socks_P8ART=\"$expected\"" '
+        /^socks_P8ART=/ { count++; if ($0 == expected) matched++ }
+        END { exit !(count == 1 && matched == 1) }
+    ' "$runtime_dir/var" || return 1
+
+    pid="$(timeout -k 1 5 netstat -lntp | awk '
+        $4 == "127.0.0.1:1082" && $6 == "LISTEN" {
+            count++
+            if ($7 ~ /^[0-9]+\/xray$/) { split($7, fields, "/"); pid=fields[1] }
+        }
+        END { if (count != 1 || !pid) exit 1; print pid }
+    ')" || return 1
+    [ "$(readlink "/proc/$pid/exe")" = /usr/bin/xray ] || return 1
+    tr '\000' '\n' < "/proc/$pid/cmdline" | awk -v config="$config_path" '
+        previous == "-c" && $0 == config { found=1 }
+        { previous=$0 }
+        END { exit !found }
+    ' || return 1
+    start="$(awk '$2 == "(xray)" && $22 ~ /^[0-9]+$/ { print $22 }' "/proc/$pid/stat")" || return 1
+    [ -n "$start" ] && [ -f "$config_path" ] && [ ! -L "$config_path" ] || return 1
+    digest="$(sha256sum "$config_path" | awk '{ print $1 }')" || return 1
+    [ "${#digest}" -eq 64 ] || return 1
+    printf '%s:%s:%s\n' "$pid" "$start" "$digest"
+)
+
+hg_vpn_probe_socks() (
+    port="$1"
+    result=0
+    for url in https://www.google.com/generate_204 https://cp.cloudflare.com/; do
+        code="$(curl -q --noproxy '' --socks5-hostname "127.0.0.1:$port" \
+            --connect-timeout 3 --max-time 4 -s -o /dev/null -w '%{http_code}' "$url")" || code=000
+        printf '%s HTTP=%s\n' "$url" "$code"
+        [ "$code" = 204 ] || result=70
+    done
+    exit "$result"
+)
+
+hg_main_verify_runtime() (
+    hg_main_runtime_result() {
+        printf '{"schema_version":1,"status":"%s","runtime_verified":%s}\n' "$1" "${3:-false}"
+        exit "$2"
+    }
+    case "$1" in
+        ''|*[!a-zA-Z0-9_]*) hg_main_runtime_result INVALID_CANDIDATE 2 ;;
+    esac
+    [ "${#1}" -le 64 ] || hg_main_runtime_result INVALID_CANDIDATE 2
+    before="$(hg_main_runtime_identity "$1" 2>/dev/null)" ||
+        hg_main_runtime_result MAIN_RUNTIME_UNVERIFIED 70
+    probe_rc=0
+    hg_vpn_probe_socks 1082 >/dev/null 2>&1 || probe_rc=$?
+    after="$(hg_main_runtime_identity "$1" 2>/dev/null)" ||
+        hg_main_runtime_result MAIN_RUNTIME_CHANGED 70
+    [ "$before" = "$after" ] || hg_main_runtime_result MAIN_RUNTIME_CHANGED 70
+    [ "$probe_rc" -eq 0 ] || hg_main_runtime_result MAIN_SOCKS_PROBE_FAILED 70
+    hg_main_runtime_result MAIN_RUNTIME_VERIFIED 0 true
+)
+
+# Candidate probes share the VPN module tracked by the deployment inventory.
+hg_candidate_renderer() {
+    cat <<'HG_CANDIDATE_UCODE'
+'use strict';
+
+import { stdin } from 'fs';
+
+function reject() {
+    warn('vpn-candidate: unsupported or invalid candidate configuration\n');
+    exit(2);
+}
+
+function matches(value, pattern) {
+    return type(value) == 'string' && match(value, pattern) != null;
+}
+
+function valid_host(value) {
+    return matches(value, /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$/);
+}
+
+function valid_path(value) {
+    return matches(value, /^\/[[:graph:]]*$/) && length(value) <= 1024;
+}
+
+function render(node, listen_port) {
+    if (type(node) != 'object' || node.type != 'Xray' || node.protocol != 'vless' ||
+        node.tls != '1' || (node.tls_allowInsecure ?? '0') != '0' ||
+        !valid_host(node.address) || !valid_host(node.tls_serverName) ||
+        !matches(node.port, /^[1-9][0-9]{0,4}$/) || int(node.port) > 65535 ||
+        !matches(node.uuid, /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/) ||
+        (node.encryption ?? 'none') != 'none')
+        reject();
+
+    let supported = [
+        'type', 'protocol', 'transport', 'address', 'port', 'uuid', 'tls',
+        'tls_allowInsecure', 'tls_serverName', 'encryption', 'alpn', 'utls',
+        'fingerprint', 'reality', 'reality_publicKey', 'reality_shortId',
+        'reality_spiderX', 'flow', 'xhttp_path', 'xhttp_host', 'xhttp_mode',
+        'grpc_serviceName', 'grpc_mode', 'tcp_guise', 'remarks', 'group', 'add_mode', 'timeout'
+    ];
+    for (let key in keys(node))
+        if (index(supported, key) < 0 || type(node[key]) != 'string')
+            reject();
+
+    let network = node.transport;
+    let stream = { network };
+    switch (network) {
+    case 'raw':
+        if ((node.tcp_guise ?? 'none') != 'none')
+            reject();
+        break;
+    case 'xhttp':
+        let mode = node.xhttp_mode ?? 'auto';
+        let path = node.xhttp_path ?? '/';
+        if (index([ 'auto', 'packet-up', 'stream-up', 'stream-one' ], mode) < 0 ||
+            !valid_path(path) ||
+            (length(node.xhttp_host ?? '') && !valid_host(node.xhttp_host)))
+            reject();
+        stream.xhttpSettings = { mode, path, host: node.xhttp_host ?? '' };
+        break;
+    case 'grpc':
+        if (!matches(node.grpc_serviceName, /^[-a-zA-Z0-9_.\/]{1,255}$/) ||
+            index([ 'gun', 'multi' ], node.grpc_mode ?? 'gun') < 0)
+            reject();
+        stream.grpcSettings = {
+            serviceName: node.grpc_serviceName,
+            multiMode: node.grpc_mode == 'multi'
+        };
+        break;
+    default:
+        reject();
+    }
+
+    let fingerprint = node.fingerprint;
+    if (fingerprint && index([ 'chrome', 'firefox', 'safari', 'ios', 'android', 'edge' ], fingerprint) < 0)
+        reject();
+    if (node.reality == '1') {
+        if (!fingerprint || !matches(node.reality_publicKey, /^[A-Za-z0-9_-]{43}$/) ||
+            !matches(node.reality_shortId ?? '', /^([a-fA-F0-9]{2}){0,8}$/) ||
+            !valid_path(node.reality_spiderX ?? '/'))
+            reject();
+        stream.security = 'reality';
+        stream.realitySettings = {
+            serverName: node.tls_serverName,
+            fingerprint,
+            password: node.reality_publicKey,
+            shortId: node.reality_shortId ?? '',
+            spiderX: node.reality_spiderX ?? '/'
+        };
+    }
+    else {
+        if ((node.reality ?? '0') != '0' || node.reality_publicKey || node.reality_shortId || node.reality_spiderX)
+            reject();
+        stream.security = 'tls';
+        stream.tlsSettings = { serverName: node.tls_serverName, allowInsecure: false };
+        if (node.utls == '1' && fingerprint)
+            stream.tlsSettings.fingerprint = fingerprint;
+        if (node.alpn) {
+            let alpn = split(node.alpn, ',');
+            for (let name in alpn)
+                if (index([ 'h2', 'http/1.1' ], name) < 0)
+                    reject();
+            stream.tlsSettings.alpn = alpn;
+        }
+    }
+
+    let user = { id: node.uuid, encryption: 'none' };
+    if (node.flow) {
+        if (node.flow != 'xtls-rprx-vision' || network != 'raw')
+            reject();
+        user.flow = node.flow;
+    }
+    return {
+        log: { loglevel: 'none' },
+        inbounds: [{
+            listen: '127.0.0.1', port: listen_port, protocol: 'socks',
+            settings: { auth: 'noauth', udp: false }
+        }],
+        outbounds: [{
+            protocol: 'vless',
+            settings: { vnext: [{ address: node.address, port: int(node.port), users: [ user ] }] },
+            streamSettings: stream
+        }]
+    };
+}
+
+// The caller must own the temporary port and keep stdin/stdout private.
+if (length(ARGV) != 1 || !matches(ARGV[0], /^[0-9]{5}$/) ||
+    int(ARGV[0]) < 49152 || int(ARGV[0]) > 65535)
+    reject();
+let input = stdin.read(16385);
+if (!input || length(input) > 16384)
+    reject();
+let node;
+try { node = json(input); }
+catch (e) { reject(); }
+printf('%J\n', render(node, int(ARGV[0])));
+HG_CANDIDATE_UCODE
+}
+
+hg_candidate_check() (
+    set -eu
+    set -o pipefail
+
+    [ "$#" -eq 1 ] || exit 2
+    candidate="$1"
+    mode="${2:-plan}"
+    case "$candidate" in ''|*[!a-zA-Z0-9_]*) exit 2 ;; esac
+    [ "${#candidate}" -le 64 ] || exit 2
+
+    umask 077
+    dir="$(mktemp -d /tmp/hg-candidate.XXXXXX)"
+    runner=''
+    cleanup() {
+        if [ -n "$runner" ]; then
+            kill -TERM "$runner" 2>/dev/null || :
+            wait "$runner" 2>/dev/null || :
+        fi
+        rm -f "$dir/config.json" "$dir/render.uc"
+        rmdir "$dir"
+    }
+    trap cleanup EXIT
+    trap 'exit 70' HUP INT TERM
+
+    port=55182
+    if netstat -lnt | grep -E "[.:]$port[[:space:]]" >/dev/null; then
+        printf 'CANDIDATE_PORT_BUSY\n'
+        exit 70
+    fi
+
+    hg_candidate_renderer > "$dir/render.uc"
+
+    # Credentials move between local processes on stdin, never in argv or diagnostics.
+    ucode -e '
+        import { cursor } from "uci";
+        let c = cursor();
+        let backups = c.get("passwall2", "socks_P8ART", "autoswitch_backup_node");
+        if (type(backups) != "array" || index(backups, ARGV[0]) < 0 ||
+            c.get("passwall2", "socks_P8ART", "node") == ARGV[0])
+            exit(2);
+        let node = c.get_all("passwall2", ARGV[0]);
+        if (node == null || node[".type"] != "nodes")
+            exit(2);
+        for (let field in keys(node))
+            if (substr(field, 0, 1) == ".") delete node[field];
+        printf("%J", node);
+    ' "$candidate" | ucode "$dir/render.uc" "$port" > "$dir/config.json"
+
+    timeout -k 2 15 /usr/bin/xray run -c "$dir/config.json" </dev/null >/dev/null 2>&1 &
+    runner=$!
+    sleep 1
+    pid="$(netstat -lntp 2>/dev/null | awk -v addr="127.0.0.1:$port" '
+        $4 == addr && $6 == "LISTEN" && $7 ~ /\/xray$/ { split($7, fields, "/"); print fields[1] }
+    ')"
+    case "$pid" in ''|*[!0-9]*) printf 'CANDIDATE_LISTENER_UNAVAILABLE\n'; exit 70 ;; esac
+    if ! awk -v expected="$runner" '$1 == "PPid:" && $2 == expected { found=1 } END { exit !found }' "/proc/$pid/status"; then
+        printf 'CANDIDATE_LISTENER_NOT_OWNED\n'
+        exit 70
+    fi
+
+    hg_vpn_probe_socks "$port"
+)
+
+# Scan the configured reserve list without applying a node.
+hg_recovery_scan() (
+    set -f
+    reserves="$(uci -q get passwall2.socks_P8ART.autoswitch_backup_node)" || return 70
+    configured="$(uci -q get passwall2.socks_P8ART.node)" || return 70
+    set -- $reserves
+    [ "$#" -gt 0 ] && [ "$#" -le 3 ] || return 70
+    seen=' '
+    for node do
+        case "$node" in ''|*[!a-zA-Z0-9_]*) return 70 ;; esac
+        [ "${#node}" -le 64 ] && [ "$node" != "$configured" ] || return 70
+        case "$seen" in *" $node "*) return 70 ;; esac
+        seen="$seen$node "
+    done
+
+    passed=0
+    for node do
+        [ "$(uci -q get passwall2.socks_P8ART.node)" = "$configured" ] &&
+            [ "$(uci -q get passwall2.socks_P8ART.autoswitch_backup_node)" = "$reserves" ] || return 70
+        if hg_candidate_check "$node" >/dev/null 2>&1; then
+            passed=$((passed + 1))
+            printf '%s OK\n' "$node"
+        else
+            printf '%s UNCONFIRMED\n' "$node"
+        fi
+    done
+    [ "$(uci -q get passwall2.socks_P8ART.node)" = "$configured" ] &&
+        [ "$(uci -q get passwall2.socks_P8ART.autoswitch_backup_node)" = "$reserves" ] || return 70
+    [ "$passed" -gt 0 ] || return 70
 )

@@ -41,6 +41,9 @@ class VtestInspectionTests(unittest.TestCase):
 base = pathlib.Path(os.environ['HG_VTEST_TEST_BASE'])
 args = sys.argv[1:]
 with (base / 'calls').open('a') as out: out.write(json.dumps(args) + '\\n')
+if args == ['recovery-history']:
+    print(json.dumps({'schema_version': 1, 'reviews': [{'decision': 'REVIEW_CANDIDATES'}]}))
+    sys.exit(0)
 if args[0] == 'vtest':
     result = subprocess.run([os.environ['HG_VTEST_TEST_BUSYBOX'], 'ash', os.environ['HG_VTEST_REAL_GATEWAY'], *args], capture_output=True)
     sys.stdout.buffer.write(result.stdout)
@@ -84,6 +87,29 @@ else:
     def message(self, user=111, chat=222, at=None):
         return {'update_id': 1, 'message': {'from': {'id': user}, 'chat': {'id': chat},
                 'date': int(time.time()) if at is None else at, 'text': '/vtest'}}
+
+    def test_ranked_summary_requires_digest_of_the_parsed_snapshot(self):
+        import hashlib
+
+        path = self.base / 'rank.tsv'
+        payload = (
+            'node_id\tname\tscore\teligible\tmedian_mbps\tmedian_latency_ms\t'
+            'success_rate_pct\tspread_pct\tfailures\tstalls\tprovider_good\t'
+            'capability\tchatgpt_pass\topenai_pass\thttps_pass\tloc\tsource_stage\n'
+            'node_A\tprivate name\t90\tYES\t10\t100\t100\t10\t0\t0\t2\tYES\t3\t3\t3\tCH\tdeep\n'
+        ).encode()
+        path.write_bytes(payload)
+        digest = hashlib.sha256(payload).hexdigest()
+        command = [self.busybox, 'ash', '-c',
+                   '. "$1"; hg_vtest_result_json "$2" summary "$3" ranking',
+                   'rank', str(ROOT / 'src/usr/lib/home-gateway/doctor.sh'),
+                   str(path), digest]
+        result = subprocess.run(command, capture_output=True, check=True, text=True)
+        self.assertEqual(json.loads(result.stdout), [{'id': 'node_A', 'eligible': True}])
+        path.write_bytes(payload.replace(b'90', b'91'))
+        result = subprocess.run(command, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(result.stdout)
 
     def test_fingerprint_cron_and_explicit_unknown_results(self):
         data = self.inspect()
@@ -187,8 +213,9 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         calls = self.poll(self.message())
         self.assertIn(['vtest', '--json'], calls)
         sent = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
-        self.assertIn('UNKNOWN', sent[3])
-        self.assertIn('заблокирован', sent[3])
+        self.assertIn('Нет читаемого отчёта', sent[3])
+        self.assertIn('Автовосстановление MAIN в Home Gateway ещё не включено.', sent[3])
+        self.assertIn('Последнее наблюдение MAIN — проверить резервы', sent[3])
         self.assertNotIn('PRIVATE_', sent[3])
         buttons = json.loads(sent[4])['inline_keyboard'][0]
         self.assertTrue(any(b['callback_data'] == 'nav:vtest' for b in buttons))
@@ -213,7 +240,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         calls = self.poll({'update_id': 3, 'callback_query': callback})
         self.assertEqual(calls.count(['vtest', '--json']), count + 1)
         edit = next(c for c in calls if c[:2] == ['telegram', 'edit-message'])
-        self.assertIn('UNKNOWN', edit[4])
+        self.assertIn('Нет читаемого отчёта', edit[4])
 
     def test_expired_callback_rejected(self):
         self.poll(self.message())
@@ -242,10 +269,13 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         calls = self.poll(self.message())
         sent = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
         buttons = [b for row in json.loads(sent[4])['inline_keyboard'] for b in row]
-        refresh = next(b for b in buttons if b['text'] == '🔄 Обновить результаты')
+        refresh = buttons[0]
+        self.assertEqual(refresh['text'], '🔄 Обновить результаты')
+        self.assertEqual(refresh['style'], 'primary')
         calls = self.nav(refresh['callback_data'].split(':')[1])
         edit = [c for c in calls if c[:2] == ['telegram', 'edit-message']][-1]
         self.assertIn('Результаты vtest', edit[4])
+        self.assertIn('Обновление перечитывает сохранённый отчёт.', edit[4])
         self.assertNotIn(['status', '--json'], calls)
         calls = self.nav('status')
         self.assertIn(['status', '--json'], calls)
@@ -278,9 +308,9 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
     def test_explicit_results_label_no_question_mark_wall_or_run_button(self):
         calls = self.nav('vtest')
         edit = [c for c in calls if c[:2] == ['telegram', 'edit-message']][-1]
-        self.assertIn('Нет проверенных результатов', edit[4])
+        self.assertIn('Нет читаемого отчёта', edit[4])
         self.assertNotIn('?', edit[4])
-        self.assertIn('только просмотр', edit[4])
+        self.assertIn('Результаты vtest', edit[4])
         self.assertNotIn('prepare-', edit[5])
 
     def test_identical_refresh_does_not_spam_or_rotate_capability_state(self):
@@ -350,7 +380,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         self.assertEqual(data['state'], 'UNKNOWN')
         calls = self.poll(self.message())
         sent = next(c for c in calls if c[:2] == ['telegram', 'send-message'])
-        self.assertIn('samples: 2', sent[3])
+        self.assertIn('Замеры скорости: 2', sent[3])
         self.assertNotIn('private-id', sent[3])
         self.assertNotIn('PRIVATE_', sent[3])
 
@@ -421,7 +451,7 @@ os.execvp(os.environ['HG_VTEST_TEST_BUSYBOX'], [os.environ['HG_VTEST_TEST_BUSYBO
         cap = 'stage\tnode_id\tname\teligible\tgoogle_pass\tchatgpt_pass\topenai_pass\thttps_pass\tloc\n'
         (directory / 'latest-capability.tsv').write_text(cap + 'cap_only\tprivate-id\tPRIVATE_NODE\tNO\t0\t0\t0\t0\tXX\n')
         data = self.inspect()
-        self.assertEqual(data['latest']['summary'], dict(nodes=1, eligible=1))
+        self.assertEqual(data['latest']['summary'], dict(nodes=1, eligible=1, top=[dict(country='XX', mbps=12.1, latency_ms=20)]))
         self.assertEqual(data['latest']['capability'], dict(nodes=1, eligible=0))
 
 

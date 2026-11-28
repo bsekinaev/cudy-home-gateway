@@ -201,9 +201,14 @@ function load_callback_state() {
 function dashboard_markup(view) {
 	// Navigation only reads fixed views. It never prepares or confirms an action,
 	// so it need not expire with the separate 120-second action capability.
-	return sprintf('%J', { inline_keyboard: [
-		[ { text: view == 'status' ? '🔄 Обновить статус' : '🏠 Главная', callback_data: 'nav:status' },
-		  { text: view == 'vtest' ? '🔄 Обновить результаты' : '🧪 Результаты vtest', callback_data: 'nav:vtest' } ],
+	let home = { text: '🏠 Главная', callback_data: 'nav:status' };
+	let results = { text: '🧪 Результаты vtest', callback_data: 'nav:vtest' };
+	let first = [ home, results ];
+	if (view == 'status')
+		first = [ { text: '🔄 Обновить статус', callback_data: 'nav:status', style: 'primary' }, results ];
+	else if (view == 'vtest')
+		first = [ { text: '🔄 Обновить результаты', callback_data: 'nav:vtest', style: 'primary' }, home ];
+	return sprintf('%J', { inline_keyboard: [ first,
 		[ { text: view == 'actions' ? '🔄 Обновить действия' : '⚙️ Действия', callback_data: 'nav:actions' },
 		  { text: 'ℹ️ Помощь', callback_data: 'nav:help' } ],
         [ { text: '📊 За сутки', callback_data: 'nav:day' },
@@ -282,18 +287,18 @@ function status_egress(evidence, local_state, now, wan_state) {
 function status_profile_dns(evidence, process_state, now) {
 	if (process_state != 'OK' || type(evidence) != 'object' ||
 	    evidence.scope != 'profile_resolver' || evidence.source != 'live_probe')
-		return 'не проверен';
+		return { text: 'не проверен' };
 	let stamp = evidence.checked_at;
 	if (type(stamp) != 'int' || stamp <= 0 || stamp > now)
-		return 'не проверен';
+		return { text: 'не проверен' };
 	let age = now - stamp;
 	if (age > 120)
-		return `нет свежей проверки · ${age} с назад`;
+		return { text: `нет свежей проверки · ${age} с назад` };
 	if (evidence.state == 'DOWN')
-		return `проверка неуспешна · ${age} с назад`;
+		return { text: `проверка неуспешна · ${age} с назад`, failed: true };
 	if (evidence.state == 'OK')
-		return `ответ получен · ${age} с назад`;
-	return 'не проверен';
+		return { text: `ответ получен · ${age} с назад` };
+	return { text: 'не проверен' };
 }
 
 function build_status() {
@@ -328,17 +333,28 @@ function build_status() {
 	let main_node = status_text(data?.vpn?.main?.configured_node?.name, 'неизвестен');
 	let torrent_node = status_text(data?.torrent?.configured_node?.name, 'неизвестен');
 	let updated = status_text(data?.generated_at?.local, 'неизвестно');
+	let router_dns = status_state(data?.dns?.state);
+	let redmi_process = status_state(data?.redmi?.xray_process);
+	let redmi_dns = status_profile_dns(data?.redmi?.dns, redmi_process, now);
+	let warnings = [];
+	if (wan_state == 'DOWN') push(warnings, '⚠️ WAN: канал провайдера недоступен');
+	if (router_dns == 'DOWN') push(warnings, '⚠️ DNS роутера: проверка не прошла');
+	if (main_local == 'DOWN') push(warnings, '⚠️ MAIN VPN: служба недоступна');
+	if (torrent_local == 'DOWN') push(warnings, '⚠️ Torrent: служба недоступна');
+	if (redmi_process == 'DOWN') push(warnings, '⚠️ REDMI: Xray недоступен');
+	if (redmi_dns.failed) push(warnings, '⚠️ REDMI: DNS профиля не отвечает');
+	let attention = length(warnings) ? join('\n', warnings) + '\n\n' : '';
 
 	return `🏠 CUDY Home Gateway
-🕒 Данные статуса: ${updated}
-Возраст проверок — на момент обновления сообщения.
+🕒 Снимок на ${updated}
 
-🌐 Канал провайдера (WAN): ${wan_state}
+${attention}🌐 Канал провайдера (WAN): ${wan_state}
 Выход WAN: ${direct}
-🌍 DNS роутера: ${status_state(data?.dns?.state)}
+🌍 DNS роутера: ${router_dns}
 
 🛡 Служба MAIN VPN: ${main_process}
 Настроенный узел MAIN: ${main_node}
+Активный узел по данным PassWall2: ${status_text(data?.vpn?.main?.active_node?.name, 'неизвестен')}
 Выход MAIN: ${main}
 
 ⬇️ Служба Torrent: ${torrent_process}
@@ -346,16 +362,16 @@ function build_status() {
 Выход Torrent: ${torrent}
 
 📱 REDMI
-Правила: ${status_state(data?.redmi?.routing_policy?.state)} · Xray: ${status_state(data?.redmi?.xray_process)}
+Правила: ${status_state(data?.redmi?.routing_policy?.state)} · Xray: ${redmi_process}
 Kill Switch: ${status_state(data?.redmi?.kill_switch?.state)}
-DNS профиля: ${status_profile_dns(data?.redmi?.dns, status_state(data?.redmi?.xray_process), now)}
+DNS профиля: ${redmi_dns.text}
 Интернет REDMI: не проверен
 
 🖥 ASATA (устройство/правила): ${status_state(data?.asata?.state)}
 🔗 Служба Tailscale: ${status_state(data?.tailscale?.state)}
 
-Для актуальных данных нажмите «Обновить статус».
-Версия: ${status_text(data?.gateway_version, 'unknown')}`;
+Возраст проверок — на момент обновления сообщения.
+Версия: ${status_text(data?.gateway_version, 'неизвестна')}`;
 }
 
 function build_vtest() {
@@ -371,21 +387,50 @@ function build_vtest() {
     let cap = data?.latest?.capability;
     // Numbers only: provider node IDs, names, locations and errors stay local.
     function count(value) { return type(value) == 'int' && value >= 0 && value <= 4096 ? `${value}` : '?'; }
-    let rows = [ '🧪 Результаты vtest · только просмотр',
-        `Тест: ${data?.provider?.installed == true ? 'найден' : 'не подтверждён'}`,
-        `Расписание: ${data?.cron_configured == true ? 'настроено' : 'не подтверждено'}` ];
-    if (speed != null)
-        push(rows, `Speed samples: ${count(speed.samples)}, OK: ${count(speed.success)}, FAIL: ${count(speed.failed)}`);
+    let rows = [ '🧪 Результаты vtest', '' ];
     if (summary != null)
-        push(rows, `Сводка: ${count(summary.nodes)}, подходят: ${count(summary.eligible)}`);
-    if (cap != null)
+        push(rows, `Подходят для VPN: ${count(summary.eligible)} из ${count(summary.nodes)} узлов`);
+    if (type(summary?.top) == 'array' && length(summary.top) > 0) {
+        push(rows, 'Лучшие узлы по последнему отчёту');
+        for (let item in slice(summary.top, 0, 3)) {
+            if (type(item?.country) == 'string' && match(item.country, /^[A-Z]{2}$/) &&
+                (type(item.mbps) == 'int' || type(item.mbps) == 'double') &&
+                type(item.latency_ms) == 'int')
+                push(rows, `• ${item.country} · ${item.mbps} Мбит/с · ${item.latency_ms} мс`);
+        }
+    }
+    if (speed != null)
+        push(rows, `Замеры скорости: ${count(speed.samples)}, успешных: ${count(speed.success)}, с ошибкой: ${count(speed.failed)}`);
+    if (type(cap?.attempts) == 'int' && cap.attempts > 0) {
+        let total = count(cap.attempts);
+        push(rows, `Доступность, успешных попыток из ${total}`);
+        push(rows, `Google ${count(cap.google)} · ChatGPT ${count(cap.chatgpt)} · OpenAI ${count(cap.openai)} · HTTPS ${count(cap.https)}`);
+    }
+    else if (cap != null)
         push(rows, `Проверка доступа: ${count(cap.nodes)}, подходят: ${count(cap.eligible)}`);
     if (speed == null && summary == null && cap == null)
-        push(rows, 'Нет проверенных результатов последнего теста.');
-    push(rows, `История наблюдений: ${type(data?.history) == 'array' ? length(data.history) : 'нет данных'}`);
-    push(rows, 'Состояние запуска: UNKNOWN — по файлам не определяется.');
-    push(rows, 'Запуск из бота заблокирован до проверки безопасности runner.');
-    push(rows, 'MAIN автоматически не переключается.');
+        push(rows, 'Нет читаемого отчёта последнего теста.');
+    if (type(data?.history) == 'array')
+        push(rows, `Сохранённых запусков: ${length(data.history)}`);
+    let recovery = run_gateway([ 'recovery-history' ]);
+    if (recovery.code == 0) {
+        let observed;
+        try { observed = json(recovery.output); } catch (err) {}
+        let reviews = observed?.reviews;
+        if (observed?.schema_version == 1 && type(reviews) == 'array' && length(reviews) > 0) {
+            let decision = reviews[length(reviews) - 1]?.decision;
+            let labels = {
+                KEEP_MAIN: 'оставить текущий узел',
+                WAIT_FOR_WAN: 'дождаться проверки WAN',
+                REVIEW_CANDIDATES: 'проверить резервы',
+                INSUFFICIENT_EVIDENCE: 'недостаточно данных'
+            };
+            if (type(decision) == 'string' && index(keys(labels), decision) >= 0)
+                push(rows, 'Последнее наблюдение MAIN — ' + labels[decision]);
+        }
+    }
+    push(rows, '', 'Автовосстановление MAIN в Home Gateway ещё не включено.',
+        'Обновление перечитывает сохранённый отчёт.');
     return join('\n', rows);
 }
 
@@ -410,14 +455,13 @@ ${enabled ? 'Выберите действие и подтвердите за 12
 }
 function help_view() {
     return `ℹ️ Управление Gateway
-🏠 Главная — состояние шлюза и сетевых служб.
-🧪 Результаты vtest — только сохранённые наблюдения; тест не запускается.
-⚙️ Действия — доступные перезапуски с отдельным подтверждением.
-Кнопки просмотра работают и в старых сообщениях.
-Переход в раздел запрашивает отмену ожидающего подтверждения.
-Команды: /start, /status, /vtest, /actions, /summary, /history, /help.
-📊 /summary — сутки, /history — неделя; только сохранённые наблюдения.
-VPN, DNS, firewall и MAIN через это меню не меняются.`;
+
+🏠 Главная — состояние интернета и служб. Возраст замеров указан на момент снимка.
+🧪 Результаты vtest — последний сохранённый отчёт о скорости и доступности узлов.
+⚙️ Действия — перезапуски с отдельным подтверждением. Переход в другой раздел запрашивает отмену.
+📊 За сутки и За неделю — история сохранённых наблюдений.
+
+Команды /status, /vtest, /actions, /summary, /history и /help открывают те же разделы.`;
 }
 function action_confirmation(callback, action) {
     let chat = `${callback.message.chat.id}`, message = `${callback.message.message_id}`;

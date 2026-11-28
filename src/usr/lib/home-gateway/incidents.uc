@@ -626,6 +626,43 @@ function valid_sample(c, e) {
         type(s?.checked_uptime) == 'int' && type(s?.expires_uptime) == 'int' &&
         s.checked_uptime <= e.finished_uptime && e.finished_uptime <= s.expires_uptime;
 }
+function recovery_decision(health) {
+    let wan = health?.external_evidence?.direct_egress;
+    let main = health?.external_evidence?.main_egress;
+    let state = health?.components?.main?.state;
+    if (health?.observation?.valid != true)
+        return 'INSUFFICIENT_EVIDENCE';
+    if (health?.components?.wan?.state != 'OK' || wan?.state != 'OK')
+        return 'WAIT_FOR_WAN';
+    if (state == 'OK' && main?.state == 'OK')
+        return 'KEEP_MAIN';
+    if (wan?.freshness == 'live' && main?.freshness == 'live' &&
+        main?.state != 'OK' && main?.secondary_attempted == true &&
+        (state == 'DOWN' || state == 'DEGRADED'))
+        return 'REVIEW_CANDIDATES';
+    return 'INSUFFICIENT_EVIDENCE';
+}
+
+function record_recovery_review(health, runtime, now) {
+    let scope = health.observation;
+    let rows = type(runtime.recovery_reviews) == 'array' ? runtime.recovery_reviews : [];
+    let wan = health.components.wan;
+    let main = health.components.main;
+    if (scope?.valid != true || !valid_sample(wan, scope) || !valid_sample(main, scope))
+        return;
+    let previous = rows[length(rows) - 1];
+    if (previous?.boot_id == scope.boot_id && previous?.context == scope.context &&
+        (previous.main_checked >= main.sample.checked_uptime ||
+         previous.wan_checked >= wan.sample.checked_uptime))
+        return;
+    push(rows, {
+        at: now, boot_id: scope.boot_id, context: scope.context,
+        main_checked: main.sample.checked_uptime, wan_checked: wan.sample.checked_uptime,
+        decision: recovery_decision(health), changes_applied: false
+    });
+    runtime.recovery_reviews = slice(rows, max(0, length(rows) - 16));
+}
+
 function gated_component(spec, health, runtime) {
     let c = health.components?.[spec.name] ?? {};
     if (getenv('HG_INCIDENTS_LEGACY_SAMPLES') == '1' && health?.observation == null) return c;
@@ -902,6 +939,7 @@ function tick() {
         return 70;
     }
 
+    record_recovery_review(health, runtime, now);
     let history_ok = record_history(health, now, events);
 
     runtime.updated_at = now;
@@ -997,6 +1035,18 @@ function selftest_observation(state, reason) {
 }
 
 function run_selftest() {
+    let review_runtime = {};
+    let example = {
+        observation: { schema_version: 1, boot_id: 'boot', context: 'ctx', finished_uptime: 3, valid: true },
+        components: {
+            wan: { sample: { id: 'wan', boot_id: 'boot', context: 'ctx', checked_uptime: 1, expires_uptime: 5, valid: true } },
+            main: { sample: { id: 'main', boot_id: 'boot', context: 'ctx', checked_uptime: 2, expires_uptime: 5, valid: true } }
+        }
+    };
+    record_recovery_review(example, review_runtime, 1);
+    record_recovery_review(example, review_runtime, 2);
+    if (length(review_runtime.recovery_reviews) != 1)
+        return 1;
     let runtime = empty_runtime();
     let active = {};
     let events = [];
@@ -1051,9 +1101,552 @@ function run_selftest() {
     return 0;
 }
 
+function valid_rank_receipt(input, now) {
+    let report = input.report;
+    let receipt = report?.receipt;
+    let expected = input.expected;
+    return receipt?.schema_version == 1 && receipt.exit_code == 0 &&
+        type(expected?.provider_sha256) == 'string' &&
+        match(expected.provider_sha256, /^[a-f0-9]{64}$/) != null &&
+        receipt.provider_sha256 == expected.provider_sha256 &&
+        type(expected?.summary_sha256) == 'string' &&
+        match(expected.summary_sha256, /^[a-f0-9]{64}$/) != null &&
+        receipt.summary_sha256 == expected.summary_sha256 &&
+        type(expected?.boot_id) == 'string' &&
+        match(expected.boot_id, /^[a-f0-9-]{36}$/) != null &&
+        receipt.boot_id == expected.boot_id &&
+        type(receipt.run_id) == 'string' && match(receipt.run_id, /^[0-9]{8}-[0-9]{6}$/) != null &&
+        receipt.context_before == input.context && receipt.context_after == input.context &&
+        type(receipt.started_at) == 'int' && receipt.started_at > 0 &&
+        type(receipt.finished_at) == 'int' && receipt.finished_at == report.generated_at &&
+        receipt.finished_at >= receipt.started_at && receipt.finished_at <= now;
+}
+
+function recovery_order(input, now) {
+    let allowed = input?.allowed;
+    if (input?.schema_version != 1 || type(allowed) != 'array' || length(allowed) > 32)
+        return null;
+    let order = [];
+    for (let id in allowed) {
+        if (type(id) != 'string' || match(id, /^[a-zA-Z0-9_]{1,64}$/) == null ||
+            index(order, id) >= 0)
+            return null;
+        push(order, id);
+    }
+
+    let report = input.report;
+    if (report?.complete != true || report?.schema_version != 1 || !valid_rank_receipt(input, now) ||
+        type(input.context) != 'string' || match(input.context, /^[a-f0-9]{64}$/) == null ||
+        report.context != input.context || type(report.generated_at) != 'int' ||
+        report.generated_at <= 0 || report.generated_at > now ||
+        now - report.generated_at > 21600 || type(report.ranked) != 'array' ||
+        length(report.ranked) > 128)
+        return { schema_version: 1, source: 'configured', order };
+
+    let ranked = [];
+    let seen = [];
+    for (let row in report.ranked) {
+        if (type(row?.id) != 'string' || match(row.id, /^[a-zA-Z0-9_]{1,64}$/) == null ||
+            type(row.eligible) != 'bool' || index(seen, row.id) >= 0)
+            return { schema_version: 1, source: 'configured', order };
+        push(seen, row.id);
+        if (row.eligible && index(allowed, row.id) >= 0)
+            push(ranked, row.id);
+    }
+    if (length(ranked) == 0)
+        return { schema_version: 1, source: 'configured', order };
+    for (let id in allowed)
+        if (index(ranked, id) < 0)
+            push(ranked, id);
+    return { schema_version: 1, source: 'vtest', order: ranked };
+}
+
+function validate_lan_review(input) {
+    let expected = input?.expected;
+    let receipt = input?.receipt;
+    let targets = [ 'https://www.google.com/generate_204', 'https://cp.cloudflare.com/' ];
+    if (expected?.phase != 'VERIFYING' || expected?.consumed != false ||
+        type(expected.token) != 'string' || match(expected.token, /^[a-f0-9]{32}$/) == null ||
+        receipt?.schema_version != 1 || receipt.token != expected.token ||
+        type(expected.boot_id) != 'string' || !length(expected.boot_id) ||
+        input.boot_id != expected.boot_id || type(expected.apply_uptime) != 'int' ||
+        expected.apply_uptime < 0 || type(expected.deadline_uptime) != 'int' ||
+        type(input.received_uptime) != 'int' || input.received_uptime < expected.apply_uptime ||
+        input.received_uptime > expected.deadline_uptime ||
+        type(receipt.checks) != 'array' || length(receipt.checks) != length(targets))
+        return false;
+    for (let i = 0; i < length(targets); i++) {
+        let probe = receipt.checks[i];
+        if (probe?.Target != targets[i] || probe.HTTP != '204' ||
+            probe.CurlExit != 0 || probe.Passed != true)
+            return false;
+    }
+    return true;
+}
+
+function main_transaction_decision(input) {
+    let tx = input?.expected;
+    if (tx?.phase != 'VERIFYING' || tx.consumed != false ||
+        type(tx.before_sha256) != 'string' || match(tx.before_sha256, /^[a-f0-9]{64}$/) == null ||
+        type(tx.applied_sha256) != 'string' || match(tx.applied_sha256, /^[a-f0-9]{64}$/) == null ||
+        tx.before_sha256 == tx.applied_sha256 ||
+        type(tx.boot_id) != 'string' || !length(tx.boot_id) ||
+        type(input.boot_id) != 'string' || !length(input.boot_id) ||
+        type(tx.apply_uptime) != 'int' || tx.apply_uptime < 0 ||
+        type(tx.deadline_uptime) != 'int' || tx.deadline_uptime <= tx.apply_uptime ||
+        type(input.received_uptime) != 'int' || input.received_uptime < 0)
+        return 'INVALID_STATE';
+    if (input.config_sha256 != tx.applied_sha256)
+        return 'STOP_CONFIG_CONFLICT';
+    if (input.boot_id != tx.boot_id || input.received_uptime > tx.deadline_uptime)
+        return 'ROLLBACK';
+    if (input.received_uptime < tx.apply_uptime)
+        return 'INVALID_STATE';
+    if (input.socks == 'FAILED')
+        return 'ROLLBACK';
+    if (input.socks == 'OK' && validate_lan_review(input))
+        return 'COMMIT';
+    return 'WAIT_FOR_VERIFICATION';
+}
+
+function valid_prepared_main(value) {
+    return value?.schema_version == 1 && value?.phase == 'PREPARED' &&
+        type(value.id) == 'string' && match(value.id, /^[a-f0-9]{32}$/) != null &&
+        type(value.before_sha256) == 'string' &&
+        match(value.before_sha256, /^[a-f0-9]{64}$/) != null &&
+        type(value.candidate) == 'string' &&
+        match(value.candidate, /^[a-zA-Z0-9_]{1,64}$/) != null;
+}
+
+function main_snapshot_matches(path, expected) {
+    let file = fs.lstat(path);
+    if (file?.type != 'file' || file.size <= 0 || file.size > 262144 ||
+        (file.mode & 0777) != 0600)
+        return false;
+    let hash = run_command('/usr/bin/sha256sum ' + shellquote(path));
+    return hash.code == 0 && substr(hash.output, 0, 64) == expected;
+}
+
+function prepare_main_snapshot(path, expected) {
+    let config = getenv('HG_MAIN_CONFIG_FILE') || '/etc/config/passwall2';
+    let source = fs.lstat(config);
+    if (source?.type != 'file' || source.size <= 0 || source.size > 262144)
+        return false;
+    let hash = run_command('/usr/bin/sha256sum ' + shellquote(config));
+    if (hash.code != 0 || substr(hash.output, 0, 64) != expected)
+        return false;
+
+    if (fs.lstat(path) != null)
+        return main_snapshot_matches(path, expected);
+
+    let result = run_command('umask 077; mktemp ' + shellquote(STATE_DIR + '/main-snapshot.XXXXXX'));
+    if (result.code != 0)
+        return false;
+    let temporary = trim(result.output);
+    if (index(temporary, STATE_DIR + '/main-snapshot.') != 0 || fs.lstat(temporary)?.type != 'file')
+        return false;
+    let copied = run_command('/bin/busybox head -c 262145 ' + shellquote(config) +
+        ' > ' + shellquote(temporary));
+    if (copied.code != 0 || !main_snapshot_matches(temporary, expected) ||
+        run_command('/bin/busybox fsync ' + shellquote(temporary)).code != 0 ||
+        !fs.rename(temporary, path)) {
+        fs.unlink(temporary);
+        return false;
+    }
+    return run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code == 0;
+}
+
+function stage_main_config(snapshot, current) {
+    if (!prepare_main_snapshot(snapshot, current.before_sha256))
+        return null;
+
+    let temporary = run_command('umask 077; mktemp -d ' + shellquote(STATE_DIR + '/main-stage.XXXXXX'));
+    if (temporary.code != 0)
+        return null;
+    let directory = trim(temporary.output);
+    if (index(directory, STATE_DIR + '/main-stage.') != 0 || fs.lstat(directory)?.type != 'directory')
+        return null;
+    let config = directory + '/passwall2';
+    let delta = directory + '/delta';
+    let overrides = directory + '/overrides';
+    let staged_path = STATE_DIR + '/main-intent.candidate';
+    let staged = null;
+    if (fs.mkdir(delta, 0700) && fs.mkdir(overrides, 0700) &&
+        run_command('/bin/cp ' + shellquote(snapshot) + ' ' + shellquote(config)).code == 0 &&
+        main_snapshot_matches(config, current.before_sha256)) {
+        let uci = '/sbin/uci -q -c ' + shellquote(directory) + ' -C ' + shellquote(overrides) + ' -t ' + shellquote(delta);
+        let section = 'passwall2.socks_P8ART';
+        let kind = run_command(uci + ' get ' + shellquote('passwall2.' + current.candidate));
+        let profile = run_command(uci + ' get ' + shellquote(section));
+        let active = run_command(uci + ' get ' + shellquote(section + '.node'));
+        if (kind.code == 0 && trim(kind.output) == 'nodes' &&
+            profile.code == 0 && trim(profile.output) == 'socks' &&
+            active.code == 0 && trim(active.output) != current.candidate &&
+            run_command(uci + ' set ' + shellquote(section + '.node=' + current.candidate)).code == 0 &&
+            run_command(uci + ' commit passwall2').code == 0 && fs.chmod(config, 0600)) {
+            let hash = run_command('/usr/bin/sha256sum ' + shellquote(config));
+            let digest = substr(hash.output, 0, 64);
+            if (hash.code == 0 && digest != current.before_sha256 &&
+                main_snapshot_matches(config, digest) &&
+                run_command('/bin/busybox fsync ' + shellquote(config)).code == 0 &&
+                fs.rename(config, staged_path) &&
+                run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code == 0)
+                staged = digest;
+        }
+    }
+    fs.unlink(config);
+    fs.unlink(delta + '/passwall2');
+    fs.rmdir(delta);
+    fs.rmdir(overrides);
+    fs.rmdir(directory);
+    return staged;
+}
+
+function persist_main_fixture_phase(path, current, phase) {
+    current.phase = phase;
+    return atomic_write_json(path, current) &&
+        run_command('/bin/busybox fsync ' + shellquote(path)).code == 0 &&
+        run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code == 0;
+}
+
+function main_fixture_uptime() {
+    let raw = getenv('HG_MAIN_FIXTURE_UPTIME') ??
+        split(trim(fs.readfile('/proc/uptime') ?? ''), ' ')[0];
+    return match(raw, /^[0-9]+([.][0-9]+)?$/) != null ? int(raw) : null;
+}
+
+function review_applied_main_fixture(current, target, watch) {
+    if (current.phase != 'APPLIED')
+        return 'STOP_CONFIG_CONFLICT';
+    let sample = { socks: 'UNKNOWN' };
+    if (!watch) {
+        let raw = fs.stdin.read(4097);
+        sample = null;
+        if (type(raw) == 'string' && length(raw) <= 4096) {
+            try { sample = json(raw); } catch (err) {}
+        }
+    }
+    if (type(sample) != 'object' || index([ 'OK', 'FAILED', 'UNKNOWN' ], sample.socks) < 0)
+        return 'INVALID_INPUT';
+
+    return main_transaction_decision({
+        expected: {
+            phase: 'VERIFYING', consumed: false, token: current.token,
+            boot_id: current.boot_id, apply_uptime: current.apply_uptime,
+            deadline_uptime: current.deadline_uptime,
+            before_sha256: current.before_sha256, applied_sha256: current.candidate_sha256
+        },
+        boot_id: trim(fs.readfile('/proc/sys/kernel/random/boot_id') ?? ''),
+        received_uptime: main_fixture_uptime(),
+        config_sha256: main_snapshot_matches(target, current.candidate_sha256) ?
+            current.candidate_sha256 : null,
+        socks: sample.socks,
+        receipt: sample.receipt
+    });
+
+}
+
+function advance_main_fixture(mode, path, current, snapshot, candidate) {
+    // Only the disposable fixture uses these writes. No production apply entry point.
+    let temporary_fixture = match(STATE_DIR, /^\/tmp\/hg-main-fixture\.[a-zA-Z0-9_]+$/) != null;
+    let isolated_vm = trim(fs.readfile('/etc/hg-disposable-vm') ?? '') == 'HG_NETWORKLESS_OPENWRT_VM_V1' &&
+        trim(run_command('/bin/uname -m').output) == 'x86_64';
+    let persistent_fixture = STATE_DIR == '/etc/hg-vm-lab/main-boot-fixture' && isolated_vm;
+    if ((!temporary_fixture && !persistent_fixture) || current?.candidate_sha256 == null)
+        return 70;
+    let target = STATE_DIR + '/fixture-passwall2';
+    if (getenv('HG_MAIN_CONFIG_FILE') != target)
+        return 70;
+
+    let watch = mode == 'fixture-watch';
+    if (watch && current.phase == 'COMMITTED')
+        return main_snapshot_matches(target, current.candidate_sha256) ? 0 : 75;
+    if (watch && current.phase == 'ROLLED_BACK')
+        return main_snapshot_matches(target, current.before_sha256) ? 0 : 75;
+    if (watch && index([ 'APPLYING', 'RESTORING' ], current.phase) >= 0)
+        mode = 'fixture-restore';
+    else if (mode == 'fixture-verify' || watch) {
+        let decision = review_applied_main_fixture(current, target, watch);
+        switch (decision) {
+        case 'ROLLBACK':
+            mode = 'fixture-restore';
+            break;
+        case 'COMMIT':
+            return persist_main_fixture_phase(path, current, 'COMMITTED') ? 0 : 70;
+        case 'WAIT_FOR_VERIFICATION':
+            return watch ? 76 : 75;
+        case 'STOP_CONFIG_CONFLICT':
+            return 75;
+        case 'INVALID_INPUT':
+            return 2;
+        default:
+            return 70;
+        }
+    }
+    let applying = mode == 'fixture-apply';
+    let pending = applying ? 'APPLYING' : 'RESTORING';
+    let finished = applying ? 'APPLIED' : 'ROLLED_BACK';
+    let from = applying ? current.before_sha256 : current.candidate_sha256;
+    let to = applying ? current.candidate_sha256 : current.before_sha256;
+    if (current.phase == finished)
+        return main_snapshot_matches(target, to) ? 0 : 75;
+    if (applying ? index([ 'PREPARED', pending ], current.phase) < 0 :
+        index([ 'APPLYING', 'APPLIED', pending ], current.phase) < 0)
+        return 75;
+    let already_written = main_snapshot_matches(target, to);
+    if (!already_written && !main_snapshot_matches(target, from))
+        return 75;
+    if (already_written && current.phase == 'PREPARED')
+        return 75;
+    if (applying && current.phase == 'PREPARED') {
+        let uptime = main_fixture_uptime();
+        let token = replace(trim(fs.readfile('/proc/sys/kernel/random/uuid') ?? ''), /-/g, '');
+        let boot = trim(fs.readfile('/proc/sys/kernel/random/boot_id') ?? '');
+        if (uptime == null || match(token, /^[a-f0-9]{32}$/) == null || !length(boot))
+            return 70;
+        current.token = token;
+        current.boot_id = boot;
+        current.apply_uptime = uptime;
+        let window = getenv('HG_MAIN_FIXTURE_WINDOW') ?? '30';
+        if (match(window, /^[0-9]{1,2}$/) == null || int(window) < 1 || int(window) > 30)
+            return 70;
+        current.deadline_uptime = uptime + int(window);
+        if (getenv('HG_MAIN_FIXTURE_PROCD') == '1') {
+            if (!isolated_vm)
+                return 70;
+            current.fixture_service = true;
+        }
+    }
+    if (!persist_main_fixture_phase(path, current, pending))
+        return 70;
+    if (!already_written) {
+        let source = applying ? candidate : snapshot;
+        let created = run_command('umask 077; mktemp ' + shellquote(target + '.XXXXXX'));
+        if (created.code != 0)
+            return 70;
+        let temporary = trim(created.output);
+        if (index(temporary, target + '.') != 0 || fs.lstat(temporary)?.type != 'file')
+            return 70;
+        if (run_command('umask 077; /bin/cp ' + shellquote(source) + ' ' + shellquote(temporary)).code != 0 ||
+            !main_snapshot_matches(temporary, to) ||
+            run_command('/bin/busybox fsync ' + shellquote(temporary)).code != 0 ||
+            !main_snapshot_matches(target, from) || !fs.rename(temporary, target)) {
+            fs.unlink(temporary);
+            return 70;
+        }
+    }
+    if (run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code != 0)
+        return 70;
+    if (current.fixture_service == true) {
+        if (!isolated_vm ||
+            run_command('timeout -k 2 10 /etc/hg-vm-lab/main-passwall-fixture restart').code != 0)
+            return 70;
+        let loaded = STATE_DIR + '/fixture-service-hash';
+        for (let attempt = 0; attempt < 4 && trim(fs.readfile(loaded) ?? '') != to; attempt++)
+            run_command('/bin/busybox sleep 1');
+        if (trim(fs.readfile(loaded) ?? '') != to)
+            return 70;
+    }
+    if (!main_snapshot_matches(target, to) || !persist_main_fixture_phase(path, current, finished))
+        return 70;
+    return 0;
+}
+
+function main_intent(mode) {
+    if (fs.lstat(STATE_DIR)?.type != 'directory')
+        return 70;
+    let path = STATE_DIR + '/main-intent.json';
+    let snapshot = STATE_DIR + '/main-intent.passwall2';
+    let staged_path = STATE_DIR + '/main-intent.candidate';
+    let lock = fs.open(STATE_DIR + '/main-intent.lock', 'ae');
+    if (!lock)
+        return 70;
+    if (lock.lock('xn') == null) {
+        lock.close();
+        return 75;
+    }
+
+    let existing = fs.lstat(path);
+    let current = existing?.type == 'file' && existing.size <= 2048 ?
+        read_json_file(path, null) : null;
+    let rc = 0;
+    let fixture_phase = current == null ? null : current.phase;
+    let cancelled = fixture_phase == 'CANCELLED';
+    let preparing = mode == 'prepare' || mode == 'prepare-stage';
+    let prepared_fields = current == null ? null : { ...current, phase: 'PREPARED' };
+    if (existing != null && (!valid_prepared_main(prepared_fields) ||
+        index([ 'PREPARED', 'APPLYING', 'APPLIED', 'RESTORING', 'ROLLED_BACK', 'COMMITTED', 'CANCELLED' ], fixture_phase) < 0 ||
+        (!cancelled && fixture_phase != 'PREPARED' && current.candidate_sha256 == null) ||
+        (!cancelled && !main_snapshot_matches(snapshot, current.before_sha256)) ||
+        (!cancelled && current.candidate_sha256 != null &&
+         (type(current.candidate_sha256) != 'string' || match(current.candidate_sha256, /^[a-f0-9]{64}$/) == null ||
+          !main_snapshot_matches(staged_path, current.candidate_sha256))))) {
+        rc = 70;
+    } else if (mode == 'cancel') {
+        if (current == null || ARGV[2] != current.id ||
+            index([ 'PREPARED', 'CANCELLED' ], current.phase) < 0)
+            rc = 75;
+        else if (!persist_main_fixture_phase(path, current, 'CANCELLED'))
+            rc = 70;
+    } else if (mode == 'fixture-apply' || mode == 'fixture-restore' || mode == 'fixture-verify' || mode == 'fixture-watch') {
+        rc = advance_main_fixture(mode, path, current, snapshot, staged_path);
+    } else if (current != null && current.phase != 'PREPARED' && !cancelled &&
+               (preparing || mode == 'stage')) {
+        rc = 75;
+    } else if (preparing) {
+        let payload;
+        let raw = fs.stdin.read(2049);
+        if (type(raw) == 'string' && length(raw) <= 2048) {
+            try { payload = json(raw); } catch (err) {}
+        }
+        if (!valid_prepared_main(payload)) {
+            rc = 2;
+        } else if (!cancelled && current != null && (current.id != payload.id ||
+                   current.before_sha256 != payload.before_sha256 ||
+                   current.candidate != payload.candidate)) {
+            rc = 75;
+        } else if (cancelled && (current.id == payload.id ||
+                   (fs.lstat(snapshot) != null && !fs.unlink(snapshot)) ||
+                   (fs.lstat(staged_path) != null && !fs.unlink(staged_path)))) {
+            rc = 75;
+        } else if (!prepare_main_snapshot(snapshot, payload.before_sha256)) {
+            rc = 70;
+        } else {
+            if (current == null || cancelled) {
+                current = {
+                    schema_version: 1, phase: 'PREPARED', id: payload.id,
+                    before_sha256: payload.before_sha256, candidate: payload.candidate
+                };
+                if (!atomic_write_json(path, current))
+                    rc = 70;
+            }
+            if (rc == 0 && (run_command('/bin/busybox fsync ' + shellquote(path)).code != 0 ||
+                run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code != 0))
+                rc = 70;
+        }
+    }
+    if (rc == 0 && (mode == 'stage' || mode == 'prepare-stage')) {
+        let digest = current?.phase == 'PREPARED' ? current?.candidate_sha256 : null;
+        if (digest == null && current?.phase == 'PREPARED') {
+            digest = stage_main_config(snapshot, current);
+            if (digest != null) {
+                current.candidate_sha256 = digest;
+                if (!atomic_write_json(path, current))
+                    digest = null;
+            }
+        }
+        if (digest != null &&
+            (run_command('/bin/busybox fsync ' + shellquote(path)).code != 0 ||
+             run_command('/bin/busybox fsync ' + shellquote(STATE_DIR)).code != 0))
+            digest = null;
+        if (digest == null) {
+            if (mode == 'prepare-stage' && current?.phase == 'PREPARED')
+                printf('%J\n', { schema_version: 1, status: 'STAGING_FAILED', transaction_id: current.id, apply_supported: false });
+            rc = 70;
+        } else if (mode == 'prepare-stage') {
+            printf('%J\n', { schema_version: 1, status: 'PREPARED', transaction_id: current.id,
+                            apply_supported: false, preflight_passed: true, snapshot_ready: true });
+        } else {
+            printf('%J\n', { schema_version: 1, candidate_sha256: digest });
+        }
+    } else if (rc == 0 && (mode == 'public-read' || mode == 'cancel')) {
+        printf('%J\n', { schema_version: 1, transaction_id: current?.id,
+                        phase: current?.phase, snapshot_ready: current?.phase == 'PREPARED' &&
+                            current?.candidate_sha256 != null, apply_supported: false });
+    } else if (rc == 0) {
+        printf('%J\n', { schema_version: 1, transaction: current });
+    }
+    lock.close();
+    return rc;
+}
+
+function watch_main_fixture() {
+    for (let attempt = 0; attempt < 34; attempt++) {
+        let rc = main_intent('fixture-watch');
+        if (rc != 76)
+            return rc;
+        if (run_command('/bin/busybox sleep 1').code != 0)
+            return 70;
+    }
+    return 70;
+}
+
 let rc;
 
 switch (MODE) {
+case 'recovery-review':
+    let health;
+    try { health = json(fs.stdin.read(65536)); } catch (err) {}
+    printf('%J\n', {
+        schema_version: 1, mode: 'observe', decision: recovery_decision(health),
+        changes_applied: false
+    });
+    rc = 0;
+    break;
+case 'transaction-prepare':
+    rc = main_intent('prepare-stage');
+    break;
+case 'transaction-cancel':
+    rc = main_intent('cancel');
+    break;
+case 'transaction-intent':
+    rc = main_intent('prepare');
+    break;
+case 'transaction-fixture-watch':
+    rc = watch_main_fixture();
+    break;
+case 'transaction-fixture-verify':
+    rc = main_intent('fixture-verify');
+    break;
+case 'transaction-fixture-apply':
+    rc = main_intent('fixture-apply');
+    break;
+case 'transaction-fixture-restore':
+    rc = main_intent('fixture-restore');
+    break;
+case 'transaction-stage':
+    rc = main_intent('stage');
+    break;
+case 'transaction-status':
+    rc = main_intent('public-read');
+    break;
+case 'transaction-state':
+    rc = main_intent('read');
+    break;
+case 'transaction-review':
+    let transaction;
+    let transaction_raw = fs.stdin.read(8193);
+    if (type(transaction_raw) == 'string' && length(transaction_raw) <= 8192) {
+        try { transaction = json(transaction_raw); } catch (err) {}
+    }
+    let transaction_decision = main_transaction_decision(transaction);
+    printf('%J\n', { schema_version: 1, decision: transaction_decision, changes_applied: false });
+    rc = transaction_decision == 'INVALID_STATE' ? 2 : 0;
+    break;
+case 'lan-review':
+    let lan;
+    let lan_raw = fs.stdin.read(8193);
+    if (type(lan_raw) == 'string' && length(lan_raw) <= 8192) {
+        try { lan = json(lan_raw); } catch (err) {}
+    }
+    let accepted = validate_lan_review(lan);
+    printf('%J\n', { schema_version: 1, accepted });
+    rc = accepted ? 0 : 2;
+    break;
+case 'recovery-order':
+    let input;
+    let raw = fs.stdin.read(32769);
+    if (type(raw) == 'string' && length(raw) <= 32768) {
+        try { input = json(raw); } catch (err) {}
+    }
+    let result = recovery_order(input, time());
+    if (result != null) printf('%J\n', result);
+    rc = result == null ? 2 : 0;
+    break;
+case 'recovery-history':
+    printf('%J\n', { schema_version: 1, reviews: load_runtime().recovery_reviews ?? [] });
+    rc = 0;
+    break;
 case 'history-json':
     rc = history_summary(false);
     break;

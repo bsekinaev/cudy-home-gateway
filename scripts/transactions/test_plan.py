@@ -44,7 +44,7 @@ print(data[key])
     def run_plan(self, candidate='candidate_private_id', mode='plan'):
         (self.base / 'data').write_text(json.dumps(self.data))
         args = [os.environ.get('HG_TEST_BUSYBOX', 'busybox'), 'ash', str(ROOT / 'src/usr/bin/gateway'), 'main-transaction', mode]
-        if mode == 'plan': args.append(candidate)
+        if mode in ('plan', 'preflight'): args.append(candidate)
         result = subprocess.run(args, env=self.env, capture_output=True, text=True, timeout=10)
         self.assertNotIn('private-credential-detail', result.stdout + result.stderr)
         return result
@@ -116,6 +116,90 @@ print(data[key])
         result = self.run_plan()
         self.assertEqual(json.loads(result.stdout)['status'], 'UCI_READ_FAILED')
         self.assertLess(time.monotonic() - started, 8)
+
+    def test_preflight_checks_reachability_drift_and_runtime_writer(self):
+        private_lib = self.base / 'lib'
+        private_lib.mkdir()
+        runtime_lib = ROOT / 'src/usr/lib/home-gateway'
+        (private_lib / 'common.sh').write_bytes((runtime_lib / 'common.sh').read_bytes())
+        (private_lib / 'vpn.sh').write_text((runtime_lib / 'vpn.sh').read_text() + """
+hg_candidate_check() {
+    case "$HG_PREFLIGHT_TEST" in
+        drift) printf changed > "$HG_MAIN_CONFIG_FILE" ;;
+        failed) return 70 ;;
+    esac
+}
+""")
+        ps = self.base / 'bin' / 'ps'
+        ps.write_text("""#!/bin/sh
+if [ "$HG_PREFLIGHT_TEST" = writer ]; then
+    echo '4321 root /bin/sh /usr/share/passwall2/socks_auto_switch.sh socks_P8ART'
+fi
+""")
+        ps.chmod(0o755)
+        config = self.base / 'passwall2'
+        self.env.update(HG_LIBDIR=str(private_lib), HG_MAIN_CONFIG_FILE=str(config))
+        for case, expected, rc in (
+            ('ok', 'CANDIDATE_REACHABLE', 0),
+            ('drift', 'CONFIG_CHANGED', 70),
+            ('failed', 'CANDIDATE_PROBE_FAILED', 70),
+            ('writer', 'RUNTIME_WRITER_PRESENT_OR_UNKNOWN', 70),
+        ):
+            with self.subTest(case=case):
+                config.write_text('private configuration')
+                self.env['HG_PREFLIGHT_TEST'] = case
+                result = self.run_plan(mode='preflight')
+                self.assertEqual(result.returncode, rc, result.stderr)
+                data = json.loads(result.stdout)
+                self.assertEqual(data['status'], expected)
+                self.assertIs(data['preflight_passed'], rc == 0)
+                self.assertFalse(data['apply_supported'])
+                self.assertFalse(data['snapshot_ready'])
+                self.assertNotIn('private', result.stdout)
+
+    def test_runtime_verification_requires_stable_occupant_and_two_fresh_probes(self):
+        private_lib = self.base / 'lib'
+        private_lib.mkdir()
+        runtime_lib = ROOT / 'src/usr/lib/home-gateway'
+        (private_lib / 'common.sh').write_bytes((runtime_lib / 'common.sh').read_bytes())
+        (private_lib / 'vpn.sh').write_text((runtime_lib / 'vpn.sh').read_text() + """
+hg_main_runtime_identity() {
+    [ "$1" = current_private_id ] || return 1
+    if [ "$HG_RUNTIME_CASE" = changed ] && [ -f "$HG_RUNTIME_PROBES" ]; then
+        echo new-generation
+    else
+        echo original-generation
+    fi
+}
+curl() {
+    printf '%s\n' "$*" >> "$HG_RUNTIME_PROBES"
+    case "$HG_RUNTIME_CASE:$*" in
+        failed:*cloudflare*) printf 502 ;;
+        *) printf 204 ;;
+    esac
+}
+""")
+        probes = self.base / 'probes'
+        self.env.update(HG_LIBDIR=str(private_lib), HG_RUNTIME_PROBES=str(probes))
+        args = [os.environ.get('HG_TEST_BUSYBOX', 'busybox'), 'ash',
+                str(ROOT / 'src/usr/bin/gateway'), 'main-transaction', 'verify-runtime']
+        for case, node, status, rc, count in (
+            ('ok', 'current_private_id', 'MAIN_RUNTIME_VERIFIED', 0, 2),
+            ('failed', 'current_private_id', 'MAIN_SOCKS_PROBE_FAILED', 70, 2),
+            ('changed', 'current_private_id', 'MAIN_RUNTIME_CHANGED', 70, 2),
+            ('ok', 'wrong_private_id', 'MAIN_RUNTIME_UNVERIFIED', 70, 0),
+            ('ok', '../bad', 'INVALID_CANDIDATE', 2, 0),
+        ):
+            with self.subTest(case=case, node=node):
+                probes.unlink(missing_ok=True)
+                result = subprocess.run(args + [node], env=dict(self.env, HG_RUNTIME_CASE=case),
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, rc, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['status'], status)
+                self.assertNotIn('private_id', result.stdout + result.stderr)
+                calls = probes.read_text().splitlines() if probes.exists() else []
+                self.assertEqual(len(calls), count)
+                self.assertTrue(all('--socks5-hostname 127.0.0.1:1082' in call for call in calls))
 
     def test_mutation_modes_never_touch_uci(self):
         for mode in ('apply', 'rollback', 'recover'):

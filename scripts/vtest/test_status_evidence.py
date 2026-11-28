@@ -89,6 +89,13 @@ else: sys.exit(97)
         self.assertIn('203.0.113.4', text)
         self.assertIn('DNS роутера: OK', text)
 
+    def test_failover_shows_configured_and_active_main_separately(self):
+        data = self.fixture()
+        data['vpn']['main']['active_node'] = {'name': 'RESERVE TEST'}
+        screen = self.render(data)
+        self.assertIn('Настроенный узел MAIN: MAIN TEST', screen)
+        self.assertIn('Активный узел по данным PassWall2: RESERVE TEST', screen)
+
     def test_fresh_cache_is_explicit(self):
         data = self.fixture()
         data['vpn']['main']['egress'].update(source='cache', checked_at=int(time.time())-120)
@@ -151,7 +158,16 @@ else: sys.exit(97)
         data = self.fixture()
         data['redmi']['dns'] = dict(state='DOWN', source='live_probe', scope='profile_resolver',
                                     port=2004, checked_at=int(time.time())-2)
-        self.assertIn('DNS профиля: проверка неуспешна', self.render(data))
+        text = self.render(data)
+        self.assertIn('DNS профиля: проверка неуспешна', text)
+        self.assertLess(text.index('⚠️ REDMI: DNS профиля не отвечает'), text.index('Канал провайдера'))
+        self.assertIn('Интернет REDMI: не проверен', text)
+
+    def test_wan_failure_is_visible_before_individual_services(self):
+        data = self.fixture()
+        data['network']['wan']['state'] = 'DOWN'
+        text = self.render(data)
+        self.assertLess(text.index('⚠️ WAN: канал провайдера недоступен'), text.index('Служба MAIN VPN'))
 
     def test_stale_or_wrong_scope_dns_not_shown_as_success(self):
         for scope, age in [('profile_resolver', 500), ('router', 2)]:

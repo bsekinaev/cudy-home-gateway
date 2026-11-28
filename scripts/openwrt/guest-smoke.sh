@@ -75,6 +75,235 @@ EOF
     printf 'HGVM_DIAG=planner_status:%s\n' "$(json_value /tmp/hg-vm-lab/plan.json data.status)"
     check planner_preserves_uci test "$(sha256sum /etc/config/passwall2)" = "$before"
 
+    main_fixture=$(mktemp -d /tmp/hg-main-fixture.XXXXXX)
+    cp /etc/config/passwall2 "$main_fixture/fixture-passwall2"
+    main_engine=/usr/lib/home-gateway/incidents.uc
+    main_intent() {
+        HG_NOTIFICATION_STATE_DIR="$main_fixture" HG_MAIN_CONFIG_FILE="$main_fixture/fixture-passwall2" ucode "$main_engine" /usr/bin/gateway "$@"
+    }
+    prepare_main_fixture() {
+        printf '{"schema_version":1,"phase":"PREPARED","id":"0123456789abcdef0123456789abcdef","candidate":"trial_node","before_sha256":"%s"}\n' "${before%% *}" |
+            main_intent transaction-intent
+    }
+    check prepare_main_fixture prepare_main_fixture
+    check stage_main_fixture main_intent transaction-stage
+    check main_stage_keeps_live_config test "$(sha256sum /etc/config/passwall2)" = "$before"
+    check main_snapshot_matches_live cmp "$main_fixture/main-intent.passwall2" /etc/config/passwall2
+    main_candidate_dir="$LAB/main-candidate-read"
+    mkdir -m 700 "$main_candidate_dir"
+    if cp "$main_fixture/main-intent.candidate" "$main_candidate_dir/passwall2"; then
+        check main_candidate_node test "$(uci -q -c "$main_candidate_dir" get passwall2.socks_P8ART.node)" = trial_node
+    else
+        check main_candidate_node false
+    fi
+
+    main_round_trip() {
+        local target="$main_candidate_dir/passwall2"
+        main_intent transaction-state > /tmp/hg-vm-lab/main-state.json || return 1
+        local candidate_hash
+        candidate_hash="$(json_value /tmp/hg-vm-lab/main-state.json data.transaction.candidate_sha256)"
+        local actual
+        actual="$(sha256sum "$target")" || return 1
+        [ "${actual%% *}" = "$candidate_hash" ] || return 1
+        cp "$main_fixture/main-intent.passwall2" "$target.restore" &&
+            mv "$target.restore" "$target" &&
+            cmp "$target" /etc/config/passwall2 &&
+            [ "$(uci -q -c "$main_candidate_dir" get passwall2.socks_P8ART.node)" = old_node ]
+    }
+    fixture_lan_timeout_rollback() {
+        local result=0
+        HG_MAIN_FIXTURE_UPTIME=100 main_intent transaction-fixture-apply || return 1
+        cmp "$main_fixture/fixture-passwall2" "$main_fixture/main-intent.candidate" || return 1
+        printf '%s' '{"socks":"OK"}' |
+            HG_MAIN_FIXTURE_UPTIME=115 main_intent transaction-fixture-verify || result=$?
+        [ "$result" -eq 75 ] || return 1
+        cmp "$main_fixture/fixture-passwall2" "$main_fixture/main-intent.candidate" || return 1
+        printf '%s' '{"socks":"OK"}' |
+            HG_MAIN_FIXTURE_UPTIME=131 main_intent transaction-fixture-verify || return 1
+        main_intent transaction-fixture-restore || return 1
+        cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2
+    }
+    check main_fixture_lan_timeout_rollback fixture_lan_timeout_rollback
+    check main_snapshot_round_trip main_round_trip
+
+    fresh_main_fixture() {
+        main_fixture=$(mktemp -d /tmp/hg-main-fixture.XXXXXX) || return 1
+        cp /etc/config/passwall2 "$main_fixture/fixture-passwall2" &&
+            prepare_main_fixture &&
+            main_intent transaction-stage
+    }
+    fixture_watchdog() {
+        fresh_main_fixture || return 1
+        HG_MAIN_FIXTURE_WINDOW=1 main_intent transaction-fixture-apply || return 1
+        main_intent transaction-fixture-watch || return 1
+        cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2
+    }
+    fixture_confirm_once() {
+        fresh_main_fixture || return 1
+        HG_MAIN_FIXTURE_UPTIME=100 main_intent transaction-fixture-apply > /tmp/hg-vm-lab/main-applied.json || return 1
+        local token receipt
+        token=$(json_value /tmp/hg-vm-lab/main-applied.json data.transaction.token) || return 1
+        receipt=$(printf '{"socks":"OK","receipt":{"schema_version":1,"token":"%s","checks":[{"Target":"https://www.google.com/generate_204","HTTP":"204","CurlExit":0,"Passed":true},{"Target":"https://cp.cloudflare.com/","HTTP":"204","CurlExit":0,"Passed":true}]}}' "$token")
+        printf '%s' "$receipt" | HG_MAIN_FIXTURE_UPTIME=101 main_intent transaction-fixture-verify > /tmp/hg-vm-lab/main-confirmed.json || return 1
+        [ "$(json_value /tmp/hg-vm-lab/main-confirmed.json data.transaction.phase)" = COMMITTED ] || return 1
+        local replay=0
+        printf '%s' "$receipt" | HG_MAIN_FIXTURE_UPTIME=102 main_intent transaction-fixture-verify || replay=$?
+        [ "$replay" -eq 75 ] && cmp "$main_fixture/fixture-passwall2" "$main_fixture/main-intent.candidate"
+    }
+    check main_fixture_watchdog fixture_watchdog
+    check main_fixture_confirm_once fixture_confirm_once
+
+    fixture_interrupted_restore() {
+        fresh_main_fixture || return 1
+        main_intent transaction-fixture-apply >/dev/null || return 1
+        ucode -e 'import * as fs from "fs"; let p=ARGV[0]; let d=json(fs.readfile(p)); d.phase="RESTORING"; fs.writefile(p, sprintf("%J",d));' "$main_fixture/main-intent.json" || return 1
+        main_intent transaction-fixture-watch || return 1
+        cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2
+    }
+    check main_fixture_interrupted_restore fixture_interrupted_restore
+
+    fixture_watchdog_pid() {
+        ubus call service list '{"name":"main-watchdog-fixture"}' |
+            ucode -e 'import * as fs from "fs"; let d=json(fs.stdin.read(8192)); for (let i in values(d["main-watchdog-fixture"]?.instances ?? {})) if (type(i.pid) == "int" && i.running) { print(i.pid); break; }'
+    }
+
+    fixture_supervision() {
+        fresh_main_fixture || return 1
+        HG_MAIN_FIXTURE_WINDOW=12 main_intent transaction-fixture-apply >/dev/null || return 1
+        local service="$LAB/main-watchdog-fixture"
+        local launches="$LAB/main-watchdog-launches"
+        : > "$launches"
+        # A respawn after the deadline can roll back and exit before ubus is polled.
+        # Record each launch in the fixture so its PID survives process exit.
+        cat > "$LAB/main-watchdog-run" <<'WATCH'
+#!/bin/sh
+printf '%s\n' "$$" >> /etc/hg-vm-lab/main-watchdog-launches || exit 1
+exec /usr/bin/ucode /usr/lib/home-gateway/incidents.uc /usr/bin/gateway transaction-fixture-watch
+WATCH
+        chmod 700 "$LAB/main-watchdog-run"
+        cat > "$service" <<'SERVICE'
+#!/bin/sh /etc/rc.common
+USE_PROCD=1
+start_service() {
+    [ "$(cat /etc/hg-disposable-vm)" = HG_NETWORKLESS_OPENWRT_VM_V1 ] || return 1
+    local state
+    state=$(cat /etc/hg-vm-lab/main-watchdog-state) || return 1
+    procd_open_instance
+    procd_set_param command /etc/hg-vm-lab/main-watchdog-run
+    procd_set_param env HG_NOTIFICATION_STATE_DIR="$state" HG_MAIN_CONFIG_FILE="$state/fixture-passwall2"
+    procd_set_param respawn 60 1 2
+    procd_close_instance
+}
+SERVICE
+        chmod 700 "$service"
+        printf '%s\n' "$main_fixture" > "$LAB/main-watchdog-state"
+        "$service" start || return 1
+        local first phase started=0 restarted=0 result=1
+        for attempt in 1 2 3 4; do
+            first=$(fixture_watchdog_pid)
+            if [ -n "$first" ] && [ "$(head -n 1 "$launches")" = "$first" ]; then
+                started=1
+                break
+            fi
+            sleep 1
+        done
+        if [ "$started" -ne 1 ]; then
+            printf 'HGVM_DIAG=main_watchdog_initial_pid_missing\n'
+            "$service" stop
+            return 1
+        fi
+        phase=$(json_value "$main_fixture/main-intent.json" data.phase)
+        if [ "$phase" = APPLIED ] && kill -TERM "$first"; then
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do
+                phase=$(json_value "$main_fixture/main-intent.json" data.phase)
+                if awk -v first="$first" '
+                    NR == 1 { started=($0 == first) }
+                    NR > 1 && /^[0-9]+$/ && $0 != first { found=1 }
+                    END { exit !(started && found) }
+                ' "$launches"; then restarted=1; fi
+                if [ "$restarted" -eq 1 ] && [ "$phase" = ROLLED_BACK ] &&
+                    cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2; then
+                    result=0
+                    break
+                fi
+                sleep 1
+            done
+        fi
+        "$service" stop
+        printf 'HGVM_DIAG=main_watchdog_restart:%s,phase:%s\n' "$restarted" "${phase:-UNKNOWN}"
+        return "$result"
+    }
+    check main_fixture_supervised_watchdog fixture_supervision
+    sed -n '/^HGVM_DIAG=main_watchdog_/p' /tmp/hg-vm-lab/check.out
+
+    fixture_passwall_restart() {
+        fresh_main_fixture || return 1
+        local service="$LAB/main-passwall-fixture"
+        printf '%s\n' "$main_fixture" > "$LAB/main-passwall-state"
+        cat > "$service" <<'SERVICE'
+#!/bin/sh /etc/rc.common
+USE_PROCD=1
+start_service() {
+    [ "$(cat /etc/hg-disposable-vm)" = HG_NETWORKLESS_OPENWRT_VM_V1 ] || return 1
+    local state
+    state=$(cat /etc/hg-vm-lab/main-passwall-state) || return 1
+    procd_open_instance
+    procd_set_param command /bin/sh /etc/hg-vm-lab/main-passwall-worker "$state"
+    procd_close_instance
+}
+stop_service() {
+    local state
+    state=$(cat /etc/hg-vm-lab/main-passwall-state) || return 1
+    rm -f "$state/fixture-service-hash" "$state/fixture-service-node"
+}
+SERVICE
+        cat > "$LAB/main-passwall-worker" <<'WORKER'
+set -eu
+state=$1
+mkdir -p "$state/inspection"
+cp "$state/fixture-passwall2" "$state/inspection/passwall2"
+node=$(uci -q -c "$state/inspection" get passwall2.socks_P8ART.node)
+if [ "$node" = trial_node ] && [ -f "$state/reject-trial" ]; then exit 1; fi
+printf '%s\n' "$node" > "$state/fixture-service-node"
+sha256sum "$state/inspection/passwall2" | cut -d ' ' -f1 > "$state/fixture-service-hash"
+exec /bin/sleep 600
+WORKER
+        chmod 700 "$service" "$LAB/main-passwall-worker"
+        local phase result=0
+        "$service" start || return 1
+        touch "$main_fixture/reject-trial"
+        HG_MAIN_FIXTURE_PROCD=1 main_intent transaction-fixture-apply || result=$?
+        phase=$(json_value "$main_fixture/main-intent.json" data.phase)
+        if [ "$result" -eq 70 ] && [ "$phase" = APPLYING ] &&
+            main_intent transaction-fixture-watch &&
+            [ "$(cat "$main_fixture/fixture-service-node")" = old_node ] &&
+            cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2; then
+            result=0
+        else
+            result=1
+        fi
+        "$service" stop
+        return "$result"
+    }
+    check main_fixture_passwall_restart_failure fixture_passwall_restart
+    fixture_passwall_reload_and_restore() {
+        fresh_main_fixture || return 1
+        local service="$LAB/main-passwall-fixture"
+        printf '%s\n' "$main_fixture" > "$LAB/main-passwall-state"
+        local result=1
+        if "$service" start &&
+            HG_MAIN_FIXTURE_WINDOW=2 HG_MAIN_FIXTURE_PROCD=1 main_intent transaction-fixture-apply &&
+            [ "$(cat "$main_fixture/fixture-service-node")" = trial_node ] &&
+            main_intent transaction-fixture-watch &&
+            [ "$(cat "$main_fixture/fixture-service-node")" = old_node ] &&
+            cmp "$main_fixture/fixture-passwall2" /etc/config/passwall2; then
+            result=0
+        fi
+        "$service" stop
+        return "$result"
+    }
+    check main_fixture_passwall_reload_restore fixture_passwall_reload_and_restore
+
     mkdir -p /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     chmod 700 /etc/home-gateway /etc/home-gateway/config /etc/home-gateway/secrets /etc/home-gateway/state
     printf '111\n' > /etc/home-gateway/secrets/telegram.user_id
@@ -134,6 +363,17 @@ EOF
     nft -s list ruleset > /tmp/hg-vm-lab/nft.after
     check routes_unchanged cmp -s /tmp/hg-vm-lab/routes.before /tmp/hg-vm-lab/routes.after
     check nft_unchanged cmp -s /tmp/hg-vm-lab/nft.before /tmp/hg-vm-lab/nft.after
+    fixture_before_reboot() {
+        main_fixture="$LAB/main-boot-fixture"
+        mkdir -m 700 "$main_fixture" || return 1
+        cp /etc/config/passwall2 "$main_fixture/fixture-passwall2" &&
+            prepare_main_fixture &&
+            main_intent transaction-stage &&
+            main_intent transaction-fixture-apply &&
+            cmp "$main_fixture/fixture-passwall2" "$main_fixture/main-intent.candidate"
+    }
+    check main_fixture_applied_before_reboot fixture_before_reboot
+
     cat /proc/sys/kernel/random/boot_id > "$LAB/old-boot"
     touch "$LAB/reboot-pending"
     sync
@@ -160,6 +400,13 @@ check admission_hardlink sh -c '! sh /usr/libexec/home-gateway-deploy/migration-
 rm /etc/home-gateway-migration/phase-hardlink
 check interrupted_apply_not_replayed refused ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; let s=open_state("", false, null); s.transition("APPLYING");'
 check reboot_reacquires_fence ucode -e 'import { open_state } from "/opt/hg-vm-lab/migration-state.uc"; let s=open_state("", false, null); s.fence();'
+recover_main_after_reboot() {
+    local fixture="$LAB/main-boot-fixture"
+    HG_NOTIFICATION_STATE_DIR="$fixture" HG_MAIN_CONFIG_FILE="$fixture/fixture-passwall2"         ucode /usr/lib/home-gateway/incidents.uc /usr/bin/gateway transaction-fixture-watch || return 1
+    [ "$(json_value "$fixture/main-intent.json" data.phase)" = ROLLED_BACK ] &&
+        cmp "$fixture/fixture-passwall2" /etc/config/passwall2
+}
+check main_fixture_rollback_after_reboot recover_main_after_reboot
 check reboot_changed_boot sh -c '[ "$(cat /etc/hg-vm-lab/old-boot)" != "$(cat /proc/sys/kernel/random/boot_id)" ]'
 check reboot_persisted_hg sh -c 'for area in config secrets state; do [ "$(cat /etc/home-gateway/$area/vm-proof)" = SYNTHETIC_VM_BACKUP_PROOF ] || exit 1; done'
 check recovery_projects_pending action show
